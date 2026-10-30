@@ -20,7 +20,7 @@ relies on are listed in §D6.
 | `/react`, `/testing` | **Ready** | Session/workspace hooks ship with `/auth`; role, plan and flag hooks read session context (IAM item A, merged) |
 | `/metrics` | **Ready, except the Tier 1 binding.** Exporter, central label injection, registration checks, `getDomainMeter`/`getServiceMeter` (Tier 2/3), `renderMetricInventory`, the metricslint CI and the observability layout. Tier 3 needs no approval; Tier 2 names come from the existing registry | Binding the `platform_web_*` instruments waits for governance ratification (D5, §D6 K); until then they stay no-ops. Designed to the Enterprise Platform Observability Standard, validated by `metricslint` |
 | Shared package versions | — | SDK starts at `1.0.0-alpha.N`; `1.0.0` is cut with the first environment (§C3) |
-| Shell bootstrap (`domain: 'portal'`) | — | **Registry PR for `portal` (D1)**: `initializeCore` rejects the domain until the PR merges and `contracts/` is regenerated |
+| Shell bootstrap (`domain: 'portal'`) | **Ready** | — (`portal` is in the registry since platform-gincommon v2.3.0, §D6 J; `contracts/` regenerated) |
 
 Implementation order: `/core` → `/problem` → `/config` → `/tracing` → `/logging` → `/metrics` (Tier 2/3, exporter,
 checks) → `/authz`, `/storage`, `/security`, `/flags`, `/nav` → `/i18n` → `/http` → `/mfe` → `/auth` → `/react` →
@@ -54,10 +54,10 @@ Sources of truth this design was checked against (read from source, not READMEs)
 
 | # | Brief said | Backend actually does | Design decision |
 |---|---|---|---|
-| 1 | `domain`, `environment` each match `^[a-z][a-z0-9_-]{0,62}$` | That regex is only the **service** label pattern. `domain` is a **closed vocabulary** (`iam, workflow, billing, tender_management, notifications, documents`); `environment` is closed (`local, dev, test, staging, prod`; `production` is rejected, no aliases). | Validate against the registry vocabulary, generated from `registry.json` (§C5). A multi-domain shell uses a new `portal` value, added by registry PR (§D1). A single-business shell uses that business domain. |
+| 1 | `domain`, `environment` each match `^[a-z][a-z0-9_-]{0,62}$` | That regex is only the **service** label pattern. `domain` is a **closed vocabulary** (`iam, workflow, billing, tender_management, notifications, documents, bff, portal`); `environment` is closed (`local, dev, test, staging, prod`; `production` is rejected, no aliases). | Validate against the registry vocabulary, generated from `registry.json` (§C5). A multi-domain shell uses `portal`, added to the registry for it (§D1). A single-business shell uses that business domain. |
 | 2 | `buildVersion` "sanitized" | `version` label pattern `^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$`, `unknown` when unset | Same rule: empty becomes `unknown`, and a non-matching value throws (no silent rewriting). |
 | 3 | `validationErrors[{field,message,code}]` | Go `FieldError` and Python `FieldError` are `{field, message}` only | `code?: string` is **optional** and parsed if present. Form mapping must not depend on it. Unknown per-entry members are preserved. |
-| 4 | Redact `password\|token\|secret\|authorization\|cookie\|key\|*_key` | Backend list is a superset: exact keys `authorization, cookie, set-cookie, password, secret, token, access_token, refresh_token, id_token, api_key, x-api-key, x-auth-token, credential, private_key, jwt, bearer, session, session_id, cert` + substring `password, secret, token, credential, session, bearer` + `key` / `*_key` | Port the backend rule **exactly** (shared fixture, §C5). |
+| 4 | Redact `password\|token\|secret\|authorization\|cookie\|key\|*_key` | Backend list is a superset: exact keys `authorization, cookie, set-cookie, password, secret, token, access_token, refresh_token, id_token, api_key, x-api-key, x-auth-token, credential, private_key, jwt, bearer, session, session_id, cert` + substring `password, secret, token, credential, session, bearer` + `key` / `*_key` | Port the backend rule **exactly** (shared fixture, §C5). One deliberate, stricter difference: `sanitizeString` also strips U+2028/U+2029 (the fixture's `expectedSdk`). |
 | 5 | Every log entry carries `sessionId` | The backend sanitizer redacts any key containing `session` | `session_id` is an **SDK envelope field** added *after* redaction. It is a random RUM id, never the IdP `sid`. Redaction applies only to caller-supplied attributes. |
 | 6 | Metric names `platform_*` | The backend follows the Enterprise Platform Observability Standard: three tiers (`platform_*`, `<domain>_*`, `<domain>_<service>_*`), registry-only shared names, centrally injected `domain`/`service`/`environment`, `_total`/`_seconds` suffixes, a closed label vocabulary, all enforced by gincommon `metricslint`. No browser metrics exist in `registry.json`, and server HTTP metrics use `status_class` + `error_class`, not `outcome`. | `/metrics` follows the same standard and the same lint (§C1 `/metrics`). Seven Tier 1 `platform_web_*` metrics and four labels go to the registry as **`proposed`**; existing labels keep their one meaning. Remotes get Tier 2/3 meters under their owning domain. Only the Tier 1 binding in `/metrics` waits for governance to approve the Tier 1 entries (§D5); Tier 2/3 and the exporter do not. |
 | 7 | `x-session-id` header | No backend reads it | Sent as an untrusted correlation header. The gateway must pass it through and never trust it. Opt-out via config. |
@@ -85,7 +85,8 @@ platform-reactcommon/
       src/<subpath>/index.ts   one folder per subpath; index.ts is the ONLY public surface
       src/internal/            shared private helpers (not exported)
       contracts/               generated, committed: problem-types.json, registry-vocab.json,
-                               headers.json, log-fields.json, redaction-cases.json, identity-cases.json,
+                               headers.json, log-fields.json, redaction.json, fixtures/ (header_cases.json,
+                               identity_cases.json, redaction_cases.json),
                                gateway-deny-codes.json, metric-registry.json, tenant-resolve-cases.json (resolve endpoint request/response fixtures),
                                session-context-cases.json (P-35 response fixtures)
       api/                     api-extractor reports (public API snapshot, one per subpath)
@@ -98,7 +99,7 @@ platform-reactcommon/
 Build: `tsup`/`rollup` to ESM + `.d.ts`, `"sideEffects": false`. `exports` map has one entry per
 subpath and no root barrel export (`"."` throws a helpful type error), so subpaths stay
 tree-shakeable. Peer deps: `react`, `react-dom` (^18 || ^19), `@opentelemetry/api` (^1).
-Direct deps: `@opentelemetry/sdk-trace-web`, `exporter-*-otlp-http`, `sdk-logs`, `sdk-metrics`,
+Direct deps: `@opentelemetry/sdk-trace` (OTel JS 3; `sdk-trace-web`/`-base` 2.x are deprecated), `exporter-*-otlp-http`, `sdk-logs`, `sdk-metrics`,
 `web-vitals`, `zod`, `dompurify`. Telemetry goes over OTLP/HTTP directly. There is no Faro SDK
 (one pipeline). The `/otel` path may point at a Faro receiver or a plain collector.
 
@@ -164,7 +165,9 @@ export function isInitialized(): boolean;
 export interface MfeScope { readonly mfe: string }
 
 // Correlation
-export function getSessionId(): string;          // RUM session id, random, rotates on idle timeout/logout
+export function getSessionId(): string;          // RUM session id: random v4 UUID, one per browser profile (SDK-reserved
+                                                 // localStorage key, shared by tabs, kept across reloads; per-page if
+                                                 // storage is unavailable); rotates on logout and the cross-tab idle timeout
 export function newRequestId(): string;          // UUIDv4, satisfies ^[a-zA-Z0-9._-]+$ ≤128
 
 // Consent (PDPL / GDPR)
@@ -179,6 +182,7 @@ export function hasConsent(c: ConsentCategory): boolean;
 // Sanitization (parity with gincommon log_sanitizer.go)
 export function isSensitiveKey(key: string): boolean;
 export function sanitizeString(s: string): string; // strip Unicode Cc + U+2028/2029, truncate 256 B at UTF-8 boundary
+                                                   // (the backends strip Cc only: U+2028/2029 is a deliberate, stricter SDK difference)
 export function sanitizeFields(f: Record<string, unknown>): Record<string, unknown>; // deep, '[REDACTED]'
 ```
 
@@ -267,7 +271,9 @@ fields. Redaction order: `sanitizeFields`, then
 `sanitizeString` on every string value, then value scrubbing of JWT- or `Bearer`-shaped substrings, then message
 sanitization. Stacks have URL query strings and fragments stripped. Transport: OTLP logs batched,
 `fetch(keepalive)`, and `navigator.sendBeacon` on `pagehide`/`visibilitychange=hidden`. Consent:
-`error` and essential `warn` are always sent; `debug`/`info` require `telemetry` consent.
+`error` and essential `warn` are always sent; `debug`/`info` and any other `warn` require `telemetry` consent.
+A `warn` is essential when its attributes carry `essential: true`, a reserved flag that is never sent as
+an attribute. The SDK's own security warns (CSP violations, a duplicate SDK copy) set it.
 
 #### `/metrics`
 
@@ -289,7 +295,8 @@ export function getDomainMeter(scope?: Partial<MfeScope>): {
   histogram(name: string): Histogram;
 };
 /** Tier 3: `<domain>_<service>_<metric>`, prefix built like gincommon `ServicePrefix` (non-alphanumerics → `_`).
- *  Counters must end `_total`; histograms `_seconds` (or `_bytes`); gauges never `_total`. */
+ *  Counters must end `_total`; histograms `_seconds` (`_bytes` only for registry metrics with `unit: bytes`, as in
+ *  gincommon CheckCustom); gauges never `_total`. */
 export function getServiceMeter(scope?: Partial<MfeScope>): {
   counter(name: string, help: string, labels: readonly string[]): Counter;
   histogram(name: string, help: string, labels: readonly string[], buckets?: readonly number[]): Histogram;
@@ -1095,7 +1102,7 @@ except `getConfig()`, which remotes call through `tryGetConfig()`.
 export const platformShared = {
   react:                     { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
   'react-dom':               { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
-  '@opentelemetry/api':      { singleton: true, strictVersion: true, requiredVersion: '^1.9.0' },
+  '@opentelemetry/api':      { singleton: true, strictVersion: true, requiredVersion: '~1.10.0' }, // OTel JS 3 needs >=1.10 <1.11
   '@platform/frontend-sdk':  { singleton: true, strictVersion: true, requiredVersion: '^1.0.0-0' },
   // subpaths share the same instance: MF keys by request, so each used subpath is listed
   ...Object.fromEntries(SUBPATHS.map(s => [`@platform/frontend-sdk/${s}`,
@@ -1366,11 +1373,13 @@ never reaches a label. `canEdit` is a UI hint, and the PUT is authorised by the 
      validated against it.
    - Bumping a pin is a normal PR that reruns the contract tests (item 6).
    TS constants are generated from `contracts/` at build time.
-2. **Shared golden fixtures.** `identity-cases.json`, `header_cases.json` (existing) and new
-   `problem_bodies.json` (real Go- and Python-emitted bodies: validation-failed, conflict with
+2. **Shared golden fixtures** in `platform-interop-tests/fixtures/`, copied into `contracts/fixtures/`.
+   `header_cases.json` (existing), `identity_cases.json` (run by `go-probe identity-check` and the
+   `/core` tests) and new `problem_bodies.json` (real Go- and Python-emitted bodies: validation-failed, conflict with
    extensions, 5xx, about:blank, timeout 503) are run as table tests in the TS suite *and* by
    the existing Go/Python probes. One fixture, three languages.
-   `redaction-cases.json` also runs in Go once gincommon exports its sanitizer (§D6 I):
+   `redaction_cases.json` (verified against fastapicommon's sanitizer and a copy of gincommon's)
+   also runs in Go once gincommon exports its sanitizer (§D6 I):
    `pkg/logger.Sanitize`/`SanitizeString`, wrapping `internal/core/service/log_sanitizer.go`, which
    Go module privacy keeps the harness from importing today. Until then it runs in TS and Python only.
    There is no synced copy of the fixture inside gincommon.
@@ -1404,7 +1413,7 @@ never reaches a label. `canEdit` is a UI hint, and the PUT is authorised by the 
 
 | # | Topic | Status | Blocks |
 |---|---|---|---|
-| D1 | Domain for frontend services | Decided: `portal`. Needs registry PR | `/core` vocabulary |
+| D1 | Domain for frontend services | Decided: `portal`. In the registry since gincommon v2.3.0 (§D6 J) | — |
 | D2 | Tenant model, workspace switching | Decided by IAM (HLD v1.58, LLDs, code). Backend work is tracked in §D6 | First end-to-end environment (§D6). Implementation is not blocked |
 | D3 | CSS-in-JS vs strict `style-src` | Decided | `@platform/ui`, CSP |
 | D4 | IdP proxy vs CSP allowlist | Decided by IAM: `auth.bcbpsolutions.com` | — |
@@ -1415,9 +1424,9 @@ never reaches a label. `canEdit` is a UI hint, and the PUT is authorised by the 
 
 One identity per page, set by the shell. Remotes run in the shell's page, so they cannot have
 their own `domain`. That is what the `mfe` label is for.
-- A shell that fronts several business domains uses a new **`portal`** domain value. It is added
-  by registry PR to gincommon `internal/obsregistry/registry.json` and to the copy at
-  `fastapicommon/src/fastapicommon/metrics/registry.json`, then `make metrics-inventory` is run.
+- A shell that fronts several business domains uses the **`portal`** domain value. It is in
+  gincommon's `internal/obsregistry/registry.json` (v2.3.0) and the vendored copy at
+  `fastapicommon/src/fastapicommon/metrics/registry.json` (§D6 J).
 - A shell dedicated to one business uses that business domain.
 - `app.bcbpsolutions.com` fronts tenders, workflow design, IAM administration and the dashboard
   (FE spec §4), so it is the multi-domain case and needs `portal`.
@@ -1531,7 +1540,7 @@ Nothing is in production, so where the SDK needs a backend to behave differently
 changed instead of the SDK working around it. This is the single list; each row says what the SDK
 does until the change lands.
 
-| # | Owner | Change | State (2026-10-30) | SDK until it lands |
+| # | Owner | Change | State (2026-10-31) | SDK until it lands |
 |---|---|---|---|---|
 | A | IAM (org-membership) | P-35 `GET /api/v1/me/session-context`, **with `slug` added** (§D2 A) | **Done**: P-35 (O&M #42) and `slug` (O&M #46), both merged | — |
 | B | IAM, then platform and WAF | PUB-1 at the edge, with no `jwt_authn`/`ext_authz` and a per-IP limit sized for office NAT. The platform team enables Envoy Gateway's global rate-limit service (Redis) and trusts `X-Forwarded-For`. The WAF adds a CAPTCHA/challenge. IAM closes OQ-10 (§D2 B) | IAM part merged (O&M #42, off by default); platform, WAF and OQ-10 open | Mocked in tests; logins without a cached workspace fail in deployed environments |
@@ -1541,8 +1550,8 @@ does until the change lands.
 | F | IAM (realm-provisioner, O&M), then ops | Verification and invitation emails link to `/t/<slug>/` through `tender-web`; the invitation email is sent. Set `WEB_APP_BASE_URL` / `WEB_APP_EXTRA_BASE_URLS` for dev and staging once those hosts exist (§D2 F) | Done (RP #41, O&M #42, merged); per-environment base URLs open (prod URL is the fallback) | First login needs the identifier screen; invitees cannot accept |
 | G | bff-signup | Return `slug` in the completed signup response (§D2 G) | Unchanged | The signup page cannot always link to the workspace |
 | H | IAM (authz-enrichment) | **AE-42 / CD-31 now:** `deniedResponse` sends `application/problem+json` with the platform type for the status (`platform/unauthorized`, `platform/forbidden`, `platform/service-unavailable`) and `errorCode` = the deny reason. Keep `TestDenyCodes_Pinned`, and add a test for the body shape | **Done** (AuthZ Enrichment #39, merged; LLD 1.48, AE-42 resolved) | — |
-| I | Platform (gincommon) | Export the log sanitizer as `pkg/logger.Sanitize` / `SanitizeString`, so the interop harness runs `redaction-cases.json` in Go (§C5) | Not started | The redaction fixture runs in TS and Python only |
-| J | Platform (registry) | Add the `portal` domain to `registry.json` in gincommon and fastapicommon, then `make metrics-inventory` (§D1) | Not started | `initializeCore({domain:'portal'})` throws, so the shell cannot start against real contracts |
+| I | Platform (gincommon) | Export the log sanitizer as `pkg/logger.Sanitize` / `SanitizeString`, so the interop harness runs `redaction_cases.json` in Go (§C5) | Not started | The redaction fixture runs in TS and Python only |
+| J | Platform (registry) | Add the `portal` domain to `registry.json` in gincommon and fastapicommon, then `make metrics-inventory` (§D1) | **Done**: gincommon #51, released as v2.3.0 (#52); fastapicommon #50 re-vendored it (with `bff`, which it lacked). SDK `contracts/` pinned to both | — |
 | K | Observability governance | Ratify the seven `platform_web_*` metrics, the four labels, the `web_vitals` preset and the SDK as an emitter of `platform_telemetry_label_overflow_total` (§D5) | Not started | Tier 1 instruments stay no-ops; Tier 2/3 meters and the exporter work |
 | L | IAM (realm-provisioner) | **Keycloak 26 integration test for multi-tab rotation:** in one SSO session, do two code exchanges for `tender-web` (two tabs), then refresh each lineage alternately for several rounds. Every refresh must succeed. If the test fails, IAM fixes it in the client configuration (§C1 `/auth`, "Refresh across tabs") | **Done** (RP #44, merged): passes with RP #41's settings, no change needed | — (follow the refresh rules in §C1 `/auth`) |
 | N | IAM (realm-provisioner) | A trial converted through RP-3 gets realm `tenant-<slug>`, like a direct-paid tenant (HLD v1.59 gap G-1: it got `tenant-<tenant_id>`, which broke the paid-realm check in §D2 step 2) | **Done** (RP #46, merged; RP LLD v1.46, RP-D20). HLD v1.59 marks it fixed (`iam-hld-docs` #3, open) | — (dev: re-create the `provisioner` DB and pre-#46 trial tenants) |

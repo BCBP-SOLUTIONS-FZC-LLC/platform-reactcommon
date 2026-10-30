@@ -1,10 +1,10 @@
 {
-  "_comment": "Commits the generated contracts/ files come from (design doc §C5). CI checks each repo out at its sha into PLATFORM_ROOT/<path>; locally scripts/sync-contracts.ts fails unless each checkout is at its sha. Move pins with `pnpm contracts:sync --update-pins` and review the resulting contracts diff. The IAM repos are added with /problem (deny codes) and /auth (resolve and session-context fixtures).",
+  "_comment": "Commits the generated contracts/ files come from (design doc \u00a7C5). Two groups: `platform` repos live under PLATFORM_ROOT, `iam` repos under IAM_REPOS_DIR. CI checks each repo out at its sha into <root>/<path>; locally scripts/sync-contracts.ts fails unless each checkout is at its sha. Move pins with `pnpm contracts:sync --update-pins` and review the resulting contracts diff.",
   "platform": {
     "platform-gincommon": {
       "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-gincommon",
       "path": "go/platform-gincommon",
-      "sha": "f786d6b7be754ceb164a1137fcd3f71e9d549d6b"
+      "sha": "fbf57c5a692175b025098d3802f12d38eb34db0a"
     },
     "platform-events": {
       "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-events",
@@ -19,12 +19,24 @@
     "platform-fastapicommon": {
       "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-fastapicommon",
       "path": "python/platform-fastapicommon",
-      "sha": "2f653bfa5f07f9e8dce77d5fe223d34767eac6a7"
+      "sha": "b0fcdfd6e3bacbf5bb15652f219b0d7aee45a09e"
     },
     "platform-interop-tests": {
       "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-interop-tests",
       "path": "platform-interop-tests",
-      "sha": "b2915d287cfa69237e9276e170d165ac4ffc498f"
+      "sha": "93e348183692fc684c6fbe719679d79ac28e291a"
+    }
+  },
+  "iam": {
+    "iam-authz-enrichment": {
+      "repo": "BCBP-SOLUTIONS-FZC-LLC/iam-authz-enrichment",
+      "path": "iam-authz-enrichment",
+      "sha": "4bea2eacd0b567095fc80f39b8fd7f26a7a14a74"
+    },
+    "iam-org-membership": {
+      "repo": "BCBP-SOLUTIONS-FZC-LLC/iam-org-membership",
+      "path": "iam-org-membership",
+      "sha": "3d17d87b080795016a2294d5a83db36771fc0525"
     }
   }
 }

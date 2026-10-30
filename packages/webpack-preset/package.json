@@ -1,7 +1,35 @@
 {
   "name": "@platform/webpack-preset",
   "version": "1.0.0-alpha.0",
-  "description": "Placeholder: implemented in SDK step 13 (design doc §C3).",
+  "description": "Webpack 5 Module Federation preset for the platform's shell and remotes: shared singletons, CSP-safe output (design doc §C3).",
   "type": "module",
-  "private": true
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "platformShared": {
+    "_comment": "The versions every shell and remote share (design doc §C3). platformShared is generated from these pins; they must match @platform/frontend-sdk's peer ranges (checked in tests).",
+    "react": "^18.3.0 || ^19.0.0",
+    "react-dom": "^18.3.0 || ^19.0.0",
+    "@opentelemetry/api": "~1.10.0"
+  },
+  "peerDependencies": {
+    "webpack": "^5.100.0"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  },
+  "devDependencies": {
+    "webpack": "5.112.0"
+  }
 }

@@ -71,6 +71,8 @@ export function buildMetricRegistry(registry: Registry, source: string) {
     bucketPresets: registry.bucket_presets,
     labels: registry.labels,
     metrics: registry.metrics.filter((m) => !(m.tier === 'legacy' && m.status === 'removed')),
+    // Every legacy name, removed ones included: a new metric may never reuse one (CheckCustom).
+    legacyNames: registry.metrics.filter((m) => m.tier === 'legacy').map((m) => m.name),
   };
 }
 
@@ -131,11 +133,11 @@ export interface ContractsExport {
 }
 
 /** Problem registry and constants for /problem (design doc §C5 rows 1, 3-7). */
-export function buildProblemTypes(exp: ContractsExport, source: string) {
+export function buildProblemTypes(exp: ContractsExport, source: string, rules?: ReturnType<typeof buildProblemRules>, rulesSources: readonly string[] = []) {
   const p = exp.problem;
   if (p.types.length === 0) throw new Error('contracts-export: no platform problem types');
   return {
-    _generated: generatedHeader([source]),
+    _generated: generatedHeader([source, ...rulesSources]),
     contentType: p.contentType,
     defaultTypeBase: p.defaultTypeBase,
     timestampLayout: p.timestampLayout,
@@ -150,7 +152,96 @@ export function buildProblemTypes(exp: ContractsExport, source: string) {
       title: t.title,
       code: t.code,
     })),
+    ...(rules ? { rules } : {}),
   };
+}
+
+/** "bad-request" → "BadRequest": the key of a platform type in PlatformProblemTypes. */
+export function pascalCase(slug: string): string {
+  return slug.replace(/(^|-)([a-z0-9])/g, (_, __, c: string) => c.toUpperCase());
+}
+
+/**
+ * Parsing and definition rules behind gincommon's problem package (unexported): the standard
+ * members (an extension never takes one of their names, in any letter case), the RFC 9457
+ * extension-name pattern, the client body cap and NewType's slug and code patterns.
+ */
+export function buildProblemRules(
+  extensionsGo: string,
+  clientGo: string,
+  typesGo: string,
+  sources: { extensions: string; client: string; types: string },
+) {
+  const membersBlock = sliceBetween(extensionsGo, 'var standardMembers = []string{', '}', sources.extensions, 'standardMembers');
+  const standardMembers = [...membersBlock.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
+  if (standardMembers.length === 0) throw new Error(`${sources.extensions}: no standard members found`);
+  const capExpr = /^const MaxClientBodyBytes = (\d+)(?: << (\d+))?\s*$/m.exec(clientGo);
+  if (!capExpr) throw new Error(`${sources.client}: MaxClientBodyBytes not found (or not N or N << M)`);
+  const maxClientBodyBytes = Number(capExpr[1]) * 2 ** Number(capExpr[2] ?? 0);
+  return {
+    standardMembers,
+    extensionNamePattern: extractGoRegexp(extensionsGo, 'extensionNamePattern', sources.extensions),
+    maxClientBodyBytes,
+    slugPattern: extractGoVarRegexp(typesGo, 'slugPattern', sources.types),
+    codePattern: extractGoVarRegexp(typesGo, 'codePattern', sources.types),
+  };
+}
+
+/** A regexp declared inside a `var ( ... )` block: `name = regexp.MustCompile(`...`)`. */
+export function extractGoVarRegexp(source: string, varName: string, file: string): string {
+  const matches = [...source.matchAll(new RegExp(`^\\s*${varName}\\s*=\\s*regexp\\.MustCompile\\(\`([^\`]+)\`\\)`, 'gm'))];
+  if (matches.length !== 1) throw new Error(`${file}: expected exactly one regexp ${varName}, found ${matches.length}`);
+  return matches[0]![1]!;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Gateway deny codes (iam-authz-enrichment internal/domain/decision.go)
+
+/**
+ * The gateway's deny reasons and their HTTP statuses, read from decision.go and checked against
+ * the TestDenyCodes_Pinned table in its tests: a parsing slip, or a reason added without a pin,
+ * fails the sync (design doc §C5 row 17).
+ */
+export function buildGatewayDenyCodes(decisionGo: string, pinnedTestGo: string, sources: { decision: string; test: string }) {
+  const constBlock = sliceBetween(decisionGo, 'const (', ')', sources.decision, 'DenyReason constants');
+  const names = new Map<string, string>(); // Go identifier → wire value
+  for (const m of constBlock.matchAll(/^\s*(Deny\w+)\s+DenyReason\s*=\s*"([A-Z_]+)"/gm)) names.set(m[1]!, m[2]!);
+  if (names.size === 0) throw new Error(`${sources.decision}: no DenyReason constants found`);
+
+  const statusFn = sliceBetween(decisionGo, 'func (r DenyReason) HTTPStatus() int {', '\n}', sources.decision, 'HTTPStatus');
+  const status = new Map<string, number>();
+  let fallback: number | undefined;
+  for (const m of statusFn.matchAll(/(case ([^:]+)|default):\s*return (\d+)/g)) {
+    if (m[1] === 'default') fallback = Number(m[3]);
+    else for (const id of m[2]!.split(',')) status.set(id.trim(), Number(m[3]));
+  }
+  const codes = [...names].map(([id, code]) => {
+    const s = status.get(id) ?? fallback;
+    if (s === undefined) throw new Error(`${sources.decision}: no HTTP status for ${id}`);
+    return { code, status: s };
+  });
+
+  const pinnedFn = sliceBetween(pinnedTestGo, 'func TestDenyCodes_Pinned(t *testing.T) {', '\n}', sources.test, 'TestDenyCodes_Pinned');
+  const pinned = [...pinnedFn.matchAll(/\{domain\.Deny\w+,\s*"([A-Z_]+)",\s*(\d+)\}/g)].map((m) => ({
+    code: m[1]!,
+    status: Number(m[2]),
+  }));
+  const key = (l: { code: string; status: number }[]) => JSON.stringify([...l].sort((a, b) => a.code.localeCompare(b.code)));
+  if (key(codes) !== key(pinned)) {
+    throw new Error(`${sources.decision} and ${sources.test} disagree: extracted ${key(codes)}, pinned ${key(pinned)}`);
+  }
+  return { _generated: generatedHeader([sources.decision, sources.test]), codes };
+}
+
+/**
+ * The headers AuthZ Enrichment injects on Allow (decision.go InjectedHeaders): the ingress strips
+ * them from every client request (IAM HLD §11.1, AE-SEC-1), so the browser must never send them.
+ */
+export function buildGatewayHeaders(decisionGo: string, source: string) {
+  const block = sliceBetween(decisionGo, '// InjectedHeaders', '\n)', source, 'InjectedHeaders');
+  const injected = [...block.matchAll(/^\s*Header\w+\s*=\s*"([a-z0-9-]+)"/gm)].map((m) => m[1]!);
+  if (injected.length === 0) throw new Error(`${source}: no injected headers found`);
+  return { _generated: generatedHeader([source]), injected };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -253,7 +344,197 @@ export function buildLogFields(loggingGo: string, source: string) {
   };
 }
 
+// ---------------------------------------------------------------------------------------------
+// Log redaction (gincommon internal/core/service/log_sanitizer.go, unexported)
+
+function sliceBetween(source: string, start: string, end: string, file: string, what: string): string {
+  const i = source.indexOf(start);
+  if (i < 0) throw new Error(`${file}: ${what} not found`);
+  const j = source.indexOf(end, i + start.length);
+  if (j < 0) throw new Error(`${file}: end of ${what} not found`);
+  return source.slice(i + start.length, j);
+}
+
+/**
+ * The redaction rule of gincommon's log sanitizer (design doc §0 row 4, §C5 row 12): exact
+ * sensitive keys, sensitive substrings, the `key` / `*_key` rule, the replacement value and the
+ * string limit. Every piece is read from the source and checked, so an upstream change fails the
+ * sync instead of being missed.
+ */
+export function buildRedaction(sanitizerGo: string, source: string) {
+  const keysBlock = sliceBetween(sanitizerGo, 'var sensitiveLogKeys = map[string]struct{}{', '\n}', source, 'sensitiveLogKeys');
+  const exactKeys = [...keysBlock.matchAll(/^\s*"([^"]+)":\s*\{\},?\s*$/gm)].map((m) => m[1]!);
+  const ruleBlock = sliceBetween(sanitizerGo, 'func isSensitiveLogKey(key string) bool {', '\n}', source, 'isSensitiveLogKey');
+  const substrings = [...ruleBlock.matchAll(/strings\.Contains\(k, "([^"]+)"\)/g)].map((m) => m[1]!);
+  const exactKeyRule = /k == "key" \|\| strings\.HasSuffix\(k, "_key"\)/.test(ruleBlock);
+  const normalises = /strings\.ToLower\(strings\.TrimSpace\(key\)\)/.test(ruleBlock);
+  const redacted = /out\[k\] = "(\[[A-Z]+\])"/.exec(sanitizerGo)?.[1];
+  const maxBytes = Number(/const maxLen = (\d+)/.exec(sanitizerGo)?.[1]);
+  const stripsControl = /unicode\.IsControl\(r\)/.test(sanitizerGo);
+  if (exactKeys.length === 0) throw new Error(`${source}: no exact sensitive keys found`);
+  if (substrings.length === 0) throw new Error(`${source}: no sensitive substrings found`);
+  if (!exactKeyRule) throw new Error(`${source}: the key / *_key rule changed`);
+  if (!normalises) throw new Error(`${source}: key normalisation (TrimSpace + ToLower) changed`);
+  if (!redacted) throw new Error(`${source}: redaction placeholder not found`);
+  if (!Number.isInteger(maxBytes) || maxBytes <= 0) throw new Error(`${source}: SanitizeString maxLen not found`);
+  if (!stripsControl) throw new Error(`${source}: SanitizeString no longer strips unicode.IsControl (Cc)`);
+  return {
+    _generated: generatedHeader([source]),
+    // Keys are trimmed and lower-cased before matching.
+    exactKeys,
+    substrings,
+    // Also sensitive: the key "key" itself and any key ending in this suffix.
+    keySuffix: '_key',
+    redacted,
+    // SanitizeString: remove Unicode Cc characters, then truncate to this many UTF-8 bytes.
+    stringMaxBytes: maxBytes,
+  };
+}
+
+/**
+ * A TypeScript module with the contracts the SDK's code reads, as `as const` literals so the
+ * types are exact (e.g. `Domain` is the union of registry domains). Generated with the JSON files,
+ * so it can never drift from them (design doc §C5: "TS constants are generated from contracts/").
+ */
+export function buildTsConstants(contracts: Record<string, unknown>, sources: readonly string[]): string {
+  const strip = (v: unknown): unknown => {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      return Object.fromEntries(Object.entries(v).filter(([k]) => k !== '_generated'));
+    }
+    return v;
+  };
+  const lines = [`// ${generatedHeader(sources)}`, ''];
+  for (const [name, value] of Object.entries(contracts)) {
+    lines.push(`export const ${name} = ${JSON.stringify(strip(value), null, 2)} as const;`, '');
+  }
+  return lines.join('\n');
+}
+
+/**
+ * The registry as the SDK's /metrics code needs it: every rule and label, and per metric only the
+ * fields the registration checks and instruments use (help, not aggregation or governance notes).
+ */
+export function buildMetricRegistryConstants(m: ReturnType<typeof buildMetricRegistry>) {
+  const keep = ['name', 'tier', 'type', 'unit', 'buckets', 'status', 'help', 'labels', 'domain', 'label_values', 'owner'];
+  return {
+    constLabels: m.constLabels,
+    requiredLabels: m.requiredLabels,
+    prohibitedLabels: m.prohibitedLabels,
+    prohibitedLabelSuffixes: m.prohibitedLabelSuffixes,
+    exemptPrefixes: m.exemptPrefixes,
+    bucketPresets: m.bucketPresets,
+    labels: Object.fromEntries(
+      Object.entries(m.labels).map(([k, l]) => [
+        k,
+        Object.fromEntries(Object.entries(l).filter(([f]) => ['values', 'pattern', 'max_values'].includes(f))),
+      ]),
+    ),
+    metrics: m.metrics
+      .filter((x) => x.tier !== 'legacy')
+      .map((x) => Object.fromEntries(Object.entries(x).filter(([f]) => keep.includes(f)))),
+    // Legacy names may not be reused by a new metric (CheckCustom); only their names are needed.
+    legacyNames: m.legacyNames,
+  };
+}
+
 /** Stable JSON text for a generated file. */
 export function toJsonText(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// IAM API shapes (iam-org-membership docs/swagger/swagger.json, Swagger 2.0)
+
+export interface SwaggerSchema {
+  $ref?: string;
+  type?: string;
+  format?: string;
+  enum?: unknown[];
+  items?: SwaggerSchema;
+  properties?: Record<string, SwaggerSchema>;
+  required?: string[];
+  [key: string]: unknown;
+}
+export interface Swagger {
+  basePath?: string;
+  paths: Record<string, Record<string, { responses?: Record<string, { schema?: SwaggerSchema }> }>>;
+  definitions: Record<string, SwaggerSchema>;
+}
+
+const SWAGGER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `schema` with every $ref replaced by its definition (descriptions and examples dropped). */
+export function inlineSwaggerSchema(schema: SwaggerSchema, defs: Swagger['definitions'], seen: readonly string[] = []): SwaggerSchema {
+  if (schema.$ref) {
+    const name = schema.$ref.replace(/^#\/definitions\//, '');
+    const def = defs[name];
+    if (!def) throw new Error(`swagger: ${schema.$ref} is not defined`);
+    if (seen.includes(name)) throw new Error(`swagger: ${schema.$ref} is recursive`);
+    return inlineSwaggerSchema(def, defs, [...seen, name]);
+  }
+  const out: SwaggerSchema = {};
+  for (const k of ['type', 'format', 'enum', 'required'] as const) if (schema[k] !== undefined) out[k] = schema[k] as never;
+  if (schema.items) out.items = inlineSwaggerSchema(schema.items, defs, seen);
+  if (schema.properties) {
+    out.properties = Object.fromEntries(Object.entries(schema.properties).map(([k, v]) => [k, inlineSwaggerSchema(v, defs, seen)]));
+  }
+  return out;
+}
+
+/**
+ * Where `value` breaks an (inlined) swagger schema; [] when it fits. Stricter than Swagger: a property
+ * the schema does not declare is an error, so a fixture can never carry a field the API does not have.
+ */
+export function swaggerViolations(value: unknown, schema: SwaggerSchema, path = '$'): string[] {
+  if (schema.enum && !schema.enum.includes(value)) return [`${path}: ${JSON.stringify(value)} is not one of ${JSON.stringify(schema.enum)}`];
+  switch (schema.type) {
+    case 'object': {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) return [`${path}: not an object`];
+      const props = schema.properties ?? {};
+      const v = value as Record<string, unknown>;
+      return [
+        ...Object.keys(v).filter((k) => !(k in props)).map((k) => `${path}.${k}: not in the schema`),
+        ...(schema.required ?? []).filter((k) => !(k in v)).map((k) => `${path}.${k}: required`),
+        ...Object.entries(v).flatMap(([k, x]) => (props[k] ? swaggerViolations(x, props[k], `${path}.${k}`) : [])),
+      ];
+    }
+    case 'array':
+      if (!Array.isArray(value)) return [`${path}: not an array`];
+      return value.flatMap((x, i) => (schema.items ? swaggerViolations(x, schema.items, `${path}[${i}]`) : []));
+    case 'string':
+      if (typeof value !== 'string') return [`${path}: not a string`];
+      return schema.format === 'uuid' && !SWAGGER_UUID.test(value) ? [`${path}: not a uuid`] : [];
+    case 'integer':
+      return Number.isInteger(value) ? [] : [`${path}: not an integer`];
+    case 'number':
+      return typeof value === 'number' && Number.isFinite(value) ? [] : [`${path}: not a number`];
+    case 'boolean':
+      return typeof value === 'boolean' ? [] : [`${path}: not a boolean`];
+    default:
+      return [];
+  }
+}
+
+/**
+ * A response-cases contract: the 200 schema of `GET <path>` from the swagger (inlined), and SDK-authored
+ * cases whose `response` must fit it. A case that no longer fits the API fails the sync.
+ */
+export function buildResponseCases<C extends { name: string; response: unknown }>(
+  swagger: Swagger,
+  path: string,
+  cases: readonly C[],
+  source: string,
+) {
+  const op = swagger.paths[path]?.get;
+  const ok = op?.responses?.['200']?.schema;
+  if (!ok) throw new Error(`${source}: GET ${path} has no 200 schema`);
+  const schema = inlineSwaggerSchema(ok, swagger.definitions);
+  const names = new Set<string>();
+  for (const c of cases) {
+    if (names.has(c.name)) throw new Error(`case ${c.name} is duplicated`);
+    names.add(c.name);
+    const bad = swaggerViolations(c.response, schema);
+    if (bad.length > 0) throw new Error(`${source}: case ${c.name} does not fit GET ${path}: ${bad.join('; ')}`);
+  }
+  return { _generated: generatedHeader([`${source} (GET ${swagger.basePath ?? ''}${path})`, 'scripts/lib/iam-cases.ts']), path: `${swagger.basePath ?? ''}${path}`, schema, cases };
 }

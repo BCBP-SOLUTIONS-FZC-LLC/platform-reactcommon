@@ -7,6 +7,9 @@ import { readFileSync } from 'node:fs';
 import js from '@eslint/js';
 import boundaries from 'eslint-plugin-boundaries';
 import tseslint from 'typescript-eslint';
+// The examples are linted as a shell and a remote would be: with @platform/eslint-plugin (from source;
+// Node strips the types).
+import platform from './packages/eslint-plugin/src/index.ts';
 
 const { subpaths, packageImports: rawPackageImports } = JSON.parse(
   readFileSync(new URL('./packages/frontend-sdk/subpaths.json', import.meta.url), 'utf8'),
@@ -35,6 +38,12 @@ export default tseslint.config(
   { ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', '**/.build/**', '**/temp/**', '**/test/fixtures/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    // Interface methods (OTel SpanProcessor, Sampler, …) take parameters an implementation may not use.
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrors: 'none' }],
+    },
+  },
   {
     files: ['**/*.{js,mjs}'],
     languageOptions: { globals: { process: 'readonly', console: 'readonly', URL: 'readonly' } },
@@ -86,6 +95,26 @@ export default tseslint.config(
   // no-restricted-imports replaces an earlier one's for the same files).
   ...names.map((name) => ({
     files: [`${SDK_SRC}/${name}/**/*.{ts,tsx}`],
-    rules: { 'no-restricted-imports': ['error', { patterns: [indexOnly, ...packagePatternsFor(name)] }] },
+    // /testing (dev only, "testing ─► anything") may reach other subpaths' test seams, so it is not index-only.
+    rules: { 'no-restricted-imports': ['error', { patterns: [...(name === 'testing' ? [] : [indexOnly]), ...packagePatternsFor(name)] }] },
   })),
+  {
+    files: ['examples/*/src/**/*.{ts,tsx}'],
+    ...platform.configs.recommended,
+  },
+  {
+    files: ['examples/**/*.{js,mjs}'],
+    languageOptions: { globals: { process: 'readonly', console: 'readonly', URL: 'readonly', Buffer: 'readonly', fetch: 'readonly' } },
+  },
+  {
+    // Run by actions/github-script as an async function body (ci.yml), which provides these.
+    files: ['.github/scripts/*.js'],
+    languageOptions: { globals: { github: 'readonly', context: 'readonly', core: 'readonly' } },
+  },
+  {
+    // CloudFront Functions runtime: a script whose `handler` CloudFront calls.
+    files: ['examples/cloudfront/spa-rewrite.js'],
+    languageOptions: { sourceType: 'script' },
+    rules: { '@typescript-eslint/no-unused-vars': ['error', { varsIgnorePattern: '^handler$' }] },
+  },
 );

@@ -1,7 +1,30 @@
 {
   "name": "@platform/eslint-plugin",
   "version": "1.0.0-alpha.0",
-  "description": "Placeholder: implemented in SDK step 13 (design doc §C3).",
+  "description": "ESLint rules for the platform's shell and remotes: SDK subpath imports, no identity headers, storage and HTML through the SDK, no runtime CSS-in-JS, route templates (design doc).",
   "type": "module",
-  "private": true
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "eslint": "^9.0.0 || ^10.0.0"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  },
+  "devDependencies": {
+    "@types/estree": "^1.0.10",
+    "eslint": "^10.13.0"
+  }
 }
