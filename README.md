@@ -35,6 +35,19 @@ pnpm contracts:sync  # regenerate packages/frontend-sdk/contracts/ from the back
 - **Public API**: `pnpm api` updates `packages/frontend-sdk/api/<subpath>.api.md`; an API change
   needs a changeset (`pnpm changeset`). Versions are `1.0.0-alpha.N` until the first environment.
 
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Layers, runtime registry, flows (bootstrap, requests, sign-in, sessions, remotes, errors, telemetry), invariants, threat model; embeds every diagram |
+| [docs/design/frontend-sdk-design.md](docs/design/frontend-sdk-design.md) | The design and its decisions (public API per subpath, contracts, backend changes) |
+| [docs/lld/platform-reactcommon-lld.md](docs/lld/platform-reactcommon-lld.md) | Low-level design: the implementation as built, limits, algorithms, state, failure handling |
+| [docs/architecture/](docs/architecture/README.md) | The Mermaid sources of the diagrams |
+| [docs/observability/](docs/observability/README.md) | The observability standard in the SDK, the registry it validates against (generated), migration, runbooks |
+| [docs/problem-details/](docs/problem-details/README.md) | RFC 9457 in the browser, the problem-type registry (generated) |
+
+`pnpm docs:sync` regenerates the generated pages and the diagram blocks in `ARCHITECTURE.md`; `pnpm docs:check` (CI) fails when they drift.
+
 ## CI and releases
 
 `.github/` mirrors platform-gincommon's pipeline (same job names and gates; the image jobs map to the

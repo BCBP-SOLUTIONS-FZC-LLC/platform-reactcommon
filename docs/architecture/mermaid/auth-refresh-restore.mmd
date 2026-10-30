@@ -1,0 +1,26 @@
+stateDiagram-v2
+    [*] --> loading
+    loading --> authenticated: callback exchanged
+    loading --> anonymous: no session · signed-out mark · loop guard · rejected callback
+    loading --> redirecting: no tokens + cached workspace<br/>(one prompt=none per tab, loop guard set)
+    redirecting --> [*]: page unloads to Keycloak
+
+    state authenticated {
+        [*] --> idle_timer
+        idle_timer --> refreshing: timer at exp − 60 s ± 10 s · getAccessToken near expiry · 401
+        refreshing --> idle_timer: 200 → rotate tokens (never reuse a replaced refresh token)
+        refreshing --> waiting_online: offline before sending → keep the token
+        waiting_online --> refreshing: online event
+    }
+
+    authenticated --> expired_server: invalid_grant before refresh_expires_in<br/>(serverEnded: true, e.g. trial → paid)
+    authenticated --> expired_natural: invalid_grant / refresh token past its expiry<br/>(serverEnded: false)
+    authenticated --> expired_idle: no activity in any tab for idleTimeoutMs<br/>(idle: true; session id rotated)
+    authenticated --> restoring: sent but outcome unknown (timeout, network after send,<br/>non-invalid_grant error, bad ID token) → drop the lineage
+    restoring --> [*]: wait online → beforeRedirect('restore') → prompt=none redirect
+    authenticated --> anonymous: logout (this tab or a 'logout' broadcast)
+    authenticated --> expired_natural: 'workspace-switched' broadcast from another tab
+
+    expired_server --> [*]: shell dialog → signInAgain(forceResolve: true)
+    expired_natural --> [*]: shell dialog → signInAgain()
+    expired_idle --> [*]: shell dialog → signInAgain(prompt=login)

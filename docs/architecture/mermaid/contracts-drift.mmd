@@ -1,0 +1,39 @@
+graph LR
+    subgraph pinned["Backend sources at pinned commits (contracts/sources.json)"]
+        gin["platform-gincommon<br/>registry.json · transport/validation · log sanitizer ·<br/>problem rules · logging fields"]
+        fast["platform-fastapicommon<br/>vendored registry (drift warning)"]
+        probe["platform-interop-tests<br/>go-probe contracts-export · shared fixtures"]
+        evpg["platform-events · platform-pgcommon<br/>(to build go-probe)"]
+        az["iam-authz-enrichment<br/>deny reasons · injected headers"]
+        om["iam-org-membership<br/>swagger: PUB-1 · P-35"]
+    end
+
+    sync["scripts/sync-contracts.ts<br/>(pure transforms in scripts/lib/contracts.ts)"]
+    gin --> sync
+    fast --> sync
+    probe --> sync
+    evpg --> sync
+    az --> sync
+    om --> sync
+
+    subgraph out["Generated, committed"]
+        json["contracts/*.json + fixtures/"]
+        ts["src/internal/generated/*.ts<br/>(one module per contract)"]
+        tool["eslint-plugin forbidden-headers.ts"]
+        docsgen["docs: metric-registry.md · problem-details/registry.md"]
+    end
+    sync --> json
+    sync --> ts
+    sync --> tool
+    json -->|pnpm docs:sync| docsgen
+
+    subgraph ci["CI gates"]
+        cc["Validate / Contracts: contracts:check (stale = fail)"]
+        mp["metrics:parity: SDK checks vs metricslint · inventory passes -strict"]
+        ip["interop pair 4: SDK /http + /problem vs live Go and Python servers"]
+        dc["Validate / Quality: docs:check · exports:check (SDK facts in preset + eslint-plugin)"]
+    end
+    json --> cc
+    ts --> mp
+    ts --> ip
+    docsgen --> dc

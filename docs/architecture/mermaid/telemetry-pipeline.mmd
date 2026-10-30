@@ -1,0 +1,32 @@
+graph LR
+    subgraph sources["Signals (shell and remotes)"]
+        logs["getLogger({ mfe }).info/warn/error<br/>+ envelope: trace_id · span_id · request_id ·<br/>session_id · mfe · page_route"]
+        spans["getTracer().startSpan · withSpan<br/>/http and /mfe spans"]
+        meters["getDomainMeter · getServiceMeter (Tier 2/3)<br/>instrument port → platform_web_* (Tier 1, pending)"]
+    end
+
+    subgraph guard["Before anything leaves the page"]
+        redact["redaction: sensitive keys → [REDACTED] · JWT / Bearer patterns<br/>URL query + fragment dropped · stack ≤ 4 KiB<br/>sanitizeString: control chars, U+2028/2029"]
+        consent{"consent"}
+        sample["ParentBased + Go's TraceIDRatioBased<br/>(sampleRatio, default 0.1)"]
+        checks["registration checks = metricslint rules<br/>Tier 3 label values ≤ 100 → __other__"]
+    end
+
+    subgraph queues["Bounded queues (drop oldest, ≤ 2 sends in flight)"]
+        lq["logs: batch 50 · 5 s · queue 1000<br/>page hide → sendBeacon (≤ 60 KiB)"]
+        tq["spans: batch 512 · 5 s · queue 2048<br/>page hide → flush"]
+        mq["metrics: delta temporality · every 60 s"]
+    end
+
+    otel["/otel/v1/{logs,traces,metrics}<br/>(same origin; CloudFront → OTel Collector)"]
+
+    logs --> redact --> consent
+    spans --> sample --> consent
+    meters --> checks --> consent
+    consent -->|"error always · warn if essential or telemetry granted ·<br/>info/debug only with telemetry"| lq
+    consent -->|"telemetry granted"| tq
+    consent -->|"telemetry granted (interval discarded otherwise)"| mq
+    lq --> otel
+    tq --> otel
+    mq --> otel
+    otel --> coll["Collector: deltatocumulative · label allowlists ·<br/>drops per-browser resource attributes"]
