@@ -61,6 +61,10 @@
       "types": "./dist/i18n/index.d.ts",
       "import": "./dist/i18n/index.js"
     },
+    "./mfe": {
+      "types": "./dist/mfe/index.d.ts",
+      "import": "./dist/mfe/index.js"
+    },
     "./nav": {
       "types": "./dist/nav/index.d.ts",
       "import": "./dist/nav/index.js"
