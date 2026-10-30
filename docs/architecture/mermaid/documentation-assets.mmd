@@ -1,0 +1,37 @@
+graph LR
+    subgraph sources["Documentation sources"]
+        design["docs/design/frontend-sdk-design.md<br/>decision record (HLD): what and why"]
+        mmd["docs/architecture/mermaid/<br/>.mmd source diagrams (package-dependencies generated)"]
+        arch["ARCHITECTURE.md<br/>embeds every .mmd verbatim + prose"]
+        lld["docs/lld/platform-reactcommon-lld.md<br/>implementation as built"]
+        obs["docs/observability/<br/>standard · metric-registry.md (generated) · migration · runbooks"]
+        pd["docs/problem-details/<br/>RFC 9457 in the SDK · registry.md (generated)"]
+        readme["README.md · package READMEs · contracts/README.md"]
+        api["packages/frontend-sdk/api/*.api.md<br/>(api-extractor, per subpath)"]
+        cs["CHANGELOG.md (one history, Keep a Changelog)"]
+    end
+
+    subgraph checks["Kept in sync by"]
+        dsync["pnpm docs:sync / docs:check<br/>(Validate / Quality)"]
+        apic["pnpm api:check"]
+        csync["pnpm contracts:sync"]
+    end
+
+    subgraph rendered["Rendered / consumed by"]
+        gh["GitHub — Markdown + Mermaid"]
+        ide["IDE Mermaid preview · mermaid.live"]
+        rel["GitHub Release notes"]
+    end
+
+    csync --> obs
+    csync --> pd
+    mmd --> dsync --> arch
+    obs --> dsync
+    pd --> dsync
+    api --> apic
+    arch --> gh
+    design --> gh
+    lld --> gh
+    readme --> gh
+    mmd --> ide
+    cs --> rel

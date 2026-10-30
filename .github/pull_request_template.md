@@ -25,7 +25,7 @@ Provide a clear description of the changes.
 ### Code Quality
 - [ ] Lint, typecheck and dependency rules pass (`pnpm lint`, `pnpm typecheck`, `pnpm depcruise`)
 - [ ] API reports updated if a public API changed (`pnpm api`, commit `api/*.api.md`)
-- [ ] Changeset added for a change to a published package (`pnpm changeset`)
+- [ ] Changeset (`pnpm changeset`) and a `CHANGELOG.md` entry under `[Unreleased]` for a change to a published package
 - [ ] No debug logs / commented code
 
 ---

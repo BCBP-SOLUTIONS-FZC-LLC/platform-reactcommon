@@ -1,0 +1,30 @@
+sequenceDiagram
+    autonumber
+    participant SH as Shell bootstrap
+    participant M as /mfe loadManifest
+    participant RB as RemoteBoundary (/react)
+    participant L as loadRemote (/mfe)
+    participant DOM as document / script
+    participant C as window.{container}
+    participant EB as error boundary
+
+    SH->>M: GET /remotes/manifest.json (no-cache)
+    Note over M: per remote: name ^[a-z][a-z0-9_-]{0,62}$ (not 'shell'),<br/>entry same origin or remotes.allowedOrigins, version, ownerDomain ∈ registry,<br/>integrity sha256/384/512 — an invalid remote is dropped with an error log
+    M-->>SH: manifest → runtime.manifest + remotes (mfe → ownerDomain)
+    RB->>L: lazy(loadRemote(remote, './Module')) inside Suspense
+    alt killSwitch lists it, or flag remote.{name}.disabled
+        L-->>RB: RemoteDisabledError (failure: disabled)
+    else
+        loop attempt ≤ 1 + retries (default 2), timeout per attempt (default 10 s)
+            L->>L: entry still allowed? (checked again before the script)
+            L->>DOM: {script src} via Trusted Types createScriptURL · integrity + crossorigin when SRI is set
+            DOM-->>C: remoteEntry.js defines window[name with '-' → '_']
+            L->>C: init(share scope) — strictVersion clash → incompatible (no retry)
+            L->>C: get('./Module') → factory()
+        end
+        L-->>RB: module (default export = component)
+    end
+    Note over L: span "remote load", platform_web_remote_load_* through the instrument port,<br/>one container per remote per page (a failed load is forgotten so it can retry)
+    RB->>EB: any failure → MFEErrorBoundary with mfe = remote
+    EB->>EB: chunk-load error → reload once per version (sessionStorage guard)<br/>else log + platform_web_errors_total{source=boundary}, fallback with Try again (new lazy)
+    SH->>SH: startVersionPolling: /version.json every 5 min and on visible → useAppUpdate().available

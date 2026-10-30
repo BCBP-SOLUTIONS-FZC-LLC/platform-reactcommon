@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Writes release-notes.md: the RELEASE_TAG section of each package's CHANGELOG.md (changesets), then
-# the install lines and how to verify the assets.
+# Writes release-notes.md: the RELEASE_TAG section of CHANGELOG.md (the repository's single
+# history; the three packages share one version), then the install lines and how to verify the
+# assets. Structure as platform-gincommon's extract-release-notes.sh.
 set -euo pipefail
 
 : "${RELEASE_TAG:?RELEASE_TAG is required}"
@@ -10,22 +11,29 @@ set -euo pipefail
 source "$(dirname "$0")/changelog-section.sh"
 
 VERSION="${RELEASE_TAG#v}"
+if ! SECTION=$(changelog_section_version "$RELEASE_TAG"); then
+  echo "::error file=CHANGELOG.md::Missing entry for ${VERSION}"
+  exit 1
+fi
+# Plain redirects, not `| tee file | true`: under pipefail, `true` exits without reading, tee can
+# die of SIGPIPE and fail the whole release.
+changelog_section_body "$SECTION" > release-notes.md
+
+if [ ! -s release-notes.md ] || [ -z "$(tr -d '[:space:]' < release-notes.md)" ]; then
+  echo "::error file=CHANGELOG.md::Section [${SECTION}] for ${VERSION} is empty"
+  exit 1
+fi
+if [ "$SECTION" != "$VERSION" ]; then
+  release_notes_prefix="> Pre-release ${RELEASE_TAG} of ${SECTION}."
+fi
+
 {
-  for pkg in frontend-sdk webpack-preset eslint-plugin; do
-    file="packages/${pkg}/CHANGELOG.md"
-    body=$(changelog_section_body "$VERSION" "$file")
-    if [ -z "$(tr -d '[:space:]' <<<"$body")" ]; then
-      echo "::error file=${file}::Section ${VERSION} is missing or empty" >&2
-      exit 1
-    fi
-    echo "## @platform/${pkg} ${VERSION}"
+  if [ -n "${release_notes_prefix:-}" ]; then
+    echo "${release_notes_prefix}"
     echo ""
-    # changesets' "### Minor Changes" headings, one level down under the package heading. sed, not
-    # ${body//…}: the match is anchored at the start of every line.
-    # shellcheck disable=SC2001
-    sed -e 's/^### /#### /' <<<"$body"
-    echo ""
-  done
+  fi
+  cat release-notes.md
+  echo ""
   echo "---"
   echo "**Install** (the tarballs attached below; no registry yet):"
   echo ""
@@ -44,5 +52,6 @@ VERSION="${RELEASE_TAG#v}"
   echo '```'
   echo ""
   echo "**SBOM:** \`sbom.cyclonedx.json\` (CycloneDX, Trivy)."
-} > release-notes.md
+} > release-notes.md.tmp
+mv release-notes.md.tmp release-notes.md
 cat release-notes.md

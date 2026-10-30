@@ -6,7 +6,7 @@
 |---------|-----------|
 | 1.x (including the 1.0.0-alpha pre-releases) | ✅ Active |
 
-Older major versions are not patched. Upgrade to the latest 1.x release (all three packages share one version).
+All three packages share one version. When a new major line ships, the previous major receives security fixes for six months. The trust model, known limitations and what is in scope are in [SECURITY.md](../SECURITY.md).
 
 ## Reporting a Vulnerability
 
