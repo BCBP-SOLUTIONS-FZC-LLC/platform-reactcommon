@@ -37,7 +37,7 @@ export interface CoreIdentityInput {
 export type Domain = (typeof DOMAINS)[number];
 
 // @public
-export const DOMAINS: readonly ["iam", "workflow", "billing", "tender_management", "notifications", "documents", "bff"];
+export const DOMAINS: readonly ["iam", "workflow", "billing", "tender_management", "notifications", "documents", "bff", "portal"];
 
 // @public
 export type Environment = (typeof ENVIRONMENTS)[number];

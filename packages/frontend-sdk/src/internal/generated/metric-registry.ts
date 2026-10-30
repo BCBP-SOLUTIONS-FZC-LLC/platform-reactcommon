@@ -186,7 +186,8 @@ export const METRIC_REGISTRY = {
         "tender_management",
         "notifications",
         "documents",
-        "bff"
+        "bff",
+        "portal"
       ]
     },
     "environment": {

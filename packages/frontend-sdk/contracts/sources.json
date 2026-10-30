@@ -4,7 +4,7 @@
     "platform-gincommon": {
       "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-gincommon",
       "path": "go/platform-gincommon",
-      "sha": "f786d6b7be754ceb164a1137fcd3f71e9d549d6b"
+      "sha": "fbf57c5a692175b025098d3802f12d38eb34db0a"
     },
     "platform-events": {
       "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-events",

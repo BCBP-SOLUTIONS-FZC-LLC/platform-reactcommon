@@ -70,6 +70,10 @@ describe('initializeCore', () => {
     expect(Object.isFrozen(id)).toBe(true);
   });
 
+  it("accepts the multi-domain shell's identity (domain 'portal', design doc §D1)", () => {
+    expect(initializeCore({ serviceName: 'web-app', domain: 'portal', environment: 'prod', buildVersion: '1.0.0' }).domain).toBe('portal');
+  });
+
   it('is idempotent for an identity that normalises to the same values', () => {
     const first = initializeCore(input);
     expect(initializeCore({ ...input, environment: ' DEV ', buildVersion: ' 1.0.0 ' })).toBe(first);
@@ -103,9 +107,6 @@ describe('initializeCore', () => {
     );
   });
 
-  it('rejects the multi-domain shell value until the registry PR adds it (design doc §D1)', () => {
-    expect(() => initializeCore({ ...input, domain: 'portal' })).toThrow(expect.objectContaining({ field: 'domain' }));
-  });
 });
 
 describe('vocabularies', () => {

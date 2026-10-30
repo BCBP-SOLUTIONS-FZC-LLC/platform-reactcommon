@@ -90,7 +90,7 @@ describe('loadManifest', () => {
         shell: manifestBody.tenders,
         evil: { entry: 'https://evil.example/remoteEntry.js', version: '1.0.0', ownerDomain: 'iam' },
         js: { entry: 'javascript:alert(1)', version: '1.0.0', ownerDomain: 'iam' },
-        nodomain: { entry: '/remotes/x.js', version: '1.0.0', ownerDomain: 'portal' },
+        nodomain: { entry: '/remotes/x.js', version: '1.0.0', ownerDomain: 'hr' },
         badversion: { entry: '/remotes/x.js', version: '-1', ownerDomain: 'iam' },
         badsri: { entry: '/remotes/x.js', version: '1.0.0', ownerDomain: 'iam', integrity: 'md5-x' },
         extra: { entry: '/remotes/x.js', version: '1.0.0', ownerDomain: 'iam', debug: true },
