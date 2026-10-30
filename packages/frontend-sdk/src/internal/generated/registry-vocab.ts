@@ -8,7 +8,8 @@ export const REGISTRY_VOCAB = {
     "tender_management",
     "notifications",
     "documents",
-    "bff"
+    "bff",
+    "portal"
   ],
   "environments": [
     "local",
