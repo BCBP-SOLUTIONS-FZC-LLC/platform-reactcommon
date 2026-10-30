@@ -31,6 +31,8 @@ export interface PlatformRuntime {
   memorySessionId: string | undefined;
   /** The deep-frozen runtime config, set once by the shell (/config owns its type). */
   config: unknown;
+  /** Tracing state once initializeTracing has run (/tracing owns its type). */
+  tracing: unknown;
 }
 
 export const RUNTIME_KEY = Symbol.for('@platform/frontend-sdk');
@@ -57,6 +59,7 @@ function createRuntime(): PlatformRuntime {
     instruments: NOOP_INSTRUMENTS,
     memorySessionId: undefined,
     config: undefined,
+    tracing: undefined,
   };
 }
 
