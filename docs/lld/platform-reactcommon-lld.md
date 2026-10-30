@@ -128,7 +128,7 @@ platform-reactcommon/
 |---|---|---|
 | `@opentelemetry/sdk-trace`, `sdk-logs`, `sdk-metrics` (OTel JS 3), `exporter-*-otlp-http` (0.300), `otlp-transformer`, `resources`, `core` | `/tracing`, `/logging`, `/metrics` only | OTLP/HTTP export; one pipeline, no Faro |
 | `@opentelemetry/api` `~1.10.0` (peer, shared singleton) | the three telemetry subpaths | OTel JS 3 requires `>=1.10 <1.11`; one global API per page |
-| `zod` 4 (jitless) | `/config` | Strict runtime-config validation |
+| `zod` 4 (`zod/mini`, jitless) | `/config` | Strict runtime-config validation; `zod/mini` keeps `/config` at about 11 KB gzipped (classic Zod: 93 KB) |
 | `dompurify` 3 | `/security` | HTML sanitizing (own entry so other subpaths do not pay its ~20 KB) |
 | `react`, `react-dom` (peers) | `/react`, `/testing` only | |
 

@@ -20,8 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - consent (`setConsentProvider`, `hasConsent`);
   - log sanitizing with gincommon parity (`isSensitiveKey`, `sanitizeFields`, `sanitizeString`).
 - **`/config`:**
-  - the strict `RuntimeConfigSchema`: unknown keys rejected at every level, the design doc's defaults;
-  - `loadRuntimeConfig`: no HTTP cache, and every failure a `RuntimeConfigError` with issue paths;
+  - the strict `RuntimeConfigSchema` (`zod/mini`, typed `z.ZodMiniType<RuntimeConfig>`): unknown keys rejected at every level, the design doc's defaults. Using `zod/mini` instead of classic Zod halves the SDK the shell loads (all subpaths, gzipped: 168.6 KB → 86.1 KB);
+  - `loadRuntimeConfig`: no HTTP cache, and every failure a `RuntimeConfigError` with issue paths and SDK-worded messages (for example `unknown keys "typo"`, `must be ≥ 1000`);
   - `setRuntimeConfig` / `getConfig` / `tryGetConfig`: set once, deep-frozen;
   - validation never constructs code at runtime (CSP-safe).
 - **`/problem`:**
