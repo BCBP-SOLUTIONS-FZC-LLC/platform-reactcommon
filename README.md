@@ -522,7 +522,7 @@ This repository publishes npm packages; the shell and remotes that use them are 
 
 ### Versioning
 
-All three packages share one version (changesets `fixed`). Changes are recorded as `.changeset/*.md` entries and written to each package's `CHANGELOG.md` by `pnpm changeset version`.
+SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as public API, guarantees, how versions interact with Module Federation, compatibility matrix). All three packages share one version (changesets `fixed`). Changes are recorded as `.changeset/*.md` entries and written to each package's `CHANGELOG.md` by `pnpm changeset version`.
 
 | Version | Status | Notes |
 |---|---|---|
@@ -651,6 +651,7 @@ Keeping scope to **identity, data access, errors, observability and the micro-fr
 | [`docs/observability/runbooks.md`](docs/observability/runbooks.md) | Frontend runbooks and proposed alerts |
 | [`docs/problem-details/`](docs/problem-details/README.md) | RFC 9457 in the browser; generated type registry |
 | [`packages/frontend-sdk/contracts/README.md`](packages/frontend-sdk/contracts/README.md) | Each generated contract and its source |
+| [VERSIONING.md](VERSIONING.md) | SemVer rules, public API, Module Federation and versions, release process, compatibility matrix |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, supported versions, trust model and known limitations, scope |
 
 **A change to a published package:**
