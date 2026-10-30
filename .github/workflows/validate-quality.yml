@@ -1,0 +1,88 @@
+# Reusable workflow — quality gate.
+# workflow hygiene · action pins · lockfile · exports · lint · typecheck · build · API reports ·
+# dependency rules · example builds (CSP checks) · dependency vulnerabilities.
+# Called by ci.yml and release.yml. Must pass before a release; does NOT gate trivy or smoke
+# (those only need validate-test.yml and the packed tarballs).
+name: Validate / Quality
+
+"on":
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to check out (leave empty to use the caller ref)'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      # Workflow files must use literal operators, not HTML entity encodings.
+      - name: Reject HTML-escaped operators in workflow files
+        run: |
+          if grep -REn '&(gt|lt|amp);' .github/workflows/ .github/actions/ .github/scripts/; then
+            echo "::error::Workflow or script files contain HTML entities. Use literal operators instead."
+            exit 1
+          fi
+
+      # Every third-party action pinned to a full commit SHA (a moved tag cannot change the
+      # pipeline) — this repo's counterpart of gincommon's Dockerfile digest check.
+      - name: Action SHA pin check
+        run: bash .github/scripts/check-action-pins.sh
+
+      # Fails on a stale pnpm-lock.yaml (Lock drift).
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # The SDK exports map and the SDK facts generated into webpack-preset and eslint-plugin.
+      - name: Exports check
+        run: pnpm exports:check
+
+      - name: Lint (ESLint, dependency boundaries, @platform/eslint-plugin on the examples)
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build (packages and examples)
+        run: pnpm build
+
+      # The public API per subpath must equal the committed api/*.api.md (design doc §C1).
+      - name: API reports
+        run: |
+          if ! pnpm api:check; then
+            echo "::error file=packages/frontend-sdk/api,title=API report::The public API changed — run 'pnpm api' and commit api/*.api.md with the change."
+            exit 1
+          fi
+
+      - name: Dependency rules (dependency-cruiser)
+        run: pnpm depcruise
+
+      # Example bundles: window.<container>, no SDK in remotes, no eval, hidden source maps,
+      # no inline script (design doc §C3).
+      - name: Example builds (CSP checks)
+        run: pnpm examples:check
+
+      # Runtime dependencies of the published packages only (dev tooling is not shipped).
+      - name: Vulnerability check
+        run: |
+          if ! pnpm audit --prod --audit-level high; then
+            echo "::error file=pnpm-lock.yaml,title=Vulnerability found::pnpm audit found a high or critical vulnerability in a runtime dependency — run 'pnpm audit --prod' locally."
+            exit 1
+          fi

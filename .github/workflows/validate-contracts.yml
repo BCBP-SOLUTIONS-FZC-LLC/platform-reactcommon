@@ -1,0 +1,144 @@
+# Reusable workflow — contracts gate (design doc §C5 "How drift is caught").
+# contracts/ and src/internal/generated must equal what the pinned backend commits generate
+# (contracts/sources.json), and the SDK's metric rules must agree with gincommon's metricslint
+# (metrics:parity). The sources are checked out next to this repo in the local workspace layout
+# (PLATFORM_ROOT = the workspace root, IAM_REPOS_DIR = iam/). Called by ci.yml and release.yml.
+#
+# Token: PLATFORM_REPOS_TOKEN if set, else the org's CI_REPO_READ_TOKEN (the read token
+# platform-gincommon and platform-fastapicommon use for sibling checkouts). It needs Contents:Read
+# on the seven repositories below.
+name: Validate / Contracts
+
+"on":
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to check out (leave empty to use the caller ref)'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  contracts:
+    name: contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          path: react/platform-reactcommon
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Read pins (contracts/sources.json)
+        id: pins
+        working-directory: react/platform-reactcommon
+        run: |
+          for name in platform-gincommon platform-events platform-pgcommon platform-fastapicommon platform-interop-tests; do
+            echo "${name}=$(jq -r --arg n "$name" '.platform[$n].sha' packages/frontend-sdk/contracts/sources.json)" >> "$GITHUB_OUTPUT"
+          done
+          for name in iam-authz-enrichment iam-org-membership; do
+            echo "${name}=$(jq -r --arg n "$name" '.iam[$n].sha' packages/frontend-sdk/contracts/sources.json)" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Checkout platform-gincommon (pinned)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/platform-gincommon
+          ref: ${{ steps.pins.outputs.platform-gincommon }}
+          path: go/platform-gincommon
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      - name: Checkout platform-events (pinned)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/platform-events
+          ref: ${{ steps.pins.outputs.platform-events }}
+          path: go/platform-events
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      - name: Checkout platform-pgcommon (pinned)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon
+          ref: ${{ steps.pins.outputs.platform-pgcommon }}
+          path: go/platform-pgcommon
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      - name: Checkout platform-fastapicommon (pinned)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/platform-fastapicommon
+          ref: ${{ steps.pins.outputs.platform-fastapicommon }}
+          path: python/platform-fastapicommon
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      - name: Checkout platform-interop-tests (pinned)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/platform-interop-tests
+          ref: ${{ steps.pins.outputs.platform-interop-tests }}
+          path: platform-interop-tests
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      - name: Checkout iam-authz-enrichment (pinned)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/iam-authz-enrichment
+          ref: ${{ steps.pins.outputs.iam-authz-enrichment }}
+          path: iam/iam-authz-enrichment
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      - name: Checkout iam-org-membership (pinned)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/iam-org-membership
+          ref: ${{ steps.pins.outputs.iam-org-membership }}
+          path: iam/iam-org-membership
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      # go-probe (contracts-export) and gincommon's metricslint are built from source.
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: platform-interop-tests/go-probe/go.mod
+          cache: false
+
+      - name: Setup
+        uses: ./react/platform-reactcommon/.github/actions/setup
+        with:
+          working-directory: react/platform-reactcommon
+
+      - name: Contracts up to date
+        working-directory: react/platform-reactcommon
+        env:
+          PLATFORM_ROOT: ${{ github.workspace }}
+          IAM_REPOS_DIR: ${{ github.workspace }}/iam
+        run: |
+          if ! pnpm contracts:check; then
+            echo "::error file=packages/frontend-sdk/contracts/sources.json,title=Contracts drift::contracts/ differs from what the pinned sources generate — run 'pnpm contracts:sync' and commit, or move the pins with --update-pins."
+            exit 1
+          fi
+
+      # design doc §C5 drift item 4: the SDK's metric rules agree with gincommon's metricslint,
+      # and its rendered inventory passes metricslint -strict.
+      - name: Metrics parity (metricslint)
+        working-directory: react/platform-reactcommon
+        env:
+          PLATFORM_ROOT: ${{ github.workspace }}
+        run: pnpm metrics:parity

@@ -107,6 +107,11 @@ export default tseslint.config(
     languageOptions: { globals: { process: 'readonly', console: 'readonly', URL: 'readonly', Buffer: 'readonly', fetch: 'readonly' } },
   },
   {
+    // Run by actions/github-script as an async function body (ci.yml), which provides these.
+    files: ['.github/scripts/*.js'],
+    languageOptions: { globals: { github: 'readonly', context: 'readonly', core: 'readonly' } },
+  },
+  {
     // CloudFront Functions runtime: a script whose `handler` CloudFront calls.
     files: ['examples/cloudfront/spa-rewrite.js'],
     languageOptions: { sourceType: 'script' },
