@@ -29,6 +29,8 @@ export interface PlatformRuntime {
   instruments: PlatformInstruments;
   /** Session id used when localStorage is unavailable (private mode, blocked storage). */
   memorySessionId: string | undefined;
+  /** The deep-frozen runtime config, set once by the shell (/config owns its type). */
+  config: unknown;
 }
 
 export const RUNTIME_KEY = Symbol.for('@platform/frontend-sdk');
@@ -54,6 +56,7 @@ function createRuntime(): PlatformRuntime {
     consent: ESSENTIAL_ONLY_CONSENT,
     instruments: NOOP_INSTRUMENTS,
     memorySessionId: undefined,
+    config: undefined,
   };
 }
 
