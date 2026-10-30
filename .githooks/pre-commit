@@ -3,7 +3,7 @@
 # in the tooling packages, docs and the metric-registry inventory), lint, typecheck and the
 # dependency rules. Tests, the build, the API reports and the example checks are slower and run
 # in CI (validate-test.yml, validate-quality.yml) and in `pnpm verify`.
-# Install with `pnpm hooks:install` (once per clone). Bypass in an emergency with `git commit --no-verify`.
+# Install with `pnpm run install-hooks` (or `pnpm run setup`) (once per clone). Bypass in an emergency with `git commit --no-verify`.
 set -euo pipefail
 
 echo "[pre-commit] checking pnpm-lock.yaml..."

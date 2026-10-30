@@ -15,12 +15,11 @@ This is an internal shared library for BCBP Solutions platform web apps: the Rea
 git clone https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
 cd platform-reactcommon
 corepack enable
-pnpm install         # frozen in CI: commit pnpm-lock.yaml changes
-pnpm hooks:install   # copies .githooks/pre-commit into the repository's hooks
-pnpm verify    # exports + docs checks, lint, typecheck, tests, build, example checks, API reports, dependency rules
+pnpm run setup   # pnpm install + copies .githooks/pre-commit into the repository's hooks
+pnpm verify      # exports + docs checks, lint, typecheck, tests, build, example checks, API reports, dependency rules
 ```
 
-The pre-commit hook runs the fast gates (lockfile drift, action SHA pins, generated exports and docs, lint, typecheck, dependency rules) in about 10 s. `pnpm verify` runs the same checks as CI's quality and test gates. The other commands are listed in the [README](README.md#common-commands).
+The pre-commit hook runs the fast gates (lockfile drift, action SHA pins, generated exports and docs, lint, typecheck, dependency rules) in about 10 s. `pnpm verify` runs the same checks as CI's quality and test gates. `pnpm run ci` adds the coverage gate and the audit. The other commands, including the ones named after gincommon's `make` targets, are listed in the [README](README.md#make-style-commands).
 
 ## Project layout
 
@@ -38,7 +37,7 @@ packages/
   eslint-plugin/            ← Consumer lint rules (src/rules.ts, test/rules.test.ts)
 examples/                   ← shell, remote-tenders, cloudfront (built and checked in CI; not deployed)
 scripts/                    ← exports, contracts, docs, API reports, metrics parity, example checks
-.githooks/pre-commit        ← Local commit gates (`pnpm hooks:install`)
+.githooks/pre-commit        ← Local commit gates (`pnpm run install-hooks`)
 docs/                       ← design · architecture · lld · areas · observability · problem-details
 ```
 
@@ -115,7 +114,7 @@ Give new public symbols a TSDoc comment; it ends up in the API report (api-extra
 
 ## Pull request checklist
 
-- [ ] `pnpm verify` passes locally
+- [ ] `pnpm run ci` passes locally (`pnpm verify` + the coverage gate and the audit)
 - [ ] New behaviour is covered by tests in `packages/*/test/`; coverage stays ≥ 94%
 - [ ] New public symbols have TSDoc comments, and `api/*.api.md` is updated (`pnpm api`)
 - [ ] A changeset (`pnpm changeset`) for a change to a published package

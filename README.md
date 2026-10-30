@@ -165,7 +165,7 @@ packages/
   eslint-plugin/       consumer lint rules
 examples/              shell, remote-tenders, cloudfront (built and checked in CI)
 scripts/               contracts, exports, docs, API reports, metrics parity, example checks
-.githooks/pre-commit   local commit gates (pnpm hooks:install)
+.githooks/pre-commit   local commit gates (pnpm run install-hooks)
 docs/                  design · architecture · lld · areas · observability · problem-details
 ```
 
@@ -339,8 +339,7 @@ Node 22 (`.nvmrc`) and pnpm via corepack (`corepack enable`; the version comes f
 ### Setup
 
 ```bash
-pnpm install
-pnpm hooks:install   # once per clone: .githooks/pre-commit
+pnpm run setup   # pnpm install + install-hooks (once per clone: .githooks/pre-commit)
 pnpm verify
 ```
 
@@ -358,7 +357,37 @@ pnpm verify
 | `pnpm metrics:parity` | The SDK's metric checks vs gincommon's `metricslint` |
 | `pnpm examples:check` | CSP and sharing checks on the example builds (after `pnpm build`) |
 | `pnpm changeset` | Record a change to a published package |
-| `pnpm hooks:install` | Install `.githooks/pre-commit` into the repository's hooks |
+| `pnpm run ci` | Everything CI's quality and test gates run, with the coverage gate and the audit |
+
+### Make-style commands
+
+The same task names as platform-gincommon's Makefile, as `package.json` scripts. Call them with `pnpm run <name>`: `pnpm setup` and `pnpm help` are pnpm's own commands (`pnpm setup` edits your shell profile).
+
+| `pnpm run …` | gincommon | What it does |
+|---|---|---|
+| `help` | `make help` | List every script and its command |
+| `setup` | `make setup` | `pnpm install`, then `install-hooks` (no `.env`: the SDK reads no environment variables) |
+| `install-hooks` | `make install-hooks` | Copy `.githooks/pre-commit` into the repository's hooks directory |
+| `tidy` | `make tidy` | Bring `pnpm-lock.yaml` in line with the `package.json` files |
+| `mod-verify` | `make mod-verify` | Frozen, offline install: the lockfile matches and the store has every package |
+| `fmt` | `make fmt` | `eslint . --fix` (no separate formatter; there is no `fmt-check`, `lint` covers it) |
+| `lint` | `make lint` | ESLint, with the layer rules generated from `subpaths.json` |
+| `vet` | `make vet` | Typecheck and dependency rules |
+| `vuln-check` | `make vuln-check` | `pnpm audit --prod --audit-level high` (as CI) |
+| `test` | `make test` | Every test: packages, examples, scripts |
+| `test-unit` | `make test-unit` | The packages' and scripts' tests |
+| `test-int` | `make test-int` | The examples' tests: the shell's IAM ports, CloudFront CSP and Lambda |
+| `test-cover` | `make test-cover` | Tests with coverage (`coverage/`) |
+| `test-smoke` | `make test-smoke-image` | Build, pack the tarballs and run CI's smoke tests against them (needs npm registry access) |
+| `build` | `make build` | Packages, then the example builds |
+| `cover` / `cover-func` | `make cover` / `make cover-func` | Coverage HTML report (`coverage/index.html`) / per-file table |
+| `cover-check` | `make cover-check` | Coverage run + the ≥ 94% gate (CI's script) |
+| `ci` | `make ci` | `mod-verify`, exports and docs checks, `lint`, `vet`, `cover-check`, `build`, example checks, API reports, `vuln-check` |
+| `metrics-lint` | `make metrics-lint` | Parity with gincommon's `metricslint`, and inventory drift |
+| `metrics-inventory` | `make metrics-inventory` | Regenerate `docs/observability/metric-registry.md` (`docs:sync`) |
+| `clean` | `make clean` | Remove `coverage/`, `dist-packages/`, every `dist/` and api-extractor's `temp/` |
+
+Not carried over: `run` and `docker-*` (there's no server and no local stack here; the [observability section](#against-a-local-collector) uses gincommon's), `godoc` (the API reports in `packages/frontend-sdk/api/` are the reference), `pin-base-images` (no Dockerfile), `test-e2e` and `race`/`test-ci` (no e2e suite or race detector in JavaScript).
 
 ### Running a single test
 
