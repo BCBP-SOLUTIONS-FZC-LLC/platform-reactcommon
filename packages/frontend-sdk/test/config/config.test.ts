@@ -239,3 +239,50 @@ describe('loadRuntimeConfig', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe('RuntimeConfigError messages (zod/mini has no default messages)', () => {
+  // Each built-in issue is worded from its own fields; "Invalid input" never reaches the operator.
+  // path → every message for it (one value can fail several checks)
+  const messages = (raw: unknown): Record<string, string[]> => {
+    try {
+      setRuntimeConfig(raw as RuntimeConfig);
+      return {};
+    } catch (e) {
+      const out: Record<string, string[]> = {};
+      for (const i of (e as RuntimeConfigError).issues) (out[i.path] ??= []).push(i.message);
+      return out;
+    }
+  };
+
+  beforeEach(() => resetRuntimeForTests());
+
+  it('names unknown keys, wrong types, ranges, list sizes and enum values', () => {
+    const c = minimal() as Record<string, Record<string, unknown>>;
+    const got = messages({
+      ...c,
+      api: { ...c.api, typo: 1, tpyo: 2 },
+      telemetry: { logLevel: 'trace', sampleRatio: 2 },
+      remotes: { loadTimeoutMs: 10, retries: 'x' },
+      i18n: { defaultLocale: 'en', supportedLocales: [] },
+      appUpdate: { pollIntervalMs: 1.5 },
+    });
+    expect(got).toEqual({
+      api: ['unknown keys "typo", "tpyo"'],
+      'telemetry.logLevel': ['must be one of "debug", "info", "warn", "error"'],
+      'telemetry.sampleRatio': ['must be ≤ 1'],
+      'remotes.loadTimeoutMs': ['must be ≥ 1000'],
+      'remotes.retries': ['expected a number'],
+      'i18n.supportedLocales': ['must have at least 1 item', 'must include defaultLocale'],
+      'appUpdate.pollIntervalMs': ['expected an integer'],
+    });
+    expect(Object.values(got).flat()).not.toContain('Invalid input');
+  });
+
+  it('keeps the messages the schema sets itself', () => {
+    const c = minimal() as Record<string, Record<string, unknown>>;
+    expect(messages({ ...c, api: { baseUrl: 'https://evil.example' }, flags: { x: Number.NaN } })).toEqual({
+      'api.baseUrl': [`must be a same-origin path such as '/api', got "https://evil.example"`],
+      'flags.x': ['must be a boolean, a string or a finite number'],
+    });
+  });
+});

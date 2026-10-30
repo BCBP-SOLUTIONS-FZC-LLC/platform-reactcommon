@@ -4,7 +4,7 @@
 
 ```ts
 
-import { z } from 'zod';
+import * as z from 'zod/mini';
 
 // @public
 export function getConfig(): RuntimeConfig;
@@ -78,7 +78,7 @@ export class RuntimeConfigError extends Error {
 }
 
 // @public
-export const RuntimeConfigSchema: z.ZodType<RuntimeConfig>;
+export const RuntimeConfigSchema: z.ZodMiniType<RuntimeConfig>;
 
 // @public
 export function setRuntimeConfig(c: RuntimeConfig): void;
