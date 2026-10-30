@@ -1,7 +1,7 @@
 // Page identity (design doc §C1 /core, §0 rows 1-2): service, domain, environment and build
 // version, validated with the rules every platform library shares (contracts/fixtures/
 // identity_cases.json runs here and in go-probe identity-check).
-import { REGISTRY_VOCAB } from '../internal/generated/contracts.ts';
+import { REGISTRY_VOCAB } from '../internal/generated/registry-vocab.ts';
 import { getRuntime } from '../internal/runtime.ts';
 
 /** Registry domain vocabulary, generated from gincommon's registry.json. */

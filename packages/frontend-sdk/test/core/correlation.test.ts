@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getSessionId, newRequestId } from '../../src/core/index.ts';
-import { HEADERS } from '../../src/internal/generated/contracts.ts';
+import { HEADERS } from '../../src/internal/generated/headers.ts';
 import { UUID_V4_PATTERN } from '../../src/internal/ids.ts';
 import { getRuntime, resetRuntimeForTests } from '../../src/internal/runtime.ts';
 import { SESSION_ID_STORAGE_KEY, rotateSessionId } from '../../src/internal/session.ts';

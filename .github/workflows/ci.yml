@@ -78,3 +78,9 @@ jobs:
           PLATFORM_ROOT: ${{ github.workspace }}
           IAM_REPOS_DIR: ${{ github.workspace }}/iam
         run: pnpm contracts:check
+      # design doc §C5 drift item 4: the SDK's metric rules agree with gincommon's metricslint,
+      # and its rendered inventory passes metricslint -strict.
+      - working-directory: react/platform-reactcommon
+        env:
+          PLATFORM_ROOT: ${{ github.workspace }}
+        run: pnpm metrics:parity

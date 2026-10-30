@@ -19,6 +19,7 @@ import {
   buildHeaders,
   buildLogFields,
   buildMetricRegistry,
+  buildMetricRegistryConstants,
   buildProblemRules,
   buildProblemTypes,
   buildRedaction,
@@ -151,7 +152,8 @@ function generate(roots: Roots, sources: Sources): Map<string, string> {
 
   const files = new Map<string, string>();
   files.set('registry-vocab.json', toJsonText(vocab));
-  files.set('metric-registry.json', toJsonText(buildMetricRegistry(registry, `platform-gincommon ${REGISTRY}`)));
+  const metricRegistry = buildMetricRegistry(registry, `platform-gincommon ${REGISTRY}`);
+  files.set('metric-registry.json', toJsonText(metricRegistry));
   files.set('problem-types.json', toJsonText(problemTypes));
   files.set('gateway-deny-codes.json', toJsonText(denyCodes));
   files.set('headers.json', toJsonText(headers));
@@ -161,28 +163,28 @@ function generate(roots: Roots, sources: Sources): Map<string, string> {
   for (const fixture of ['header_cases.json', 'identity_cases.json', 'redaction_cases.json', 'problem_bodies.json']) {
     files.set(`fixtures/${fixture}`, read(interop, `fixtures/${fixture}`));
   }
-  // The constants the SDK's code imports (src/internal/generated), from the same objects.
-  files.set(
-    '../src/internal/generated/contracts.ts',
-    buildTsConstants(
+  // The constants the SDK's code imports (src/internal/generated), from the same objects: one
+  // module per contract, so a subpath bundles only the contracts it uses (Module Federation
+  // shares subpaths whole, without tree-shaking).
+  const constants: [string, Record<string, unknown>, string][] = [
+    ['registry-vocab', { REGISTRY_VOCAB: vocab }, 'contracts/registry-vocab.json'],
+    ['headers', { HEADERS: headers }, 'contracts/headers.json'],
+    ['redaction', { REDACTION: redaction }, 'contracts/redaction.json'],
+    [
+      'problem',
       {
-        REGISTRY_VOCAB: vocab,
-        HEADERS: headers,
-        REDACTION: redaction,
         PROBLEM: problemTypes,
         // Platform types keyed like PlatformProblemTypes (BadRequest, NotFound, …), registry order.
         PLATFORM_PROBLEM_TYPES: Object.fromEntries(problemTypes.types.map((t) => [pascalCase(t.name), t])),
-        GATEWAY_DENY_CODES: denyCodes.codes.map((c) => c.code),
       },
-      [
-        'contracts/registry-vocab.json',
-        'contracts/headers.json',
-        'contracts/redaction.json',
-        'contracts/problem-types.json',
-        'contracts/gateway-deny-codes.json',
-      ],
-    ),
-  );
+      'contracts/problem-types.json',
+    ],
+    ['gateway-deny-codes', { GATEWAY_DENY_CODES: denyCodes.codes.map((c) => c.code) }, 'contracts/gateway-deny-codes.json'],
+    ['metric-registry', { METRIC_REGISTRY: buildMetricRegistryConstants(metricRegistry) }, 'contracts/metric-registry.json'],
+  ];
+  for (const [file, values, source] of constants) {
+    files.set(`../src/internal/generated/${file}.ts`, buildTsConstants(values, [source]));
+  }
   return files;
 }
 

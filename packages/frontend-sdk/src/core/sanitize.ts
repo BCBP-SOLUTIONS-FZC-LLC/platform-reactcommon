@@ -4,7 +4,7 @@
 // exports its sanitizer) in Go. Two deliberate differences, both stricter:
 // - sanitizeString also removes U+2028 and U+2029 (the fixture's `expectedSdk`);
 // - sanitizeFields recurses into nested objects and arrays, which the flat backend maps never have.
-import { REDACTION } from '../internal/generated/contracts.ts';
+import { REDACTION } from '../internal/generated/redaction.ts';
 
 const EXACT_KEYS: ReadonlySet<string> = new Set(REDACTION.exactKeys);
 

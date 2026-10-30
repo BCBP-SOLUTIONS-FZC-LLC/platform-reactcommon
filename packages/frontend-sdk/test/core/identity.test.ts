@@ -10,7 +10,7 @@ import {
   isInitialized,
   type CoreIdentityInput,
 } from '../../src/core/index.ts';
-import { REGISTRY_VOCAB } from '../../src/internal/generated/contracts.ts';
+import { REGISTRY_VOCAB } from '../../src/internal/generated/registry-vocab.ts';
 import { resetRuntimeForTests } from '../../src/internal/runtime.ts';
 import { fixture } from './helpers.ts';
 

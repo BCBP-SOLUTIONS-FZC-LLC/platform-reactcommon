@@ -20,7 +20,8 @@
     "contracts:check": "tsx scripts/sync-contracts.ts --check",
     "changeset": "changeset",
     "verify": "pnpm exports:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm api:check && pnpm depcruise",
-    "api:check": "pnpm -r api:check"
+    "api:check": "pnpm -r api:check",
+    "metrics:parity": "tsx scripts/metrics-parity.ts"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
