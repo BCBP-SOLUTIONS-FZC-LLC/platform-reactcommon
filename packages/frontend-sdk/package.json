@@ -29,6 +29,10 @@
       "types": "./dist/config/index.d.ts",
       "import": "./dist/config/index.js"
     },
+    "./storage": {
+      "types": "./dist/storage/index.d.ts",
+      "import": "./dist/storage/index.js"
+    },
     "./tracing": {
       "types": "./dist/tracing/index.d.ts",
       "import": "./dist/tracing/index.js"
