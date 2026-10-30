@@ -12,7 +12,11 @@ fails when they differ from what the pinned sources generate.
 | `problem-types.json` | `go-probe contracts-export` (gincommon `pkg/problem`): problem constants, platform types, `TypeForStatus` | `/problem` |
 | `headers.json` | `go-probe contracts-export` (gincommon `pkg/gincommon`) + gincommon `internal/core/domain` limits and patterns | `/core`, `/http` |
 | `log-fields.json` | gincommon `internal/adapter/inbound/http/middleware/logging.go` | `/logging` |
+| `redaction.json` | gincommon `internal/core/service/log_sanitizer.go` (unexported): exact keys, substrings, `*_key` rule, placeholder, 256-byte limit | `/core` |
 | `fixtures/header_cases.json` | platform-interop-tests `fixtures/header_cases.json` (byte copy) | `/core`, `/http` tests |
+| `fixtures/identity_cases.json` | platform-interop-tests `fixtures/identity_cases.json` (byte copy; Go runs it with `go-probe identity-check`) | `/core` tests |
+| `fixtures/redaction_cases.json` | platform-interop-tests `fixtures/redaction_cases.json` (byte copy) | `/core` tests |
+| `../src/internal/generated/contracts.ts` | The same objects as `registry-vocab.json`, `headers.json` and `redaction.json`, as `as const` TypeScript | SDK code |
 
 Sources are read from sibling checkouts under `PLATFORM_ROOT` (default: two levels above this repo,
 i.e. the workspace root), at the paths in `sources.json`. The IAM contracts (gateway deny codes,

@@ -11,13 +11,15 @@
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import {
   buildHeaders,
   buildLogFields,
   buildMetricRegistry,
   buildProblemTypes,
+  buildRedaction,
   buildRegistryVocab,
+  buildTsConstants,
   diffRegistries,
   toJsonText,
   type ContractsExport,
@@ -114,23 +116,34 @@ function generate(root: string, sources: Sources): Map<string, string> {
   const LOGGING = 'internal/adapter/inbound/http/middleware/logging.go';
   const EXPORT = 'platform-interop-tests go-probe contracts-export (gincommon pkg/problem, pkg/gincommon)';
 
+  const SANITIZER = 'internal/core/service/log_sanitizer.go';
+  const vocab = buildRegistryVocab(registry, `platform-gincommon ${REGISTRY}`);
+  const headers = buildHeaders(exp, read(gin, TRANSPORT), read(gin, VALIDATION), {
+    export: EXPORT,
+    transport: `platform-gincommon ${TRANSPORT}`,
+    validation: `platform-gincommon ${VALIDATION}`,
+  });
+  const redaction = buildRedaction(read(gin, SANITIZER), `platform-gincommon ${SANITIZER}`);
+
   const files = new Map<string, string>();
-  files.set('registry-vocab.json', toJsonText(buildRegistryVocab(registry, `platform-gincommon ${REGISTRY}`)));
+  files.set('registry-vocab.json', toJsonText(vocab));
   files.set('metric-registry.json', toJsonText(buildMetricRegistry(registry, `platform-gincommon ${REGISTRY}`)));
   files.set('problem-types.json', toJsonText(buildProblemTypes(exp, EXPORT)));
-  files.set(
-    'headers.json',
-    toJsonText(
-      buildHeaders(exp, read(gin, TRANSPORT), read(gin, VALIDATION), {
-        export: EXPORT,
-        transport: `platform-gincommon ${TRANSPORT}`,
-        validation: `platform-gincommon ${VALIDATION}`,
-      }),
-    ),
-  );
+  files.set('headers.json', toJsonText(headers));
+  files.set('redaction.json', toJsonText(redaction));
   files.set('log-fields.json', toJsonText(buildLogFields(read(gin, LOGGING), `platform-gincommon ${LOGGING}`)));
   // Shared golden fixtures, copied byte for byte (design doc §C5 drift item 2).
-  files.set('fixtures/header_cases.json', read(interop, 'fixtures/header_cases.json'));
+  for (const fixture of ['header_cases.json', 'identity_cases.json', 'redaction_cases.json']) {
+    files.set(`fixtures/${fixture}`, read(interop, `fixtures/${fixture}`));
+  }
+  // The constants the SDK's code imports (src/internal/generated), from the same objects.
+  files.set(
+    '../src/internal/generated/contracts.ts',
+    buildTsConstants(
+      { REGISTRY_VOCAB: vocab, HEADERS: headers, REDACTION: redaction },
+      ['contracts/registry-vocab.json', 'contracts/headers.json', 'contracts/redaction.json'],
+    ),
+  );
   return files;
 }
 
@@ -172,7 +185,7 @@ function main(): void {
     else {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, text);
-      console.log(`updated contracts/${rel}`);
+      console.log(`updated ${relative(SDK_DIR, path)}`);
     }
   }
   if (stale.length > 0) {

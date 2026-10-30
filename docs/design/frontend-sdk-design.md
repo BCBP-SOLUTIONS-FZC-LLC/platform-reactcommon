@@ -57,7 +57,7 @@ Sources of truth this design was checked against (read from source, not READMEs)
 | 1 | `domain`, `environment` each match `^[a-z][a-z0-9_-]{0,62}$` | That regex is only the **service** label pattern. `domain` is a **closed vocabulary** (`iam, workflow, billing, tender_management, notifications, documents`); `environment` is closed (`local, dev, test, staging, prod`; `production` is rejected, no aliases). | Validate against the registry vocabulary, generated from `registry.json` (§C5). A multi-domain shell uses a new `portal` value, added by registry PR (§D1). A single-business shell uses that business domain. |
 | 2 | `buildVersion` "sanitized" | `version` label pattern `^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$`, `unknown` when unset | Same rule: empty becomes `unknown`, and a non-matching value throws (no silent rewriting). |
 | 3 | `validationErrors[{field,message,code}]` | Go `FieldError` and Python `FieldError` are `{field, message}` only | `code?: string` is **optional** and parsed if present. Form mapping must not depend on it. Unknown per-entry members are preserved. |
-| 4 | Redact `password\|token\|secret\|authorization\|cookie\|key\|*_key` | Backend list is a superset: exact keys `authorization, cookie, set-cookie, password, secret, token, access_token, refresh_token, id_token, api_key, x-api-key, x-auth-token, credential, private_key, jwt, bearer, session, session_id, cert` + substring `password, secret, token, credential, session, bearer` + `key` / `*_key` | Port the backend rule **exactly** (shared fixture, §C5). |
+| 4 | Redact `password\|token\|secret\|authorization\|cookie\|key\|*_key` | Backend list is a superset: exact keys `authorization, cookie, set-cookie, password, secret, token, access_token, refresh_token, id_token, api_key, x-api-key, x-auth-token, credential, private_key, jwt, bearer, session, session_id, cert` + substring `password, secret, token, credential, session, bearer` + `key` / `*_key` | Port the backend rule **exactly** (shared fixture, §C5). One deliberate, stricter difference: `sanitizeString` also strips U+2028/U+2029 (the fixture's `expectedSdk`). |
 | 5 | Every log entry carries `sessionId` | The backend sanitizer redacts any key containing `session` | `session_id` is an **SDK envelope field** added *after* redaction. It is a random RUM id, never the IdP `sid`. Redaction applies only to caller-supplied attributes. |
 | 6 | Metric names `platform_*` | The backend follows the Enterprise Platform Observability Standard: three tiers (`platform_*`, `<domain>_*`, `<domain>_<service>_*`), registry-only shared names, centrally injected `domain`/`service`/`environment`, `_total`/`_seconds` suffixes, a closed label vocabulary, all enforced by gincommon `metricslint`. No browser metrics exist in `registry.json`, and server HTTP metrics use `status_class` + `error_class`, not `outcome`. | `/metrics` follows the same standard and the same lint (§C1 `/metrics`). Seven Tier 1 `platform_web_*` metrics and four labels go to the registry as **`proposed`**; existing labels keep their one meaning. Remotes get Tier 2/3 meters under their owning domain. Only the Tier 1 binding in `/metrics` waits for governance to approve the Tier 1 entries (§D5); Tier 2/3 and the exporter do not. |
 | 7 | `x-session-id` header | No backend reads it | Sent as an untrusted correlation header. The gateway must pass it through and never trust it. Opt-out via config. |
@@ -85,7 +85,8 @@ platform-reactcommon/
       src/<subpath>/index.ts   one folder per subpath; index.ts is the ONLY public surface
       src/internal/            shared private helpers (not exported)
       contracts/               generated, committed: problem-types.json, registry-vocab.json,
-                               headers.json, log-fields.json, redaction-cases.json, identity-cases.json,
+                               headers.json, log-fields.json, redaction.json, fixtures/ (header_cases.json,
+                               identity_cases.json, redaction_cases.json),
                                gateway-deny-codes.json, metric-registry.json, tenant-resolve-cases.json (resolve endpoint request/response fixtures),
                                session-context-cases.json (P-35 response fixtures)
       api/                     api-extractor reports (public API snapshot, one per subpath)
@@ -164,7 +165,9 @@ export function isInitialized(): boolean;
 export interface MfeScope { readonly mfe: string }
 
 // Correlation
-export function getSessionId(): string;          // RUM session id, random, rotates on idle timeout/logout
+export function getSessionId(): string;          // RUM session id: random v4 UUID, one per browser profile (SDK-reserved
+                                                 // localStorage key, shared by tabs, kept across reloads; per-page if
+                                                 // storage is unavailable); rotates on logout and the cross-tab idle timeout
 export function newRequestId(): string;          // UUIDv4, satisfies ^[a-zA-Z0-9._-]+$ ≤128
 
 // Consent (PDPL / GDPR)
@@ -179,6 +182,7 @@ export function hasConsent(c: ConsentCategory): boolean;
 // Sanitization (parity with gincommon log_sanitizer.go)
 export function isSensitiveKey(key: string): boolean;
 export function sanitizeString(s: string): string; // strip Unicode Cc + U+2028/2029, truncate 256 B at UTF-8 boundary
+                                                   // (the backends strip Cc only: U+2028/2029 is a deliberate, stricter SDK difference)
 export function sanitizeFields(f: Record<string, unknown>): Record<string, unknown>; // deep, '[REDACTED]'
 ```
 
@@ -1366,11 +1370,13 @@ never reaches a label. `canEdit` is a UI hint, and the PUT is authorised by the 
      validated against it.
    - Bumping a pin is a normal PR that reruns the contract tests (item 6).
    TS constants are generated from `contracts/` at build time.
-2. **Shared golden fixtures.** `identity-cases.json`, `header_cases.json` (existing) and new
-   `problem_bodies.json` (real Go- and Python-emitted bodies: validation-failed, conflict with
+2. **Shared golden fixtures** in `platform-interop-tests/fixtures/`, copied into `contracts/fixtures/`.
+   `header_cases.json` (existing), `identity_cases.json` (run by `go-probe identity-check` and the
+   `/core` tests) and new `problem_bodies.json` (real Go- and Python-emitted bodies: validation-failed, conflict with
    extensions, 5xx, about:blank, timeout 503) are run as table tests in the TS suite *and* by
    the existing Go/Python probes. One fixture, three languages.
-   `redaction-cases.json` also runs in Go once gincommon exports its sanitizer (§D6 I):
+   `redaction_cases.json` (verified against fastapicommon's sanitizer and a copy of gincommon's)
+   also runs in Go once gincommon exports its sanitizer (§D6 I):
    `pkg/logger.Sanitize`/`SanitizeString`, wrapping `internal/core/service/log_sanitizer.go`, which
    Go module privacy keeps the harness from importing today. Until then it runs in TS and Python only.
    There is no synced copy of the fixture inside gincommon.
@@ -1541,7 +1547,7 @@ does until the change lands.
 | F | IAM (realm-provisioner, O&M), then ops | Verification and invitation emails link to `/t/<slug>/` through `tender-web`; the invitation email is sent. Set `WEB_APP_BASE_URL` / `WEB_APP_EXTRA_BASE_URLS` for dev and staging once those hosts exist (§D2 F) | Done (RP #41, O&M #42, merged); per-environment base URLs open (prod URL is the fallback) | First login needs the identifier screen; invitees cannot accept |
 | G | bff-signup | Return `slug` in the completed signup response (§D2 G) | Unchanged | The signup page cannot always link to the workspace |
 | H | IAM (authz-enrichment) | **AE-42 / CD-31 now:** `deniedResponse` sends `application/problem+json` with the platform type for the status (`platform/unauthorized`, `platform/forbidden`, `platform/service-unavailable`) and `errorCode` = the deny reason. Keep `TestDenyCodes_Pinned`, and add a test for the body shape | **Done** (AuthZ Enrichment #39, merged; LLD 1.48, AE-42 resolved) | — |
-| I | Platform (gincommon) | Export the log sanitizer as `pkg/logger.Sanitize` / `SanitizeString`, so the interop harness runs `redaction-cases.json` in Go (§C5) | Not started | The redaction fixture runs in TS and Python only |
+| I | Platform (gincommon) | Export the log sanitizer as `pkg/logger.Sanitize` / `SanitizeString`, so the interop harness runs `redaction_cases.json` in Go (§C5) | Not started | The redaction fixture runs in TS and Python only |
 | J | Platform (registry) | Add the `portal` domain to `registry.json` in gincommon and fastapicommon, then `make metrics-inventory` (§D1) | Not started | `initializeCore({domain:'portal'})` throws, so the shell cannot start against real contracts |
 | K | Observability governance | Ratify the seven `platform_web_*` metrics, the four labels, the `web_vitals` preset and the SDK as an emitter of `platform_telemetry_label_overflow_total` (§D5) | Not started | Tier 1 instruments stay no-ops; Tier 2/3 meters and the exporter work |
 | L | IAM (realm-provisioner) | **Keycloak 26 integration test for multi-tab rotation:** in one SSO session, do two code exchanges for `tender-web` (two tabs), then refresh each lineage alternately for several rounds. Every refresh must succeed. If the test fails, IAM fixes it in the client configuration (§C1 `/auth`, "Refresh across tabs") | **Done** (RP #44, merged): passes with RP #41's settings, no change needed | — (follow the refresh rules in §C1 `/auth`) |
