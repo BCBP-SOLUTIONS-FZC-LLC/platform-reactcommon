@@ -71,6 +71,8 @@ export function buildMetricRegistry(registry: Registry, source: string) {
     bucketPresets: registry.bucket_presets,
     labels: registry.labels,
     metrics: registry.metrics.filter((m) => !(m.tier === 'legacy' && m.status === 'removed')),
+    // Every legacy name, removed ones included: a new metric may never reuse one (CheckCustom).
+    legacyNames: registry.metrics.filter((m) => m.tier === 'legacy').map((m) => m.name),
   };
 }
 
@@ -395,6 +397,33 @@ export function buildTsConstants(contracts: Record<string, unknown>, sources: re
     lines.push(`export const ${name} = ${JSON.stringify(strip(value), null, 2)} as const;`, '');
   }
   return lines.join('\n');
+}
+
+/**
+ * The registry as the SDK's /metrics code needs it: every rule and label, and per metric only the
+ * fields the registration checks and instruments use (help, not aggregation or governance notes).
+ */
+export function buildMetricRegistryConstants(m: ReturnType<typeof buildMetricRegistry>) {
+  const keep = ['name', 'tier', 'type', 'unit', 'buckets', 'status', 'help', 'labels', 'domain', 'label_values', 'owner'];
+  return {
+    constLabels: m.constLabels,
+    requiredLabels: m.requiredLabels,
+    prohibitedLabels: m.prohibitedLabels,
+    prohibitedLabelSuffixes: m.prohibitedLabelSuffixes,
+    exemptPrefixes: m.exemptPrefixes,
+    bucketPresets: m.bucketPresets,
+    labels: Object.fromEntries(
+      Object.entries(m.labels).map(([k, l]) => [
+        k,
+        Object.fromEntries(Object.entries(l).filter(([f]) => ['values', 'pattern', 'max_values'].includes(f))),
+      ]),
+    ),
+    metrics: m.metrics
+      .filter((x) => x.tier !== 'legacy')
+      .map((x) => Object.fromEntries(Object.entries(x).filter(([f]) => keep.includes(f)))),
+    // Legacy names may not be reused by a new metric (CheckCustom); only their names are needed.
+    legacyNames: m.legacyNames,
+  };
 }
 
 /** Stable JSON text for a generated file. */

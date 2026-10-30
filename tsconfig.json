@@ -1,5 +1,14 @@
 {
   "extends": "./tsconfig.base.json",
-  "compilerOptions": { "types": ["node"] },
-  "include": ["scripts/**/*.ts", "*.config.ts", "*.config.js"]
+  "compilerOptions": {
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "scripts/**/*.ts",
+    "*.config.ts",
+    "*.config.js",
+    "packages/frontend-sdk/src/internal/globals.d.ts"
+  ]
 }

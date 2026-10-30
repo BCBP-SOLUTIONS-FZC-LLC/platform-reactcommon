@@ -39,6 +39,10 @@ export interface PlatformRuntime {
   pageRoute: string | undefined;
   /** Every page-route template registered so far (/logging adds; /metrics bounds page_route by it). */
   routeTemplates: Set<string>;
+  /** Remote name → owning registry domain, from the manifest (/mfe publishes; /metrics reads). */
+  remotes: Readonly<Record<string, string>>;
+  /** Metric instruments and exporter state (/metrics owns its type). */
+  metrics: unknown;
 }
 
 export const RUNTIME_KEY = Symbol.for('@platform/frontend-sdk');
@@ -69,6 +73,8 @@ function createRuntime(): PlatformRuntime {
     logging: undefined,
     pageRoute: undefined,
     routeTemplates: new Set(),
+    remotes: Object.freeze({}),
+    metrics: undefined,
   };
 }
 

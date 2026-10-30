@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isSensitiveKey, sanitizeFields, sanitizeString } from '../../src/core/index.ts';
-import { REDACTION } from '../../src/internal/generated/contracts.ts';
+import { REDACTION } from '../../src/internal/generated/redaction.ts';
 import { fixture } from './helpers.ts';
 
 interface RedactionCases {

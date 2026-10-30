@@ -18,7 +18,7 @@ fails when they differ from what the pinned sources generate.
 | `fixtures/identity_cases.json` | platform-interop-tests `fixtures/identity_cases.json` (byte copy; Go runs it with `go-probe identity-check`) | `/core` tests |
 | `fixtures/redaction_cases.json` | platform-interop-tests `fixtures/redaction_cases.json` (byte copy) | `/core` tests |
 | `fixtures/problem_bodies.json` | platform-interop-tests `fixtures/problem_bodies.json`: real gincommon and fastapicommon error responses with gincommon's decoding (byte copy) | `/problem` tests |
-| `../src/internal/generated/contracts.ts` | The same objects as `registry-vocab.json`, `headers.json`, `redaction.json`, `problem-types.json` and `gateway-deny-codes.json`, as `as const` TypeScript | SDK code |
+| `../src/internal/generated/*.ts` | One module per contract (`registry-vocab`, `headers`, `redaction`, `problem`, `gateway-deny-codes`, `metric-registry`): the same objects as the JSON files, as `as const` TypeScript, so each subpath bundles only the contracts it uses | SDK code |
 
 Sources are read from checkouts at the paths in `sources.json`: the `platform` group under
 `PLATFORM_ROOT` (default: two levels above this repo, the workspace root), the `iam` group under

@@ -1,6 +1,6 @@
 // The platform error type registry (design doc §C1 /problem, §C5 rows 3-5), generated from
 // gincommon's PlatformTypes() and TypeForStatus.
-import { PLATFORM_PROBLEM_TYPES, PROBLEM } from '../internal/generated/contracts.ts';
+import { PLATFORM_PROBLEM_TYPES, PROBLEM } from '../internal/generated/problem.ts';
 
 /** An error type registry entry: a stable `{domain}/{name}` id with a fixed title, status and default code. */
 export interface ProblemType {

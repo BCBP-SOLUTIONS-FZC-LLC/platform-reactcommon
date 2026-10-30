@@ -13,7 +13,7 @@ import {
   typeForStatus,
 } from '../../src/problem/index.ts';
 import { typeIdOf } from '../../src/problem/errors.ts';
-import { PROBLEM } from '../../src/internal/generated/contracts.ts';
+import { PROBLEM } from '../../src/internal/generated/problem.ts';
 
 describe('platform type registry', () => {
   it('has the 15 types of gincommon PlatformTypes(), in registry order', () => {

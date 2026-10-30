@@ -2,7 +2,8 @@
 // gincommon's client decoder (FromResponse / Decode / UnmarshalJSON). contracts/fixtures/
 // problem_bodies.json holds real gincommon and fastapicommon responses with that decoder's
 // result; the SDK must produce the same. Where the design doc chose otherwise, it is noted below.
-import { GATEWAY_DENY_CODES as DENY_CODES, PROBLEM } from '../internal/generated/contracts.ts';
+import { GATEWAY_DENY_CODES as DENY_CODES } from '../internal/generated/gateway-deny-codes.ts';
+import { PROBLEM } from '../internal/generated/problem.ts';
 import { ProblemError, type FieldError, type ProblemDetails } from './errors.ts';
 import { DEFAULT_TYPE_BASE, statusTitleAndCode, typeForStatus } from './types.ts';
 
