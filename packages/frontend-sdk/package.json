@@ -29,6 +29,10 @@
       "types": "./dist/config/index.d.ts",
       "import": "./dist/config/index.js"
     },
+    "./security": {
+      "types": "./dist/security/index.d.ts",
+      "import": "./dist/security/index.js"
+    },
     "./storage": {
       "types": "./dist/storage/index.d.ts",
       "import": "./dist/storage/index.js"
@@ -84,6 +88,7 @@
     "@opentelemetry/sdk-logs": "^3.0.0",
     "@opentelemetry/sdk-metrics": "^3.0.0",
     "@opentelemetry/sdk-trace": "^3.0.0",
+    "@types/trusted-types": "^2.0.7",
     "dompurify": "^3.4.17",
     "zod": "^4.6.7"
   }
