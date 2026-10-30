@@ -1,0 +1,18 @@
+{
+  "api": { "baseUrl": "/api", "timeoutMs": 35000, "propagationAllowlist": [] },
+  "telemetry": { "otlpBaseUrl": "/otel", "sampleRatio": 0.1, "logLevel": "info", "sendSessionHeader": true },
+  "auth": {
+    "idpOrigin": "https://auth.bcbpsolutions.com",
+    "trialRealm": "trial",
+    "paidRealmPrefix": "tenant-",
+    "workspacePathPrefix": "/t/",
+    "clientId": "tender-web",
+    "scopes": ["openid"],
+    "idleTimeoutMs": 1800000,
+    "redirectPath": "/auth/callback"
+  },
+  "flags": {},
+  "remotes": { "killSwitch": [], "loadTimeoutMs": 10000, "retries": 2, "allowedOrigins": [] },
+  "i18n": { "defaultLocale": "en", "supportedLocales": ["en", "ar"] },
+  "appUpdate": { "pollIntervalMs": 300000 }
+}

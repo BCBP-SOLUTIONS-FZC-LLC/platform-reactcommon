@@ -4,10 +4,10 @@ import { createContext } from 'react';
 import type { SessionContext, SessionUser, Workspace } from '../auth/index.ts';
 
 export interface ShellContextValue {
-  user?: SessionUser;
-  workspace?: Workspace;
+  user?: SessionUser | undefined;
+  workspace?: Workspace | undefined;
   /** undefined until loaded (IAM P-35), or when it could not be loaded. */
-  context?: SessionContext;
+  context?: SessionContext | undefined;
   locale: string;
   /** Resolves `identifierOrSlug` (PUB-1) and switches; the shell shows "workspace not found" itself. */
   switchWorkspace(identifierOrSlug: string): Promise<void>;

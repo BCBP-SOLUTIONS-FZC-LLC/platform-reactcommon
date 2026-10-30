@@ -53,14 +53,14 @@ export function RemoteBoundary(p: {
 
 // @public (undocumented)
 export interface ShellContextValue {
-    context?: SessionContext;
+    context?: SessionContext | undefined;
     // (undocumented)
     locale: string;
     switchWorkspace(identifierOrSlug: string): Promise<void>;
     // (undocumented)
-    user?: SessionUser;
+    user?: SessionUser | undefined;
     // (undocumented)
-    workspace?: Workspace;
+    workspace?: Workspace | undefined;
 }
 
 // @public

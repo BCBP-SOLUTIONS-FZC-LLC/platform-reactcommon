@@ -3,6 +3,11 @@
 // of being silently ignored. Defaults exist only where the design doc names one.
 import { z } from 'zod';
 
+// Zod's fast path probes `new Function('')` on first parse. Under the CSP's script-src 'self' (design
+// doc §C3) the probe throws (caught) but still fires a CSP violation and a /csp-report on every page
+// load. Jitless validation needs no eval. It must be set before any schema below is built.
+z.config({ jitless: true });
+
 /** The page's runtime configuration, loaded once by the shell. */
 export interface RuntimeConfig {
   readonly api: {

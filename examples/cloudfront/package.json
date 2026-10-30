@@ -1,0 +1,13 @@
+{
+  "name": "@examples/cloudfront",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CloudFront and CSP snippets for design doc \u00a7C3: response headers policy, SPA rewrite function, /csp-report Lambda. Documentation and IaC input only; nothing here deploys.",
+  "dependencies": {
+    "@platform/frontend-sdk": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}
