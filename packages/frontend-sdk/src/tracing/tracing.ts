@@ -15,6 +15,7 @@ import { resourceFromAttributes } from '@opentelemetry/resources';
 import { StackContextManager, TracerProvider, type SpanExporter } from '@opentelemetry/sdk-trace';
 import { NotInitializedError, getIdentity, isSensitiveKey, sanitizeString } from '../core/index.ts';
 import { getRuntime } from '../internal/runtime.ts';
+import { collectorUrl, isExactOrigin } from '../internal/urls.ts';
 import { DEFAULT_QUEUE, DropOldestBatchSpanProcessor, type QueueOptions, type TracingStats } from './processor.ts';
 import { platformSampler } from './sampler.ts';
 
@@ -70,25 +71,9 @@ function state(): TracingState | undefined {
   return getRuntime().tracing as TracingState | undefined;
 }
 
-function isExactOrigin(value: string): boolean {
-  try {
-    return new URL(value).origin === value;
-  } catch {
-    return false;
-  }
-}
-
 function assertOrigin(origin: string): string {
   if (!isExactOrigin(origin)) throw new TypeError(`propagationAllowlist entries must be exact origins, got ${JSON.stringify(origin)}`);
   return origin;
-}
-
-function collectorUrl(otlpBaseUrl: string): string {
-  if (!/^\/(?!\/)[^\s?#\\]*$/.test(otlpBaseUrl)) {
-    throw new TypeError(`otlpBaseUrl must be a same-origin path such as '/otel', got ${JSON.stringify(otlpBaseUrl)}`);
-  }
-  const base = globalThis.location?.href ?? 'http://localhost/';
-  return new URL(`${otlpBaseUrl.replace(/\/$/, '')}/v1/traces`, base).href;
 }
 
 /**
@@ -101,7 +86,7 @@ export function initializeTracing(o: TracingOptions): void {
   if (state()) return;
   const ratio = o.sampleRatio ?? 0.1;
   if (typeof ratio !== 'number' || Number.isNaN(ratio)) throw new RangeError(`sampleRatio must be a number, got ${ratio}`);
-  const url = collectorUrl(o.otlpBaseUrl);
+  const url = collectorUrl(o.otlpBaseUrl, 'traces');
   const allowlist = new Set((o.propagationAllowlist ?? []).map(assertOrigin));
 
   const stats: TracingStats = { exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, exportFailures: 0 };

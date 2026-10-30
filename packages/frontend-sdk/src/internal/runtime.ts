@@ -33,6 +33,12 @@ export interface PlatformRuntime {
   config: unknown;
   /** Tracing state once initializeTracing has run (/tracing owns its type). */
   tracing: unknown;
+  /** Logging state once initializeLogging has run (/logging owns its type). */
+  logging: unknown;
+  /** The current page's router template (/logging sets it; logs and vitals read it). */
+  pageRoute: string | undefined;
+  /** Every page-route template registered so far (/logging adds; /metrics bounds page_route by it). */
+  routeTemplates: Set<string>;
 }
 
 export const RUNTIME_KEY = Symbol.for('@platform/frontend-sdk');
@@ -60,6 +66,9 @@ function createRuntime(): PlatformRuntime {
     memorySessionId: undefined,
     config: undefined,
     tracing: undefined,
+    logging: undefined,
+    pageRoute: undefined,
+    routeTemplates: new Set(),
   };
 }
 
