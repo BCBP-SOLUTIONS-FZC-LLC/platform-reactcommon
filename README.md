@@ -476,7 +476,7 @@ Build-time constants (shell): `__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack
 | **Redirects** | Every `returnUrl` and `navigate` target passes `isSafeRedirect` |
 | **Remote code** | Entries only from the page's origin or exact allowed origins, checked twice; SRI when the manifest gives it; kill switch |
 | **Telemetry** | Redacted with gincommon's rules (sensitive keys, JWT, `Bearer`, URL queries); consent-gated; the collector drops per-browser attributes |
-| **Supply chain** | Actions pinned to commit SHAs; Trivy on dependencies, secrets and config; `pnpm audit --prod`; CycloneDX SBOM; Cosign-signed release checksums. Vulnerability reporting: [`.github/SECURITY.md`](.github/SECURITY.md) |
+| **Supply chain** | Actions pinned to commit SHAs; Trivy on dependencies, secrets and config; `pnpm audit --prod`; CycloneDX SBOM; Cosign-signed release checksums. Vulnerability reporting and trust model: [SECURITY.md](SECURITY.md) |
 
 ---
 
@@ -651,7 +651,7 @@ Keeping scope to **identity, data access, errors, observability and the micro-fr
 | [`docs/observability/runbooks.md`](docs/observability/runbooks.md) | Frontend runbooks and proposed alerts |
 | [`docs/problem-details/`](docs/problem-details/README.md) | RFC 9457 in the browser; generated type registry |
 | [`packages/frontend-sdk/contracts/README.md`](packages/frontend-sdk/contracts/README.md) | Each generated contract and its source |
-| [`.github/SECURITY.md`](.github/SECURITY.md) | Vulnerability reporting |
+| [SECURITY.md](SECURITY.md) | Vulnerability reporting, supported versions, trust model and known limitations, scope |
 
 **A change to a published package:**
 - follows the design doc (update it in the same PR if behaviour changes);
