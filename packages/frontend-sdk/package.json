@@ -17,6 +17,10 @@
       "types": "./dist/core/index.d.ts",
       "import": "./dist/core/index.js"
     },
+    "./problem": {
+      "types": "./dist/problem/index.d.ts",
+      "import": "./dist/problem/index.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {

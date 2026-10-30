@@ -1,5 +1,5 @@
 {
-  "_comment": "Commits the generated contracts/ files come from (design doc §C5). CI checks each repo out at its sha into PLATFORM_ROOT/<path>; locally scripts/sync-contracts.ts fails unless each checkout is at its sha. Move pins with `pnpm contracts:sync --update-pins` and review the resulting contracts diff. The IAM repos are added with /problem (deny codes) and /auth (resolve and session-context fixtures).",
+  "_comment": "Commits the generated contracts/ files come from (design doc §C5). Two groups: `platform` repos live under PLATFORM_ROOT, `iam` repos under IAM_REPOS_DIR. CI checks each repo out at its sha into <root>/<path>; locally scripts/sync-contracts.ts fails unless each checkout is at its sha. Move pins with `pnpm contracts:sync --update-pins` and review the resulting contracts diff.",
   "platform": {
     "platform-gincommon": {
       "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-gincommon",
@@ -24,7 +24,14 @@
     "platform-interop-tests": {
       "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-interop-tests",
       "path": "platform-interop-tests",
-      "sha": "59a090745c707ea96ce0df3074ad0f165b263871"
+      "sha": "52ae6e25b257146cb70c1bd641623170be3e8bbc"
+    }
+  },
+  "iam": {
+    "iam-authz-enrichment": {
+      "repo": "BCBP-SOLUTIONS-FZC-LLC/iam-authz-enrichment",
+      "path": "iam-authz-enrichment",
+      "sha": "4bea2eacd0b567095fc80f39b8fd7f26a7a14a74"
     }
   }
 }

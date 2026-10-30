@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildGatewayDenyCodes,
   buildHeaders,
   buildLogFields,
   buildMetricRegistry,
+  buildProblemRules,
   buildProblemTypes,
   buildRedaction,
   buildRegistryVocab,
@@ -11,6 +13,7 @@ import {
   extractGoIntConsts,
   extractGoRegexp,
   extractLogFieldKeys,
+  pascalCase,
   toJsonText,
   type ContractsExport,
   type Registry,
@@ -253,5 +256,100 @@ describe('generated TypeScript constants', () => {
     expect(ts).toContain('export const A = {\n  "list": [\n    "a",\n    "b"\n  ]\n} as const;');
     expect(ts).toContain('export const B = 3 as const;');
     expect(ts).not.toContain('_generated');
+  });
+});
+
+const extensionsGo = `
+var extensionNamePattern = regexp.MustCompile(\`^[A-Za-z][A-Za-z0-9_]{2,}$\`)
+
+var standardMembers = []string{
+	"type", "title", "status",
+}`;
+const clientGo = 'const MaxClientBodyBytes = 1 << 20\n';
+const typesGo = `
+var (
+	slugPattern = regexp.MustCompile(\`^[a-z]+$\`)
+	codePattern = regexp.MustCompile(\`^[A-Z]+$\`)
+)`;
+const ruleSources = { extensions: 'e.go', client: 'c.go', types: 't.go' };
+
+describe('problem rules', () => {
+  it('reads members, patterns and the body cap from the Go sources', () => {
+    expect(buildProblemRules(extensionsGo, clientGo, typesGo, ruleSources)).toEqual({
+      standardMembers: ['type', 'title', 'status'],
+      extensionNamePattern: '^[A-Za-z][A-Za-z0-9_]{2,}$',
+      maxClientBodyBytes: 1048576,
+      slugPattern: '^[a-z]+$',
+      codePattern: '^[A-Z]+$',
+    });
+    expect(buildProblemRules(extensionsGo, 'const MaxClientBodyBytes = 4096\n', typesGo, ruleSources).maxClientBodyBytes).toBe(4096);
+  });
+
+  it('fails when the cap becomes an expression it cannot read', () => {
+    expect(() => buildProblemRules(extensionsGo, 'const MaxClientBodyBytes = 1 * MiB\n', typesGo, ruleSources)).toThrow('MaxClientBodyBytes');
+  });
+
+  it('adds the rules to problem-types.json and names platform types for PlatformProblemTypes', () => {
+    const rules = buildProblemRules(extensionsGo, clientGo, typesGo, ruleSources);
+    expect(buildProblemTypes(exported, 'src', rules, ['rules-src']).rules).toBe(rules);
+    expect(pascalCase('not-found')).toBe('NotFound');
+    expect(pascalCase('business-rule-violation')).toBe('BusinessRuleViolation');
+    expect(pascalCase('conflict')).toBe('Conflict');
+  });
+});
+
+const decisionGo = `
+const (
+	DenyUnresolvableSubject DenyReason = "DENY_UNRESOLVABLE_SUBJECT"
+	DenyMFAStale            DenyReason = "DENY_MFA_STALE"
+	DenyMalformedIdentity   DenyReason = "DENY_MALFORMED_IDENTITY"
+	DenyServiceUnavailable  DenyReason = "DENY_SERVICE_UNAVAILABLE"
+)
+
+func (r DenyReason) HTTPStatus() int {
+	switch r {
+	case DenyMalformedIdentity:
+		return 401
+	case DenyServiceUnavailable:
+		return 503
+	case DenyUnresolvableSubject:
+		return 403
+	default:
+		return 403
+	}
+}`;
+const pinnedTest = `
+func TestDenyCodes_Pinned(t *testing.T) {
+	cases := []struct{}{
+		{domain.DenyUnresolvableSubject, "DENY_UNRESOLVABLE_SUBJECT", 403},
+		{domain.DenyMFAStale, "DENY_MFA_STALE", 403},
+		{domain.DenyMalformedIdentity, "DENY_MALFORMED_IDENTITY", 401},
+		{domain.DenyServiceUnavailable, "DENY_SERVICE_UNAVAILABLE", 503},
+	}
+}`;
+const denySources = { decision: 'd.go', test: 'd_test.go' };
+
+describe('gateway deny codes', () => {
+  it('reads codes and statuses (with the default) and checks them against the pinned test', () => {
+    expect(buildGatewayDenyCodes(decisionGo, pinnedTest, denySources).codes).toEqual([
+      { code: 'DENY_UNRESOLVABLE_SUBJECT', status: 403 },
+      { code: 'DENY_MFA_STALE', status: 403 },
+      { code: 'DENY_MALFORMED_IDENTITY', status: 401 },
+      { code: 'DENY_SERVICE_UNAVAILABLE', status: 503 },
+    ]);
+  });
+
+  it('fails when a reason is added without a pin', () => {
+    const added = decisionGo.replace(')\n', '\tDenyNew DenyReason = "DENY_NEW"\n)\n');
+    expect(() => buildGatewayDenyCodes(added, pinnedTest, denySources)).toThrow('disagree');
+  });
+
+  it('fails when a status changes without the pin', () => {
+    const changed = decisionGo.replace('return 401', 'return 403');
+    expect(() => buildGatewayDenyCodes(changed, pinnedTest, denySources)).toThrow('disagree');
+  });
+
+  it('fails when the constants are gone', () => {
+    expect(() => buildGatewayDenyCodes('const (\n)\n', pinnedTest, denySources)).toThrow('no DenyReason constants');
   });
 });
