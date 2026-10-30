@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildGatewayDenyCodes,
+  buildGatewayHeaders,
   buildHeaders,
   buildLogFields,
   buildMetricRegistry,
@@ -351,5 +352,25 @@ describe('gateway deny codes', () => {
 
   it('fails when the constants are gone', () => {
     expect(() => buildGatewayDenyCodes('const (\n)\n', pinnedTest, denySources)).toThrow('no DenyReason constants');
+  });
+});
+
+describe('gateway injected headers', () => {
+  const go = `
+// InjectedHeaders are the trust-boundary headers this service injects on Allow.
+const (
+	HeaderTenantID     = "x-tenant-id"
+	// a comment line
+	HeaderUserID       = "x-user-id"
+	HeaderPlan         = "x-plan"
+)`;
+
+  it('lists the headers in source order', () => {
+    expect(buildGatewayHeaders(go, 'd.go').injected).toEqual(['x-tenant-id', 'x-user-id', 'x-plan']);
+  });
+
+  it('fails when the block or its headers are gone', () => {
+    expect(() => buildGatewayHeaders('const ()', 'd.go')).toThrow('InjectedHeaders not found');
+    expect(() => buildGatewayHeaders('// InjectedHeaders\nconst (\n)', 'd.go')).toThrow('no injected headers');
   });
 });

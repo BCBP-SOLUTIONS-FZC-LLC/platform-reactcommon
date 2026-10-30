@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
   buildGatewayDenyCodes,
+  buildGatewayHeaders,
   buildHeaders,
   buildLogFields,
   buildMetricRegistry,
@@ -156,6 +157,8 @@ function generate(roots: Roots, sources: Sources): Map<string, string> {
   files.set('metric-registry.json', toJsonText(metricRegistry));
   files.set('problem-types.json', toJsonText(problemTypes));
   files.set('gateway-deny-codes.json', toJsonText(denyCodes));
+  const gatewayHeaders = buildGatewayHeaders(read(authz, DECISION), `iam-authz-enrichment ${DECISION}`);
+  files.set('gateway-headers.json', toJsonText(gatewayHeaders));
   files.set('headers.json', toJsonText(headers));
   files.set('redaction.json', toJsonText(redaction));
   files.set('log-fields.json', toJsonText(buildLogFields(read(gin, LOGGING), `platform-gincommon ${LOGGING}`)));
@@ -180,6 +183,16 @@ function generate(roots: Roots, sources: Sources): Map<string, string> {
       'contracts/problem-types.json',
     ],
     ['gateway-deny-codes', { GATEWAY_DENY_CODES: denyCodes.codes.map((c) => c.code) }, 'contracts/gateway-deny-codes.json'],
+    [
+      'forbidden-headers',
+      {
+        // gincommon's identity headers, then the rest of what the gateway injects (and strips).
+        FORBIDDEN_REQUEST_HEADERS: [
+          ...new Set([headers.identity.userId, headers.identity.tenantId, headers.identity.tenantRoles, ...gatewayHeaders.injected]),
+        ],
+      },
+      'contracts/headers.json, contracts/gateway-headers.json',
+    ],
     ['metric-registry', { METRIC_REGISTRY: buildMetricRegistryConstants(metricRegistry) }, 'contracts/metric-registry.json'],
   ];
   for (const [file, values, source] of constants) {

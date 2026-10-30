@@ -49,6 +49,10 @@
       "types": "./dist/metrics/index.d.ts",
       "import": "./dist/metrics/index.js"
     },
+    "./http": {
+      "types": "./dist/http/index.d.ts",
+      "import": "./dist/http/index.js"
+    },
     "./flags": {
       "types": "./dist/flags/index.d.ts",
       "import": "./dist/flags/index.js"
