@@ -43,6 +43,17 @@ export interface PlatformRuntime {
   remotes: Readonly<Record<string, string>>;
   /** Metric instruments and exporter state (/metrics owns its type). */
   metrics: unknown;
+  /** The UI authorizer and subject (/authz owns their types); undefined means deny all. */
+  authorizer: unknown;
+  authzSubject: unknown;
+  /** The /storage namespace of the signed-in workspace (/auth sets it at login); 'anon' when none. */
+  storageNamespace: string;
+  /** The Trusted Types policy 'platform-sdk', once installed (/security). */
+  trustedTypesPolicy: unknown;
+  /** The flag provider (/flags owns its type); undefined means runtime-config flags. */
+  flagProvider: unknown;
+  /** The shell's router navigation function (/nav owns its type). */
+  navigator: unknown;
 }
 
 export const RUNTIME_KEY = Symbol.for('@platform/frontend-sdk');
@@ -75,6 +86,12 @@ function createRuntime(): PlatformRuntime {
     routeTemplates: new Set(),
     remotes: Object.freeze({}),
     metrics: undefined,
+    authorizer: undefined,
+    authzSubject: undefined,
+    storageNamespace: 'anon',
+    trustedTypesPolicy: undefined,
+    flagProvider: undefined,
+    navigator: undefined,
   };
 }
 

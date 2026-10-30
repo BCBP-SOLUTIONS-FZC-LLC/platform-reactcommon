@@ -21,6 +21,10 @@
       "types": "./dist/problem/index.d.ts",
       "import": "./dist/problem/index.js"
     },
+    "./authz": {
+      "types": "./dist/authz/index.d.ts",
+      "import": "./dist/authz/index.js"
+    },
     "./config": {
       "types": "./dist/config/index.d.ts",
       "import": "./dist/config/index.js"
@@ -76,6 +80,7 @@
     "@opentelemetry/sdk-logs": "^3.0.0",
     "@opentelemetry/sdk-metrics": "^3.0.0",
     "@opentelemetry/sdk-trace": "^3.0.0",
+    "dompurify": "^3.4.17",
     "zod": "^4.6.7"
   }
 }
