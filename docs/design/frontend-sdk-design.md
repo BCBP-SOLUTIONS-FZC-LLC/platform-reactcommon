@@ -20,7 +20,7 @@ relies on are listed in §D6.
 | `/react`, `/testing` | **Ready** | Session/workspace hooks ship with `/auth`; role, plan and flag hooks read session context (IAM item A, merged) |
 | `/metrics` | **Ready, except the Tier 1 binding.** Exporter, central label injection, registration checks, `getDomainMeter`/`getServiceMeter` (Tier 2/3), `renderMetricInventory`, the metricslint CI and the observability layout. Tier 3 needs no approval; Tier 2 names come from the existing registry | Binding the `platform_web_*` instruments waits for governance ratification (D5, §D6 K); until then they stay no-ops. Designed to the Enterprise Platform Observability Standard, validated by `metricslint` |
 | Shared package versions | — | SDK starts at `1.0.0-alpha.N`; `1.0.0` is cut with the first environment (§C3) |
-| Shell bootstrap (`domain: 'portal'`) | — | **Registry PR for `portal` (D1)**: `initializeCore` rejects the domain until the PR merges and `contracts/` is regenerated |
+| Shell bootstrap (`domain: 'portal'`) | **Ready** | — (`portal` is in the registry since platform-gincommon v2.3.0, §D6 J; `contracts/` regenerated) |
 
 Implementation order: `/core` → `/problem` → `/config` → `/tracing` → `/logging` → `/metrics` (Tier 2/3, exporter,
 checks) → `/authz`, `/storage`, `/security`, `/flags`, `/nav` → `/i18n` → `/http` → `/mfe` → `/auth` → `/react` →
@@ -54,7 +54,7 @@ Sources of truth this design was checked against (read from source, not READMEs)
 
 | # | Brief said | Backend actually does | Design decision |
 |---|---|---|---|
-| 1 | `domain`, `environment` each match `^[a-z][a-z0-9_-]{0,62}$` | That regex is only the **service** label pattern. `domain` is a **closed vocabulary** (`iam, workflow, billing, tender_management, notifications, documents`); `environment` is closed (`local, dev, test, staging, prod`; `production` is rejected, no aliases). | Validate against the registry vocabulary, generated from `registry.json` (§C5). A multi-domain shell uses a new `portal` value, added by registry PR (§D1). A single-business shell uses that business domain. |
+| 1 | `domain`, `environment` each match `^[a-z][a-z0-9_-]{0,62}$` | That regex is only the **service** label pattern. `domain` is a **closed vocabulary** (`iam, workflow, billing, tender_management, notifications, documents, bff, portal`); `environment` is closed (`local, dev, test, staging, prod`; `production` is rejected, no aliases). | Validate against the registry vocabulary, generated from `registry.json` (§C5). A multi-domain shell uses `portal`, added to the registry for it (§D1). A single-business shell uses that business domain. |
 | 2 | `buildVersion` "sanitized" | `version` label pattern `^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$`, `unknown` when unset | Same rule: empty becomes `unknown`, and a non-matching value throws (no silent rewriting). |
 | 3 | `validationErrors[{field,message,code}]` | Go `FieldError` and Python `FieldError` are `{field, message}` only | `code?: string` is **optional** and parsed if present. Form mapping must not depend on it. Unknown per-entry members are preserved. |
 | 4 | Redact `password\|token\|secret\|authorization\|cookie\|key\|*_key` | Backend list is a superset: exact keys `authorization, cookie, set-cookie, password, secret, token, access_token, refresh_token, id_token, api_key, x-api-key, x-auth-token, credential, private_key, jwt, bearer, session, session_id, cert` + substring `password, secret, token, credential, session, bearer` + `key` / `*_key` | Port the backend rule **exactly** (shared fixture, §C5). One deliberate, stricter difference: `sanitizeString` also strips U+2028/U+2029 (the fixture's `expectedSdk`). |
@@ -1413,7 +1413,7 @@ never reaches a label. `canEdit` is a UI hint, and the PUT is authorised by the 
 
 | # | Topic | Status | Blocks |
 |---|---|---|---|
-| D1 | Domain for frontend services | Decided: `portal`. Needs registry PR | `/core` vocabulary |
+| D1 | Domain for frontend services | Decided: `portal`. In the registry since gincommon v2.3.0 (§D6 J) | — |
 | D2 | Tenant model, workspace switching | Decided by IAM (HLD v1.58, LLDs, code). Backend work is tracked in §D6 | First end-to-end environment (§D6). Implementation is not blocked |
 | D3 | CSS-in-JS vs strict `style-src` | Decided | `@platform/ui`, CSP |
 | D4 | IdP proxy vs CSP allowlist | Decided by IAM: `auth.bcbpsolutions.com` | — |
@@ -1424,9 +1424,9 @@ never reaches a label. `canEdit` is a UI hint, and the PUT is authorised by the 
 
 One identity per page, set by the shell. Remotes run in the shell's page, so they cannot have
 their own `domain`. That is what the `mfe` label is for.
-- A shell that fronts several business domains uses a new **`portal`** domain value. It is added
-  by registry PR to gincommon `internal/obsregistry/registry.json` and to the copy at
-  `fastapicommon/src/fastapicommon/metrics/registry.json`, then `make metrics-inventory` is run.
+- A shell that fronts several business domains uses the **`portal`** domain value. It is in
+  gincommon's `internal/obsregistry/registry.json` (v2.3.0) and the vendored copy at
+  `fastapicommon/src/fastapicommon/metrics/registry.json` (§D6 J).
 - A shell dedicated to one business uses that business domain.
 - `app.bcbpsolutions.com` fronts tenders, workflow design, IAM administration and the dashboard
   (FE spec §4), so it is the multi-domain case and needs `portal`.
@@ -1540,7 +1540,7 @@ Nothing is in production, so where the SDK needs a backend to behave differently
 changed instead of the SDK working around it. This is the single list; each row says what the SDK
 does until the change lands.
 
-| # | Owner | Change | State (2026-10-30) | SDK until it lands |
+| # | Owner | Change | State (2026-10-31) | SDK until it lands |
 |---|---|---|---|---|
 | A | IAM (org-membership) | P-35 `GET /api/v1/me/session-context`, **with `slug` added** (§D2 A) | **Done**: P-35 (O&M #42) and `slug` (O&M #46), both merged | — |
 | B | IAM, then platform and WAF | PUB-1 at the edge, with no `jwt_authn`/`ext_authz` and a per-IP limit sized for office NAT. The platform team enables Envoy Gateway's global rate-limit service (Redis) and trusts `X-Forwarded-For`. The WAF adds a CAPTCHA/challenge. IAM closes OQ-10 (§D2 B) | IAM part merged (O&M #42, off by default); platform, WAF and OQ-10 open | Mocked in tests; logins without a cached workspace fail in deployed environments |
@@ -1551,7 +1551,7 @@ does until the change lands.
 | G | bff-signup | Return `slug` in the completed signup response (§D2 G) | Unchanged | The signup page cannot always link to the workspace |
 | H | IAM (authz-enrichment) | **AE-42 / CD-31 now:** `deniedResponse` sends `application/problem+json` with the platform type for the status (`platform/unauthorized`, `platform/forbidden`, `platform/service-unavailable`) and `errorCode` = the deny reason. Keep `TestDenyCodes_Pinned`, and add a test for the body shape | **Done** (AuthZ Enrichment #39, merged; LLD 1.48, AE-42 resolved) | — |
 | I | Platform (gincommon) | Export the log sanitizer as `pkg/logger.Sanitize` / `SanitizeString`, so the interop harness runs `redaction_cases.json` in Go (§C5) | Not started | The redaction fixture runs in TS and Python only |
-| J | Platform (registry) | Add the `portal` domain to `registry.json` in gincommon and fastapicommon, then `make metrics-inventory` (§D1) | Not started | `initializeCore({domain:'portal'})` throws, so the shell cannot start against real contracts |
+| J | Platform (registry) | Add the `portal` domain to `registry.json` in gincommon and fastapicommon, then `make metrics-inventory` (§D1) | **Done**: gincommon #51, released as v2.3.0 (#52); fastapicommon #50 re-vendored it (with `bff`, which it lacked). SDK `contracts/` pinned to both | — |
 | K | Observability governance | Ratify the seven `platform_web_*` metrics, the four labels, the `web_vitals` preset and the SDK as an emitter of `platform_telemetry_label_overflow_total` (§D5) | Not started | Tier 1 instruments stay no-ops; Tier 2/3 meters and the exporter work |
 | L | IAM (realm-provisioner) | **Keycloak 26 integration test for multi-tab rotation:** in one SSO session, do two code exchanges for `tender-web` (two tabs), then refresh each lineage alternately for several rounds. Every refresh must succeed. If the test fails, IAM fixes it in the client configuration (§C1 `/auth`, "Refresh across tabs") | **Done** (RP #44, merged): passes with RP #41's settings, no change needed | — (follow the refresh rules in §C1 `/auth`) |
 | N | IAM (realm-provisioner) | A trial converted through RP-3 gets realm `tenant-<slug>`, like a direct-paid tenant (HLD v1.59 gap G-1: it got `tenant-<tenant_id>`, which broke the paid-realm check in §D2 step 2) | **Done** (RP #46, merged; RP LLD v1.46, RP-D20). HLD v1.59 marks it fixed (`iam-hld-docs` #3, open) | — (dev: re-create the `provisioner` DB and pre-#46 trial tenants) |
