@@ -208,6 +208,9 @@ function generate(roots: Roots, sources: Sources): Map<string, string> {
   for (const [file, values, source] of constants) {
     files.set(`../src/internal/generated/${file}.ts`, buildTsConstants(values, [source]));
   }
+  // @platform/eslint-plugin's no-identity-headers rule checks the same list the SDK strips.
+  const forbidden = constants.find(([file]) => file === 'forbidden-headers')!;
+  files.set('../../eslint-plugin/src/generated/forbidden-headers.ts', buildTsConstants(forbidden[1], [forbidden[2]]));
   return files;
 }
 
