@@ -42,7 +42,7 @@ jobs:
           for name in platform-gincommon platform-events platform-pgcommon platform-fastapicommon platform-interop-tests; do
             echo "${name}=$(jq -r --arg n "$name" '.platform[$n].sha' packages/frontend-sdk/contracts/sources.json)" >> "$GITHUB_OUTPUT"
           done
-          for name in iam-authz-enrichment; do
+          for name in iam-authz-enrichment iam-org-membership; do
             echo "${name}=$(jq -r --arg n "$name" '.iam[$n].sha' packages/frontend-sdk/contracts/sources.json)" >> "$GITHUB_OUTPUT"
           done
       # Private sibling repos: PLATFORM_REPOS_TOKEN is a read-only token for the organisation.
@@ -56,9 +56,11 @@ jobs:
         with: { repository: BCBP-SOLUTIONS-FZC-LLC/platform-fastapicommon, ref: "${{ steps.pins.outputs.platform-fastapicommon }}", path: python/platform-fastapicommon, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
       - uses: actions/checkout@v5
         with: { repository: BCBP-SOLUTIONS-FZC-LLC/platform-interop-tests, ref: "${{ steps.pins.outputs.platform-interop-tests }}", path: platform-interop-tests, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
-      # IAM sources (gateway deny codes) live in another org tree; IAM_REPOS_DIR points at them.
+      # IAM sources (gateway deny codes, the PUB-1/P-35 swagger) live in another org tree; IAM_REPOS_DIR points at them.
       - uses: actions/checkout@v5
         with: { repository: BCBP-SOLUTIONS-FZC-LLC/iam-authz-enrichment, ref: "${{ steps.pins.outputs.iam-authz-enrichment }}", path: iam/iam-authz-enrichment, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
+      - uses: actions/checkout@v5
+        with: { repository: BCBP-SOLUTIONS-FZC-LLC/iam-org-membership, ref: "${{ steps.pins.outputs.iam-org-membership }}", path: iam/iam-org-membership, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
       - uses: actions/setup-go@v6
         with:
           go-version-file: platform-interop-tests/go-probe/go.mod

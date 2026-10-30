@@ -4,37 +4,14 @@
  *
  * @packageDocumentation
  */
+import { isSafeRedirect } from '../internal/redirect.ts';
 import { getRuntime } from '../internal/runtime.ts';
+
+export { isSafeRedirect };
 
 type Navigator = (appId: string, path: string, o?: { replace?: boolean }) => void;
 
 const APP_ID = /^[a-z][a-z0-9_-]{0,62}$/;
-// Control characters, any whitespace and backslashes are refused before parsing: the URL parser
-// silently drops tabs and newlines and treats '\' as '/', which turns '/\t/evil' or '/\evil'
-// into the protocol-relative '//evil'.
-const UNSAFE = /[\p{Cc}\s\\\u2028\u2029]/u;
-
-/**
- * Whether `url` is a safe redirect target: http(s) on the same origin as `base` (default: the
- * page), with no protocol-relative, backslash, whitespace or control-character tricks. Use it on
- * every returnUrl before following it.
- */
-export function isSafeRedirect(url: string, base?: string): boolean {
-  if (typeof url !== 'string' || url === '' || UNSAFE.test(url)) return false;
-  const baseHref = base ?? globalThis.location?.href;
-  if (typeof baseHref !== 'string') return false;
-  let target: URL;
-  let origin: URL;
-  try {
-    origin = new URL(baseHref);
-    target = new URL(url, origin);
-  } catch {
-    return false;
-  }
-  if (target.protocol !== 'https:' && target.protocol !== 'http:') return false;
-  if (target.username !== '' || target.password !== '') return false;
-  return target.origin === origin.origin;
-}
 
 /** Shell only: the router function navigate() calls (e.g. one that maps appId to a route prefix). */
 export function registerNavigator(n: Navigator): void {

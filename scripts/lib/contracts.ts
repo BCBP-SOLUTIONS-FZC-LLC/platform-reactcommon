@@ -441,3 +441,100 @@ export function buildMetricRegistryConstants(m: ReturnType<typeof buildMetricReg
 export function toJsonText(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
+
+// ---------------------------------------------------------------------------------------------
+// IAM API shapes (iam-org-membership docs/swagger/swagger.json, Swagger 2.0)
+
+export interface SwaggerSchema {
+  $ref?: string;
+  type?: string;
+  format?: string;
+  enum?: unknown[];
+  items?: SwaggerSchema;
+  properties?: Record<string, SwaggerSchema>;
+  required?: string[];
+  [key: string]: unknown;
+}
+export interface Swagger {
+  basePath?: string;
+  paths: Record<string, Record<string, { responses?: Record<string, { schema?: SwaggerSchema }> }>>;
+  definitions: Record<string, SwaggerSchema>;
+}
+
+const SWAGGER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `schema` with every $ref replaced by its definition (descriptions and examples dropped). */
+export function inlineSwaggerSchema(schema: SwaggerSchema, defs: Swagger['definitions'], seen: readonly string[] = []): SwaggerSchema {
+  if (schema.$ref) {
+    const name = schema.$ref.replace(/^#\/definitions\//, '');
+    const def = defs[name];
+    if (!def) throw new Error(`swagger: ${schema.$ref} is not defined`);
+    if (seen.includes(name)) throw new Error(`swagger: ${schema.$ref} is recursive`);
+    return inlineSwaggerSchema(def, defs, [...seen, name]);
+  }
+  const out: SwaggerSchema = {};
+  for (const k of ['type', 'format', 'enum', 'required'] as const) if (schema[k] !== undefined) out[k] = schema[k] as never;
+  if (schema.items) out.items = inlineSwaggerSchema(schema.items, defs, seen);
+  if (schema.properties) {
+    out.properties = Object.fromEntries(Object.entries(schema.properties).map(([k, v]) => [k, inlineSwaggerSchema(v, defs, seen)]));
+  }
+  return out;
+}
+
+/**
+ * Where `value` breaks an (inlined) swagger schema; [] when it fits. Stricter than Swagger: a property
+ * the schema does not declare is an error, so a fixture can never carry a field the API does not have.
+ */
+export function swaggerViolations(value: unknown, schema: SwaggerSchema, path = '$'): string[] {
+  if (schema.enum && !schema.enum.includes(value)) return [`${path}: ${JSON.stringify(value)} is not one of ${JSON.stringify(schema.enum)}`];
+  switch (schema.type) {
+    case 'object': {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) return [`${path}: not an object`];
+      const props = schema.properties ?? {};
+      const v = value as Record<string, unknown>;
+      return [
+        ...Object.keys(v).filter((k) => !(k in props)).map((k) => `${path}.${k}: not in the schema`),
+        ...(schema.required ?? []).filter((k) => !(k in v)).map((k) => `${path}.${k}: required`),
+        ...Object.entries(v).flatMap(([k, x]) => (props[k] ? swaggerViolations(x, props[k], `${path}.${k}`) : [])),
+      ];
+    }
+    case 'array':
+      if (!Array.isArray(value)) return [`${path}: not an array`];
+      return value.flatMap((x, i) => (schema.items ? swaggerViolations(x, schema.items, `${path}[${i}]`) : []));
+    case 'string':
+      if (typeof value !== 'string') return [`${path}: not a string`];
+      return schema.format === 'uuid' && !SWAGGER_UUID.test(value) ? [`${path}: not a uuid`] : [];
+    case 'integer':
+      return Number.isInteger(value) ? [] : [`${path}: not an integer`];
+    case 'number':
+      return typeof value === 'number' && Number.isFinite(value) ? [] : [`${path}: not a number`];
+    case 'boolean':
+      return typeof value === 'boolean' ? [] : [`${path}: not a boolean`];
+    default:
+      return [];
+  }
+}
+
+/**
+ * A response-cases contract: the 200 schema of `GET <path>` from the swagger (inlined), and SDK-authored
+ * cases whose `response` must fit it. A case that no longer fits the API fails the sync.
+ */
+export function buildResponseCases<C extends { name: string; response: unknown }>(
+  swagger: Swagger,
+  path: string,
+  cases: readonly C[],
+  source: string,
+) {
+  const op = swagger.paths[path]?.get;
+  const ok = op?.responses?.['200']?.schema;
+  if (!ok) throw new Error(`${source}: GET ${path} has no 200 schema`);
+  const schema = inlineSwaggerSchema(ok, swagger.definitions);
+  const names = new Set<string>();
+  for (const c of cases) {
+    if (names.has(c.name)) throw new Error(`case ${c.name} is duplicated`);
+    names.add(c.name);
+    const bad = swaggerViolations(c.response, schema);
+    if (bad.length > 0) throw new Error(`${source}: case ${c.name} does not fit GET ${path}: ${bad.join('; ')}`);
+  }
+  return { _generated: generatedHeader([`${source} (GET ${swagger.basePath ?? ''}${path})`, 'scripts/lib/iam-cases.ts']), path: `${swagger.basePath ?? ''}${path}`, schema, cases };
+}

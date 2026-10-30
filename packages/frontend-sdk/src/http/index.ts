@@ -15,4 +15,4 @@ export {
   type RouteTemplate,
   type TokenSource,
 } from './client.ts';
-export { isOnline, subscribeOnline } from './online.ts';
+export { isOnline, subscribeOnline } from '../internal/online.ts';

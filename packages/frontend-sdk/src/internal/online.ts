@@ -1,4 +1,4 @@
-// Online state from the browser (navigator.onLine and the online/offline events).
+// Online state from the browser (navigator.onLine and the online/offline events); /http re-exports it, /auth uses it.
 
 /** Whether the browser reports a network connection. True outside a browser. */
 export function isOnline(): boolean {
