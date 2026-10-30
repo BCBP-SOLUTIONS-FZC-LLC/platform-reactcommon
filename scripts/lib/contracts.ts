@@ -131,11 +131,11 @@ export interface ContractsExport {
 }
 
 /** Problem registry and constants for /problem (design doc §C5 rows 1, 3-7). */
-export function buildProblemTypes(exp: ContractsExport, source: string) {
+export function buildProblemTypes(exp: ContractsExport, source: string, rules?: ReturnType<typeof buildProblemRules>, rulesSources: readonly string[] = []) {
   const p = exp.problem;
   if (p.types.length === 0) throw new Error('contracts-export: no platform problem types');
   return {
-    _generated: generatedHeader([source]),
+    _generated: generatedHeader([source, ...rulesSources]),
     contentType: p.contentType,
     defaultTypeBase: p.defaultTypeBase,
     timestampLayout: p.timestampLayout,
@@ -150,7 +150,85 @@ export function buildProblemTypes(exp: ContractsExport, source: string) {
       title: t.title,
       code: t.code,
     })),
+    ...(rules ? { rules } : {}),
   };
+}
+
+/** "bad-request" → "BadRequest": the key of a platform type in PlatformProblemTypes. */
+export function pascalCase(slug: string): string {
+  return slug.replace(/(^|-)([a-z0-9])/g, (_, __, c: string) => c.toUpperCase());
+}
+
+/**
+ * Parsing and definition rules behind gincommon's problem package (unexported): the standard
+ * members (an extension never takes one of their names, in any letter case), the RFC 9457
+ * extension-name pattern, the client body cap and NewType's slug and code patterns.
+ */
+export function buildProblemRules(
+  extensionsGo: string,
+  clientGo: string,
+  typesGo: string,
+  sources: { extensions: string; client: string; types: string },
+) {
+  const membersBlock = sliceBetween(extensionsGo, 'var standardMembers = []string{', '}', sources.extensions, 'standardMembers');
+  const standardMembers = [...membersBlock.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
+  if (standardMembers.length === 0) throw new Error(`${sources.extensions}: no standard members found`);
+  const capExpr = /^const MaxClientBodyBytes = (\d+)(?: << (\d+))?\s*$/m.exec(clientGo);
+  if (!capExpr) throw new Error(`${sources.client}: MaxClientBodyBytes not found (or not N or N << M)`);
+  const maxClientBodyBytes = Number(capExpr[1]) * 2 ** Number(capExpr[2] ?? 0);
+  return {
+    standardMembers,
+    extensionNamePattern: extractGoRegexp(extensionsGo, 'extensionNamePattern', sources.extensions),
+    maxClientBodyBytes,
+    slugPattern: extractGoVarRegexp(typesGo, 'slugPattern', sources.types),
+    codePattern: extractGoVarRegexp(typesGo, 'codePattern', sources.types),
+  };
+}
+
+/** A regexp declared inside a `var ( ... )` block: `name = regexp.MustCompile(`...`)`. */
+export function extractGoVarRegexp(source: string, varName: string, file: string): string {
+  const matches = [...source.matchAll(new RegExp(`^\\s*${varName}\\s*=\\s*regexp\\.MustCompile\\(\`([^\`]+)\`\\)`, 'gm'))];
+  if (matches.length !== 1) throw new Error(`${file}: expected exactly one regexp ${varName}, found ${matches.length}`);
+  return matches[0]![1]!;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Gateway deny codes (iam-authz-enrichment internal/domain/decision.go)
+
+/**
+ * The gateway's deny reasons and their HTTP statuses, read from decision.go and checked against
+ * the TestDenyCodes_Pinned table in its tests: a parsing slip, or a reason added without a pin,
+ * fails the sync (design doc §C5 row 17).
+ */
+export function buildGatewayDenyCodes(decisionGo: string, pinnedTestGo: string, sources: { decision: string; test: string }) {
+  const constBlock = sliceBetween(decisionGo, 'const (', ')', sources.decision, 'DenyReason constants');
+  const names = new Map<string, string>(); // Go identifier → wire value
+  for (const m of constBlock.matchAll(/^\s*(Deny\w+)\s+DenyReason\s*=\s*"([A-Z_]+)"/gm)) names.set(m[1]!, m[2]!);
+  if (names.size === 0) throw new Error(`${sources.decision}: no DenyReason constants found`);
+
+  const statusFn = sliceBetween(decisionGo, 'func (r DenyReason) HTTPStatus() int {', '\n}', sources.decision, 'HTTPStatus');
+  const status = new Map<string, number>();
+  let fallback: number | undefined;
+  for (const m of statusFn.matchAll(/(case ([^:]+)|default):\s*return (\d+)/g)) {
+    if (m[1] === 'default') fallback = Number(m[3]);
+    else for (const id of m[2]!.split(',')) status.set(id.trim(), Number(m[3]));
+  }
+  const codes = [...names].map(([id, code]) => {
+    const s = status.get(id) ?? fallback;
+    if (s === undefined) throw new Error(`${sources.decision}: no HTTP status for ${id}`);
+    return { code, status: s };
+  });
+
+  const pinnedFn = sliceBetween(pinnedTestGo, 'func TestDenyCodes_Pinned(t *testing.T) {', '\n}', sources.test, 'TestDenyCodes_Pinned');
+  const pinned = [...pinnedFn.matchAll(/\{domain\.Deny\w+,\s*"([A-Z_]+)",\s*(\d+)\}/g)].map((m) => ({
+    code: m[1]!,
+    status: Number(m[2]),
+  }));
+  const key = (l: { code: string; status: number }[]) => JSON.stringify([...l].sort((a, b) => a.code.localeCompare(b.code)));
+  if (key(codes) !== key(pinned)) {
+    throw new Error(`${sources.decision} and ${sources.test} disagree: extracted ${key(codes)}, pinned ${key(pinned)}`);
+  }
+  return { _generated: generatedHeader([sources.decision, sources.test]), codes };
 }
 
 // ---------------------------------------------------------------------------------------------
