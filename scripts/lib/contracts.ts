@@ -253,6 +253,72 @@ export function buildLogFields(loggingGo: string, source: string) {
   };
 }
 
+// ---------------------------------------------------------------------------------------------
+// Log redaction (gincommon internal/core/service/log_sanitizer.go, unexported)
+
+function sliceBetween(source: string, start: string, end: string, file: string, what: string): string {
+  const i = source.indexOf(start);
+  if (i < 0) throw new Error(`${file}: ${what} not found`);
+  const j = source.indexOf(end, i + start.length);
+  if (j < 0) throw new Error(`${file}: end of ${what} not found`);
+  return source.slice(i + start.length, j);
+}
+
+/**
+ * The redaction rule of gincommon's log sanitizer (design doc §0 row 4, §C5 row 12): exact
+ * sensitive keys, sensitive substrings, the `key` / `*_key` rule, the replacement value and the
+ * string limit. Every piece is read from the source and checked, so an upstream change fails the
+ * sync instead of being missed.
+ */
+export function buildRedaction(sanitizerGo: string, source: string) {
+  const keysBlock = sliceBetween(sanitizerGo, 'var sensitiveLogKeys = map[string]struct{}{', '\n}', source, 'sensitiveLogKeys');
+  const exactKeys = [...keysBlock.matchAll(/^\s*"([^"]+)":\s*\{\},?\s*$/gm)].map((m) => m[1]!);
+  const ruleBlock = sliceBetween(sanitizerGo, 'func isSensitiveLogKey(key string) bool {', '\n}', source, 'isSensitiveLogKey');
+  const substrings = [...ruleBlock.matchAll(/strings\.Contains\(k, "([^"]+)"\)/g)].map((m) => m[1]!);
+  const exactKeyRule = /k == "key" \|\| strings\.HasSuffix\(k, "_key"\)/.test(ruleBlock);
+  const normalises = /strings\.ToLower\(strings\.TrimSpace\(key\)\)/.test(ruleBlock);
+  const redacted = /out\[k\] = "(\[[A-Z]+\])"/.exec(sanitizerGo)?.[1];
+  const maxBytes = Number(/const maxLen = (\d+)/.exec(sanitizerGo)?.[1]);
+  const stripsControl = /unicode\.IsControl\(r\)/.test(sanitizerGo);
+  if (exactKeys.length === 0) throw new Error(`${source}: no exact sensitive keys found`);
+  if (substrings.length === 0) throw new Error(`${source}: no sensitive substrings found`);
+  if (!exactKeyRule) throw new Error(`${source}: the key / *_key rule changed`);
+  if (!normalises) throw new Error(`${source}: key normalisation (TrimSpace + ToLower) changed`);
+  if (!redacted) throw new Error(`${source}: redaction placeholder not found`);
+  if (!Number.isInteger(maxBytes) || maxBytes <= 0) throw new Error(`${source}: SanitizeString maxLen not found`);
+  if (!stripsControl) throw new Error(`${source}: SanitizeString no longer strips unicode.IsControl (Cc)`);
+  return {
+    _generated: generatedHeader([source]),
+    // Keys are trimmed and lower-cased before matching.
+    exactKeys,
+    substrings,
+    // Also sensitive: the key "key" itself and any key ending in this suffix.
+    keySuffix: '_key',
+    redacted,
+    // SanitizeString: remove Unicode Cc characters, then truncate to this many UTF-8 bytes.
+    stringMaxBytes: maxBytes,
+  };
+}
+
+/**
+ * A TypeScript module with the contracts the SDK's code reads, as `as const` literals so the
+ * types are exact (e.g. `Domain` is the union of registry domains). Generated with the JSON files,
+ * so it can never drift from them (design doc §C5: "TS constants are generated from contracts/").
+ */
+export function buildTsConstants(contracts: Record<string, unknown>, sources: readonly string[]): string {
+  const strip = (v: unknown): unknown => {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      return Object.fromEntries(Object.entries(v).filter(([k]) => k !== '_generated'));
+    }
+    return v;
+  };
+  const lines = [`// ${generatedHeader(sources)}`, ''];
+  for (const [name, value] of Object.entries(contracts)) {
+    lines.push(`export const ${name} = ${JSON.stringify(strip(value), null, 2)} as const;`, '');
+  }
+  return lines.join('\n');
+}
+
 /** Stable JSON text for a generated file. */
 export function toJsonText(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;

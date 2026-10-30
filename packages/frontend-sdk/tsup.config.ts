@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'tsup';
 import { implementedSubpaths } from '../../scripts/lib/subpaths.ts';
 
@@ -7,8 +8,11 @@ import { implementedSubpaths } from '../../scripts/lib/subpaths.ts';
 const entry: Record<string, string> = { root: 'src/root.ts' };
 for (const name of implementedSubpaths()) entry[`${name}/index`] = `src/${name}/index.ts`;
 
+const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
+
 export default defineConfig({
   entry,
+  define: { __SDK_VERSION__: JSON.stringify(version) },
   format: ['esm'],
   target: 'es2022',
   platform: 'browser',
