@@ -14,7 +14,7 @@ export function getTracer(scope: string): Tracer;
 export function initializeTracing(o: TracingOptions): void;
 
 // @public
-export function injectTraceHeaders(url: URL, headers: Headers): void;
+export function injectTraceHeaders(url: URL, headers: Headers, span?: Span): void;
 
 // @public
 export function shutdownTracing(): Promise<void>;

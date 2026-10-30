@@ -233,6 +233,17 @@ export function buildGatewayDenyCodes(decisionGo: string, pinnedTestGo: string, 
   return { _generated: generatedHeader([sources.decision, sources.test]), codes };
 }
 
+/**
+ * The headers AuthZ Enrichment injects on Allow (decision.go InjectedHeaders): the ingress strips
+ * them from every client request (IAM HLD §11.1, AE-SEC-1), so the browser must never send them.
+ */
+export function buildGatewayHeaders(decisionGo: string, source: string) {
+  const block = sliceBetween(decisionGo, '// InjectedHeaders', '\n)', source, 'InjectedHeaders');
+  const injected = [...block.matchAll(/^\s*Header\w+\s*=\s*"([a-z0-9-]+)"/gm)].map((m) => m[1]!);
+  if (injected.length === 0) throw new Error(`${source}: no injected headers found`);
+  return { _generated: generatedHeader([source]), injected };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Header limits and patterns (gincommon internal/core/domain, unexported)
 

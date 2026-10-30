@@ -56,6 +56,8 @@ export interface PlatformRuntime {
   navigator: unknown;
   /** Locale, namespaces and catalogs (/i18n owns its type). */
   i18n: unknown;
+  /** Where /http gets access tokens (/auth provides it; /http owns the type). */
+  tokenSource: unknown;
 }
 
 export const RUNTIME_KEY = Symbol.for('@platform/frontend-sdk');
@@ -95,6 +97,7 @@ function createRuntime(): PlatformRuntime {
     flagProvider: undefined,
     navigator: undefined,
     i18n: undefined,
+    tokenSource: undefined,
   };
 }
 

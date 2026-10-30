@@ -213,16 +213,18 @@ export function currentTraceId(): string | undefined {
 }
 
 /**
- * Used by /http only: writes traceparent (and tracestate) for the active span, but only for the
- * page's own origin and the exact origins in the allowlist. For any other origin it removes them,
- * so no trace context (and never baggage) reaches a third party.
+ * Used by /http only: writes traceparent (and tracestate) for `span` (default: the active span),
+ * but only for the page's own origin and the exact origins in the allowlist. For any other origin
+ * it removes them, so no trace context (and never baggage) reaches a third party. /http passes its
+ * request span explicitly: a retry runs after an await, when no span is active any more.
  */
-export function injectTraceHeaders(url: URL, headers: Headers): void {
+export function injectTraceHeaders(url: URL, headers: Headers, span?: Span): void {
   const s = state();
   const sameOrigin = globalThis.location !== undefined && url.origin === globalThis.location.origin;
   if (!s || !(sameOrigin || s.allowlist.has(url.origin))) {
     for (const h of TRACE_HEADERS) headers.delete(h);
     return;
   }
-  propagator.inject(otelContext.active(), headers, headerSetter);
+  const ctx = span instanceof SdkSpan ? trace.setSpan(otelContext.active(), span.inner) : otelContext.active();
+  propagator.inject(ctx, headers, headerSetter);
 }
