@@ -21,6 +21,10 @@
       "types": "./dist/problem/index.d.ts",
       "import": "./dist/problem/index.js"
     },
+    "./config": {
+      "types": "./dist/config/index.d.ts",
+      "import": "./dist/config/index.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -49,5 +53,8 @@
     "@opentelemetry/api": "^1.10.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
   }
 }
