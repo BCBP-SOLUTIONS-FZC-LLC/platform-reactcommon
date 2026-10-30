@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatDate, formatMoney, formatNumber, initializeI18n, problemMessage, registerNamespace, setLocale, t } from '../../src/i18n/index.ts';
 import { currentLocale, subscribeI18n } from '../../src/i18n/i18n.ts';
 import { directionOf } from '../../src/internal/locale.ts';
+import { initializeCore } from '../../src/core/index.ts';
 import { resetRuntimeForTests } from '../../src/internal/runtime.ts';
 import { parseProblemResponse } from '../../src/problem/index.ts';
 
@@ -194,5 +195,42 @@ describe('problemMessage', () => {
     await setLocale('ar');
     const p = await problem({ type: 'https://errors.company.com/platform/forbidden', title: 'Forbidden', status: 403, errorCode: 'DENY_MFA_STALE' }, 403);
     expect(problemMessage(p)).toBe('غير مسموح لك بهذا.'); // no Arabic deny-code message: the type's
+  });
+});
+
+describe('edge cases', () => {
+  it('rejects a missing default locale and an empty locale with a RangeError', async () => {
+    await expect(initializeI18n({ defaultLocale: undefined as never, supported: ['en'] })).rejects.toThrow('not a BCP 47 language tag');
+    await initializeI18n({ defaultLocale: 'en', supported: ['en'], detect: () => 'en' });
+    await expect(setLocale('')).rejects.toThrow(RangeError);
+    expect(currentLocale().locale).toBe('en');
+  });
+
+  it('uses the default locale when there is no navigator', async () => {
+    vi.stubGlobal('navigator', undefined);
+    expect(await initializeI18n({ defaultLocale: 'ar', supported: ['ar', 'en'] })).toBe('ar');
+  });
+
+  it('reports a loader that rejects with a non-Error value', async () => {
+    registerNamespace('odd', () => Promise.reject('timeout') as never);
+    await initializeI18n({ defaultLocale: 'en', supported: ['en'], detect: () => 'en' });
+    expect(t('odd', 'k')).toBe('k');
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('failed to load for en: timeout'));
+  });
+
+  it('warns only in local and dev environments', async () => {
+    initializeCore({ serviceName: 'web-app', domain: 'tender_management', environment: 'prod' });
+    registerNamespace('broken', async () => { throw new Error('404'); });
+    await initializeI18n({ defaultLocale: 'en', supported: ['en'], detect: () => 'en' });
+    expect(t('broken', 'k')).toBe('k');
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('shows a malformed problem message as is and reports it', async () => {
+    registerNamespace('platform', async () => ({ 'problem.platform/conflict': 'Conflict on {resource' }));
+    await initializeI18n({ defaultLocale: 'en', supported: ['en'], detect: () => 'en' });
+    const p = await problem({ type: 'https://errors.company.com/platform/conflict', title: 'Conflict', status: 409, detail: 'server text' }, 409);
+    expect(problemMessage(p)).toBe('Conflict on {resource');
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('problem.platform/conflict is not valid ICU-lite'));
   });
 });

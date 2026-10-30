@@ -1,6 +1,6 @@
 // Log redaction (design doc §C1 /logging): sanitizeFields, then sanitizeString on every string
 // value, then scrubbing of JWT- and Bearer-shaped substrings, then the message the same way.
-import { sanitizeFields, sanitizeString } from '../core/index.ts';
+import { isSensitiveKey, sanitizeFields, sanitizeString } from '../core/index.ts';
 
 const REDACTED = '[REDACTED]';
 
@@ -39,6 +39,11 @@ function toLogValue(v: unknown, seen: WeakSet<object>): LogValue | undefined {
     } else {
       const o: Record<string, LogValue> = {};
       for (const [k, x] of Object.entries(v)) {
+        // sanitizeFields (gincommon parity) passes class instances through; their keys are checked here.
+        if (isSensitiveKey(k)) {
+          o[k] = REDACTED;
+          continue;
+        }
         const lv = toLogValue(x, seen);
         if (lv !== undefined) o[k] = lv;
       }

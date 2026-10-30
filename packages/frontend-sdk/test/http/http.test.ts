@@ -9,6 +9,7 @@ import {
   subscribeOnline,
   type TokenSource,
 } from '../../src/http/index.ts';
+import { subscribeRuntime } from '../../src/internal/events.ts';
 import { getRuntime, resetRuntimeForTests } from '../../src/internal/runtime.ts';
 import { AbortedError, NetworkError, PlatformProblemTypes, ProblemError, TimeoutError } from '../../src/problem/index.ts';
 import { initializeTracing, shutdownTracing } from '../../src/tracing/index.ts';
@@ -482,5 +483,92 @@ describe('online state', () => {
     off();
     target.dispatchEvent(new Event('online'));
     expect(l.mock.calls).toEqual([[true], [false]]);
+  });
+});
+
+describe('edge paths', () => {
+  it('sends PATCH with the JSON body, the token and no idempotency key', async () => {
+    setTokenSource(tokens());
+    await createApiClient().patch('/tenders/:id', { params: { id: 1 }, body: { title: 'y' } });
+    expect(calls[0]!.init.method).toBe('PATCH');
+    expect(calls[0]!.init.body).toBe('{"title":"y"}');
+    expect(h().get('authorization')).toBe('Bearer t1');
+    expect(h().has('idempotency-key')).toBe(false);
+  });
+
+  it('sends no token, but still calls, when the token source throws', async () => {
+    setTokenSource({ getAccessToken: () => Promise.reject(new Error('storage gone')), refresh: async () => false, onUnauthorized: () => {} });
+    expect((await createApiClient().get('/a')).data).toEqual({ ok: true });
+    expect(h().has('authorization')).toBe(false);
+  });
+
+  it('calls onUnauthorized, without retrying, when the refresh itself rejects', async () => {
+    const t = tokens();
+    t.refresh.mockRejectedValue(new Error('refresh endpoint down'));
+    setTokenSource(t);
+    handler = () => problem(401);
+    const e = await createApiClient().get('/a').catch((x: unknown) => x);
+    expect((e as ProblemError).status).toBe(401);
+    expect(t.onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('falls back to backoff when Retry-After is unparsable', async () => {
+    let n = 0;
+    handler = () => (n++ === 0 ? new Response('', { status: 503, headers: { 'retry-after': 'soon' } }) : json({ ok: 1 }));
+    expect((await createApiClient().get('/a')).data).toEqual({ ok: 1 }); // Math.random() = 0: no wait
+    expect(calls).toHaveLength(2);
+  });
+
+  it('stops with AbortedError when the caller aborts before the backoff starts', async () => {
+    const controller = new AbortController();
+    handler = () => {
+      controller.abort();
+      return new Response('', { status: 503 });
+    };
+    await expect(createApiClient().put('/a', { signal: controller.signal })).rejects.toBeInstanceOf(AbortedError);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('stops with AbortedError when the caller aborts during the Retry-After wait', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      handler = () => new Response('', { status: 429, headers: { 'retry-after': '5' } });
+      const p = createApiClient().delete('/a', { signal: controller.signal });
+      const settled = p.catch((x: unknown) => x);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(calls).toHaveLength(1);
+      controller.abort();
+      expect(await settled).toBeInstanceOf(AbortedError);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(calls).toHaveLength(1); // no retry after the abort
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects a deduplicated GET whose signal is already aborted, and sends nothing', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(createApiClient().get('/a', { signal: controller.signal })).rejects.toBeInstanceOf(AbortedError);
+    await Promise.resolve();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('marks the tenant read-only once on DENY_TENANT_READ_ONLY', async () => {
+    const seen = vi.fn();
+    subscribeRuntime('read-only', seen);
+    handler = () => problem(403, { type: 'https://errors.company.com/platform/forbidden', errorCode: 'DENY_TENANT_READ_ONLY' });
+    const api = createApiClient();
+    await expect(api.post('/a')).rejects.toBeInstanceOf(ProblemError);
+    expect(getRuntime().readOnlyDenied).toBe(true);
+    await expect(api.put('/b')).rejects.toBeInstanceOf(ProblemError);
+    expect(seen).toHaveBeenCalledTimes(1);
+    handler = () => problem(403, { errorCode: 'DENY_MFA_STALE' });
+    resetRuntimeForTests();
+    config();
+    await api.post('/c').catch(() => {});
+    expect(getRuntime().readOnlyDenied).toBeFalsy();
   });
 });

@@ -49,9 +49,12 @@ export function initializeAuth(p: IdentityProvider): TokenSource {
   return source;
 }
 
+// One object, so React's useSyncExternalStore sees a stable snapshot before initializeAuth.
+const LOADING: SessionState = Object.freeze({ status: 'loading' });
+
 /** The current session; `loading` until initializeAuth has run and init() settled. */
 export function getSession(): SessionState {
-  return (getRuntime().identityProvider as IdentityProvider | undefined)?.getState() ?? { status: 'loading' };
+  return (getRuntime().identityProvider as IdentityProvider | undefined)?.getState() ?? LOADING;
 }
 
 /**

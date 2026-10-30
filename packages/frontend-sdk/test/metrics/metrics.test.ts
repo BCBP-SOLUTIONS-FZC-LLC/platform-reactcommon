@@ -2,10 +2,10 @@ import { AggregationTemporality, InMemoryMetricExporter, type PushMetricExporter
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeCore, setConsentProvider, type ConsentCategory } from '../../src/core/index.ts';
 import { getRuntime, resetRuntimeForTests } from '../../src/internal/runtime.ts';
-import { servicePrefix, suffixProblem } from '../../src/metrics/checks.ts';
+import { lookupMetric, servicePrefix, suffixProblem } from '../../src/metrics/checks.ts';
 import { InvalidMetricError, getDomainMeter, getServiceMeter, initializeMetrics, startWebVitals } from '../../src/metrics/index.ts';
 import { renderMetricInventory } from '../../src/metrics/inventory.ts';
-import { metricsStats, setMetricsInternalsForTests, shutdownMetrics } from '../../src/metrics/metrics.ts';
+import { metricsState, metricsStats, setMetricsInternalsForTests, shutdownMetrics } from '../../src/metrics/metrics.ts';
 import { PARITY_CASES, sdkVerdict } from './parity-cases.ts';
 
 let exporter: InMemoryMetricExporter;
@@ -41,7 +41,19 @@ beforeEach(() => {
 afterEach(async () => {
   await shutdownMetrics();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
+
+/** The InvalidMetricError rule `f` throws, or 'ok'. */
+function ruleOf(f: () => unknown): string {
+  try {
+    f();
+  } catch (e) {
+    expect(e).toBeInstanceOf(InvalidMetricError);
+    return (e as InvalidMetricError).rule;
+  }
+  return 'ok';
+}
 
 describe('parity cases (also run against metricslint by scripts/metrics-parity.ts)', () => {
   it.each(PARITY_CASES.map((c) => [`${c.tier}: ${c.name}`, c] as const))('%s', (_, c) => {
@@ -61,6 +73,11 @@ describe('rules', () => {
     expect(suffixProblem('histogram', 'x_bytes', 'bytes')).toBeUndefined();
     expect(suffixProblem('histogram', 'x_seconds', 'seconds')).toBeUndefined();
     expect(suffixProblem('histogram', 'x_ms', 'milliseconds')).toContain('not supported');
+  });
+
+  it('looks registry metrics up by name', () => {
+    expect(lookupMetric('iam_tenant_resolution_total')).toMatchObject({ tier: 'domain', domain: 'iam', type: 'counter', labels: ['strategy', 'outcome'] });
+    expect(lookupMetric('tender_management_web_app_saves_total')).toBeUndefined();
   });
 });
 
@@ -101,6 +118,83 @@ describe('initializeMetrics', () => {
     expect(metricsStats().droppedNoConsent).toBeGreaterThan(0);
   });
 
+  it('is a no-op the second time', () => {
+    let made = 0;
+    setMetricsInternalsForTests({
+      exporter: (url) => {
+        made++;
+        exportedUrl = url;
+        return exporter as PushMetricExporter;
+      },
+    });
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    const provider = metricsState().provider;
+    initializeMetrics({ otlpBaseUrl: '/other', exportIntervalMs: 5_000 });
+    expect(made).toBe(1);
+    expect(exportedUrl).toBe('http://localhost/otel/v1/metrics');
+    expect(metricsState().provider).toBe(provider);
+  });
+
+  it('flushes on pagehide and when the page is hidden, and stops listening after shutdown', async () => {
+    const win = new EventTarget();
+    vi.stubGlobal('addEventListener', win.addEventListener.bind(win));
+    vi.stubGlobal('removeEventListener', win.removeEventListener.bind(win));
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+    vi.stubGlobal('document', doc);
+    initializeMetrics({ otlpBaseUrl: '/otel' }); // 60 s interval: only a page event exports in this test
+    const flush = vi.spyOn(metricsState().provider!, 'forceFlush');
+    getServiceMeter().counter('tender_management_web_app_hides_total', 'Hides.', []).add(3);
+
+    doc.dispatchEvent(new Event('visibilitychange'));
+    expect(flush).not.toHaveBeenCalled(); // still visible
+    doc.visibilityState = 'hidden';
+    doc.dispatchEvent(new Event('visibilitychange'));
+    expect(flush).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(exporter.getMetrics().length).toBeGreaterThan(0));
+    win.dispatchEvent(new Event('pagehide'));
+    expect(flush).toHaveBeenCalledTimes(2);
+
+    await shutdownMetrics();
+    win.dispatchEvent(new Event('pagehide'));
+    doc.dispatchEvent(new Event('visibilitychange'));
+    expect(flush).toHaveBeenCalledTimes(2);
+    const exported = exporter
+      .getMetrics()
+      .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
+      .filter((m) => m.descriptor.name === 'tender_management_web_app_hides_total')
+      .flatMap((m) => m.dataPoints.map((p) => p.value));
+    expect(exported).toEqual([3]); // delta: later flushes carry no new points
+  });
+
+  it('survives a throwing exporter: flushes, page-hide flushes and shutdown never throw', async () => {
+    const win = new EventTarget();
+    vi.stubGlobal('addEventListener', win.addEventListener.bind(win));
+    vi.stubGlobal('removeEventListener', win.removeEventListener.bind(win));
+    let attempts = 0;
+    setMetricsInternalsForTests({
+      exporter: () => ({
+        export: () => {
+          attempts++;
+          throw new Error('collector down');
+        },
+        forceFlush: async () => {},
+        shutdown: async () => {},
+      }),
+    });
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    const c = getServiceMeter().counter('tender_management_web_app_lost_total', 'Lost.', []);
+    c.add(1);
+    await expect(metricsState().provider!.forceFlush()).resolves.toBeUndefined();
+    expect(attempts).toBe(1);
+    c.add(1);
+    win.dispatchEvent(new Event('pagehide')); // the failed flush is swallowed, not an unhandled rejection
+    await vi.waitFor(() => expect(attempts).toBe(2));
+    c.add(1);
+    await expect(shutdownMetrics()).resolves.toBeUndefined();
+    expect(metricsState().provider).toBeUndefined();
+    expect(metricsStats().droppedNoConsent).toBe(0);
+  });
+
   it('records histograms in seconds with the request_duration preset by default', async () => {
     initializeMetrics({ otlpBaseUrl: '/otel' });
     getServiceMeter().histogram('tender_management_web_app_render_seconds', 'Render.', []).record(0.3);
@@ -127,6 +221,39 @@ describe('meters', () => {
     expect(rule(() => m.counter('tender_management_web_app_x_total', 'X.', ['service']))).toBe('required_labels');
     expect(rule(() => m.histogram('tender_management_web_app_x_seconds', 'X.', [], [1, 0.5]))).toBe('registry');
     expect(rule(() => getDomainMeter().counter('iam_tenant_resolution_total'))).toBe('namespace');
+  });
+
+  it('reject domain metrics that are unknown, not domain-tier, of the other type, or duplicate labels', () => {
+    expect(ruleOf(() => getDomainMeter().counter('tender_management_unknown_total'))).toBe('registry');
+    expect(ruleOf(() => getDomainMeter().histogram('platform_http_request_duration_seconds'))).toBe('registry');
+    expect(() => getDomainMeter().histogram('platform_http_request_duration_seconds')).toThrow('not a domain one');
+    resetRuntimeForTests();
+    core('iam');
+    expect(() => getDomainMeter().counter('iam_lifecycle_event_lag_seconds')).toThrow('is a histogram, not a counter');
+    expect(ruleOf(() => getDomainMeter().histogram('iam_lifecycle_event_lag_seconds'))).toBe('ok');
+    expect(ruleOf(() => getServiceMeter().counter('iam_web_app_x_total', 'X.', ['kind', 'kind']))).toBe('label_vocabulary');
+  });
+
+  it("take a domain histogram's help, labels and buckets from its registry entry", async () => {
+    resetRuntimeForTests();
+    core('iam');
+    consent(['telemetry']);
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    const h = getDomainMeter().histogram('iam_lifecycle_event_lag_seconds');
+    h.record(2, { event_type: 'tenant.created' });
+    h.record(1, { event_type: 'tenant.created', strategy: 'x' } as Record<string, string>); // undeclared: dropped
+    await shutdownMetrics();
+    const [m] = exporter
+      .getMetrics()
+      .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
+      .filter((x) => x.descriptor.name === 'iam_lifecycle_event_lag_seconds');
+    expect(m!.descriptor.description).toBe(lookupMetric('iam_lifecycle_event_lag_seconds')!.help);
+    expect(m!.descriptor.unit).toBe('s');
+    expect(m!.dataPoints).toHaveLength(1);
+    const p = m!.dataPoints[0]!;
+    expect(p.attributes).toEqual({ event_type: 'tenant.created', domain: 'iam', service: 'web-app', environment: 'dev' });
+    expect((p.value as { buckets: { boundaries: number[] } }).buckets.boundaries).toEqual([0.05, 0.1, 0.5, 1, 5, 15, 60, 300, 1800]);
+    expect(metricsStats().droppedInvalid).toBe(1);
   });
 
   it('are idempotent for the same definition and reject a different one', () => {

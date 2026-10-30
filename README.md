@@ -41,7 +41,7 @@ pnpm contracts:sync  # regenerate packages/frontend-sdk/contracts/ from the back
 three npm packages).
 
 - **CI** (`ci.yml`, every PR and every push to `main`):
-  - `Validate / Test`: every test, with a coverage gate of ≥ 94 % statements of `packages/*/src`.
+  - `Validate / Test`: every test, with a coverage gate of ≥ 98 % statements of `packages/*/src`.
   - `Validate / Quality`: workflow hygiene, actions pinned by SHA, lockfile, exports, lint, typecheck,
     build, API reports, dependency rules, the example CSP checks and `pnpm audit --prod`.
   - `Validate / Contracts`: generated `contracts/` against the pinned backend commits, and metrics parity.

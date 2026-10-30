@@ -74,7 +74,7 @@ export class ProblemError extends Error implements ProblemDetails {
     this.type = details.type;
     this.title = details.title;
     this.status = details.status;
-    // Optional members are only set when present, so the object mirrors the body.
+    // Optional members are assigned only when the body has them; otherwise they stay undefined.
     if (details.detail !== undefined) this.detail = details.detail;
     if (details.instance !== undefined) this.instance = details.instance;
     if (details.traceId !== undefined) this.traceId = details.traceId;

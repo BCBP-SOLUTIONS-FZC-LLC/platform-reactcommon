@@ -201,6 +201,34 @@ describe('rememberWorkspace and the cache', () => {
     expect(cachedWorkspace('acme')).toBeDefined();
     page.local.setItem(WORKSPACE_CACHE_KEY, '{not json');
     expect(cachedWorkspace()).toBeUndefined();
+    page.local.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({ slug: 'acme', realm: 'tenant-acme', trial: false }));
+    expect(cachedWorkspace()).toBeUndefined(); // an object, not the list
+  });
+
+  it('localStorage denied: no cache, no throw, and the URL still gets its slug', () => {
+    page.url = new URL('https://app.example.com/tenders');
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('denied', 'SecurityError');
+      },
+    });
+    expect(() => rememberWorkspace({ realm: 'tenant-acme', trial: false, slug: 'acme' })).not.toThrow();
+    expect(cachedWorkspace('acme')).toBeUndefined();
+    expect(page.url.pathname).toBe('/t/acme/tenders');
+  });
+
+  it('a full localStorage keeps the old cache', () => {
+    rememberWorkspace({ realm: 'tenant-acme', trial: false, slug: 'acme' });
+    page.local.failWrites = true;
+    rememberWorkspace({ realm: 'tenant-globex', trial: false, slug: 'globex' });
+    expect(cachedWorkspace()?.slug).toBe('acme');
+  });
+
+  it('needs the runtime config', () => {
+    resetRuntimeForTests();
+    expect(() => rememberWorkspace({ realm: 'tenant-acme', trial: false, slug: 'acme' })).toThrow('setRuntimeConfig');
+    expect(page.local.getItem(WORKSPACE_CACHE_KEY)).toBeNull();
   });
 });
 

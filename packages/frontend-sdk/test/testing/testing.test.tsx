@@ -1,14 +1,18 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getSession } from '../../src/auth/index.ts';
+import { getSession, type IdentityProvider } from '../../src/auth/index.ts';
 import { hasPermission } from '../../src/authz/index.ts';
+import { hasConsent } from '../../src/core/index.ts';
 import { getFlag } from '../../src/flags/index.ts';
 import { createApiClient } from '../../src/http/index.ts';
+import { getRuntime } from '../../src/internal/runtime.ts';
 import { getLogger } from '../../src/logging/index.ts';
+import { shutdownLogging } from '../../src/logging/logging.ts';
 import { getServiceMeter } from '../../src/metrics/index.ts';
 import { PlatformProblemTypes, isProblemError, parseProblemResponse } from '../../src/problem/index.ts';
-import { useCurrentUser, useSessionContext } from '../../src/react/index.ts';
+import { useBeforeAuthRedirect, useCurrentUser, useSessionContext, useStepUp, useSwitchWorkspace, useWorkspace } from '../../src/react/index.ts';
 import { withSpan } from '../../src/tracing/index.ts';
+import { shutdownTracing } from '../../src/tracing/tracing.ts';
 import { createTestPlatform, mockApi, mockProblem, renderMetricInventory } from '../../src/testing/index.ts';
 import { fixture } from '../core/helpers.ts';
 import { cleanup, render, settle } from '../react/render.tsx';
@@ -59,6 +63,115 @@ describe('createTestPlatform', () => {
     createTestPlatform({ permissions: ['read:tender'] });
     createTestPlatform();
     expect(hasPermission('read', 'tender')).toBe(false);
+  });
+});
+
+describe('createTestPlatform spans and exporters', () => {
+  it('records the parent span id of nested spans and the error status', async () => {
+    const p = createTestPlatform();
+    await withSpan('outer', () => withSpan('inner', async () => {}));
+    await withSpan('fails', async () => {
+      throw new Error('boom');
+    }).catch(() => {});
+    await settle();
+    const byName = Object.fromEntries(p.spans.map((s) => [s.name, s]));
+    expect(byName.inner!.parentSpanId).toBe(byName.outer!.spanId);
+    expect(byName.inner!.traceId).toBe(byName.outer!.traceId);
+    expect(byName.outer!.parentSpanId).toBeUndefined();
+    expect([byName.outer!.status, byName.fails!.status]).toEqual(['unset', 'error']);
+    expect(byName.fails!.events.map((e) => e.name)).toEqual(['exception']);
+  });
+
+  it('flushes pending logs and spans into memory on shutdown', async () => {
+    const p = createTestPlatform();
+    getLogger().warn('last words');
+    const done = withSpan('closing', async () => {});
+    await done;
+    await shutdownLogging();
+    await shutdownTracing();
+    expect(p.logs.map((l) => [l.level, l.body])).toContainEqual(['warn', 'last words']);
+    expect(p.spans.map((s) => s.name)).toEqual(['closing']);
+  });
+
+  it('grants every consent category, with a no-op subscription', () => {
+    createTestPlatform();
+    expect([hasConsent('essential'), hasConsent('telemetry'), hasConsent('analytics')]).toEqual([true, true, true]);
+    const listener = vi.fn();
+    const off = getRuntime().consent.subscribe(listener);
+    expect(off).toBeTypeOf('function');
+    off();
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe('createTestPlatform identity provider', () => {
+  const idp = () => getRuntime().identityProvider as IdentityProvider;
+
+  it('is signed in, never redirects, and tells beforeRedirect listeners why', async () => {
+    const p = createTestPlatform({ workspace: { realm: 'tenant-acme', trial: true } });
+    expect(await idp().init()).toMatchObject({ status: 'authenticated', user: { sub: 'test-user' }, workspace: { realm: 'tenant-acme' } });
+    expect([await idp().getAccessToken(), await idp().refresh()]).toEqual(['test-access-token', true]);
+    const reasons: string[] = [];
+    function Form() {
+      useBeforeAuthRedirect(() => reasons.push(`saved:${reasons.length}`));
+      return null;
+    }
+    const seen: string[] = [];
+    const off = idp().beforeRedirect((r) => seen.push(r.reason));
+    const r = await render(
+      <p.Wrapper>
+        <Form />
+      </p.Wrapper>,
+    );
+    await idp().login({ workspace: { realm: 'tenant-acme', trial: true } });
+    await idp().switchWorkspace({ realm: 'tenant-globex', trial: false });
+    await idp().reauthenticate({ maxAgeSeconds: 60 });
+    expect(seen).toEqual(['login', 'switch', 'step-up']);
+    expect(reasons).toEqual(['saved:0', 'saved:1', 'saved:2']);
+    off();
+    await r.unmount();
+    await idp().login({ workspace: { realm: 'tenant-acme', trial: true } });
+    expect([seen, reasons].map((a) => a.length)).toEqual([3, 3]);
+    await idp().logout();
+    expect(getSession().status).toBe('authenticated'); // logout records nothing: the fake stays signed in
+  });
+
+  it('needsStepUp compares the user auth_time with the window, and is false without one', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createTestPlatform({ user: { sub: 'u', authTime: now - 600 } });
+    expect([idp().needsStepUp(300), idp().needsStepUp(3600)]).toEqual([true, false]);
+    createTestPlatform();
+    expect(idp().needsStepUp(0)).toBe(false);
+
+    const p = createTestPlatform({ user: { sub: 'u', authTime: now - 600 }, context: { mfaFreshnessSeconds: 300 } });
+    let stepUp: ReturnType<typeof useStepUp> | undefined;
+    function View() {
+      stepUp = useStepUp();
+      return null;
+    }
+    await render(
+      <p.Wrapper>
+        <View />
+      </p.Wrapper>,
+    );
+    expect(stepUp!.needed).toBe(true);
+    await expect(stepUp!.reauthenticate()).resolves.toBeUndefined();
+  });
+
+  it('a workspace without a slug gets the slug "test", and the shell can switch workspace', async () => {
+    const p = createTestPlatform({ workspace: { realm: 'tenant-x', trial: false } });
+    let switchTo: ((id: string) => Promise<void>) | undefined;
+    function View() {
+      switchTo = useSwitchWorkspace();
+      return <p>{`${useWorkspace()?.realm}|${useSessionContext()?.slug}`}</p>;
+    }
+    const { container } = await render(
+      <p.Wrapper>
+        <View />
+      </p.Wrapper>,
+    );
+    expect(container.textContent).toBe('tenant-x|test');
+    await expect(switchTo!('globex')).resolves.toBeUndefined();
   });
 });
 

@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import webpack from 'webpack';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { containerGlobal } from '../../frontend-sdk/src/mfe/remote.ts';
 import { containerName, platformShared, platformWebpackConfig, sharedFor } from '../src/index.ts';
 import { SDK_SUBPATHS } from '../src/generated/sdk.ts';
@@ -87,9 +87,50 @@ describe('platformWebpackConfig', () => {
     expect(prod.output?.filename).toContain('[contenthash]');
   });
 
+  it('refuses an unknown role or mode', () => {
+    expect(() => platformWebpackConfig({ role: 'host' as never, mode: 'production' })).toThrow(/role must be 'shell' or 'remote', got "host"/);
+    expect(() => platformWebpackConfig({ role: 'shell', mode: 'none' as never })).toThrow(/mode must be 'production' or 'development'/);
+  });
+
+  it('development output has readable names and no content hashes', () => {
+    const dev = platformWebpackConfig({ role: 'shell', mode: 'development' });
+    expect(dev.devtool).toBe('cheap-module-source-map');
+    expect(dev.output).toMatchObject({ filename: '[name].js', chunkFilename: '[name].js', assetModuleFilename: 'assets/[name][ext]', uniqueName: 'shell' });
+    expect(dev.optimization).toEqual({ moduleIds: 'deterministic', chunkIds: 'deterministic' });
+  });
+
+  it('wires the federation plugin for the role', () => {
+    const mfOptions = (c: webpack.Configuration) => (c.plugins![0] as unknown as { options: Record<string, unknown> }).options;
+    const shell = platformWebpackConfig({ role: 'shell', mode: 'production', name: 'ignored', exposes: { './X': './x.js' } });
+    expect(shell.plugins![0]).toBeInstanceOf(webpack.container.ModuleFederationPlugin);
+    expect(mfOptions(shell)).toEqual({ name: 'shell', shared: sharedFor('shell') });
+    const remote = platformWebpackConfig({ role: 'remote', name: 'iam-admin', mode: 'development' });
+    expect(mfOptions(remote)).toEqual({
+      name: 'iam_admin',
+      library: { type: 'var', name: 'iam_admin' },
+      filename: 'remoteEntry.js',
+      exposes: {},
+      shared: sharedFor('remote'),
+    });
+    expect(remote.output?.uniqueName).toBe('iam_admin');
+  });
+
   it('refuses a remote without a valid name', () => {
     expect(() => platformWebpackConfig({ role: 'remote', mode: 'production' })).toThrow(TypeError);
     expect(() => platformWebpackConfig({ role: 'remote', name: 'shell', mode: 'production' })).toThrow(TypeError);
+  });
+});
+
+describe('package.json pins', () => {
+  it('a missing pin fails at load time, naming the package', async () => {
+    vi.resetModules();
+    vi.doMock('node:module', () => ({ createRequire: () => () => ({ platformShared: { react: '^19.0.0' } }) }));
+    try {
+      await expect(import('../src/index.ts')).rejects.toThrow('has no platformShared pin for react-dom');
+    } finally {
+      vi.doUnmock('node:module');
+      vi.resetModules();
+    }
   });
 });
 

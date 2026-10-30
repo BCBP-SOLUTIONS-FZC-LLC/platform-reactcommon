@@ -43,6 +43,15 @@ tester.run('no-identity-headers', rules['no-identity-headers']!, {
     "api.get('/t', { headers: { 'Accept-Language': 'ar' } });",
     "map.set('x-user-id-cache', 1);",
     "const o = { 'x-user-id': 1 };", // not a headers object
+    'fetch(u, { headers: h });', // not an object literal: nothing to inspect
+    "fetch(u, { headers: { [name]: v, 1: 'one', ...base } });", // computed, numeric and spread keys are not names
+    "fetch(u, { ['headers']: { 'x-user-id': u } });", // a computed `headers` key is not recognised
+    'new Headers(init);',
+    'new Headers();',
+    "new Map({ 'x-user-id': u });",
+    "headers.set(name, v);",
+    "headers.get('x-user-id');",
+    "set('x-user-id', u);", // not a method call
   ],
   invalid: [
     { code: "fetch('/api/x', { headers: { 'x-user-id': u } });", errors: [{ messageId: 'header', data: { name: 'x-user-id' } }] },
@@ -51,6 +60,8 @@ tester.run('no-identity-headers', rules['no-identity-headers']!, {
     { code: "headers.set('x-tenant-roles', r);", errors: 1 },
     { code: "h.append('X-Residency-Mode', m);", errors: 1 },
     { code: "fetch(u, { headers: { ['x-departments']: d } });", errors: 1 },
+    { code: "fetch(u, { headers: { ...base, 'x-user-id': u } });", errors: [{ messageId: 'header', data: { name: 'x-user-id' } }] },
+    { code: "headers['set']('x-plan', p);", errors: [{ messageId: 'header', data: { name: 'x-plan' } }] },
   ],
 });
 
@@ -59,12 +70,15 @@ tester.run('no-raw-storage', rules['no-raw-storage']!, {
     "import { storage } from '@platform/frontend-sdk/storage'; storage('tenders').set('filter', 'open');",
     'const localStorage = new Map(); localStorage.get("x");',
     'obj.localStorage = 1;',
+    'window[key].getItem("x");', // a computed member with a non-literal key is not resolved
+    'self.indexedDB.open("db");',
   ],
   invalid: [
     { code: "localStorage.setItem('token', t);", errors: [{ messageId: 'raw' }] },
     { code: "const v = sessionStorage.getItem('draft');", errors: 1 },
     { code: "window.localStorage.clear();", errors: 1 },
     { code: "globalThis['sessionStorage'].removeItem('x');", errors: 1 },
+    { code: 'self.localStorage.clear();', errors: [{ messageId: 'raw', data: { name: 'self.localStorage' } }] },
   ],
 });
 
@@ -75,6 +89,13 @@ tester.run('no-unsafe-html', rules['no-unsafe-html']!, {
     "el.insertAdjacentHTML('beforeend', security.sanitizeHtml(html));",
     'const a = <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }} />;',
     { code: 'el.innerHTML = clean(html);', options: [{ sanitizers: ['clean'] }] },
+    'html = el.innerHTML;', // reading is fine
+    'innerHTML = html;', // a plain variable, not an element property
+    'el[prop] = html;',
+    'const a = <div title={html} />;',
+    'const a = <div {...props} />;',
+    'doc.write(html);', // only the global document
+    "el.insertAdjacentText('beforeend', text);",
   ],
   invalid: [
     { code: 'el.innerHTML = html;', errors: [{ messageId: 'unsanitized', data: { what: 'innerHTML' } }] },
@@ -83,6 +104,11 @@ tester.run('no-unsafe-html', rules['no-unsafe-html']!, {
     { code: 'document.write(html);', errors: [{ messageId: 'write' }] },
     { code: 'const a = <div dangerouslySetInnerHTML={{ __html: html }} />;', errors: 1 },
     { code: 'const a = <div dangerouslySetInnerHTML={props.html} />;', errors: 1 },
+    { code: 'const a = <div dangerouslySetInnerHTML="<b>x</b>" />;', errors: [{ messageId: 'unsanitized', data: { what: 'dangerouslySetInnerHTML' } }] },
+    { code: 'const a = <div dangerouslySetInnerHTML={{ html: sanitizeHtml(x) }} />;', errors: 1 }, // no __html
+    { code: 'el.innerHTML = factory()(html);', errors: [{ messageId: 'unsanitized', data: { what: 'innerHTML' } }] }, // an anonymous callee is not a sanitizer
+    { code: 'el.innerHTML = sanitizeHtml(html);', options: [{ sanitizers: ['clean'] }], errors: 1 }, // the option replaces the default
+    { code: 'document.writeln(html);', errors: [{ messageId: 'write', data: { what: 'document.writeln' } }] },
   ],
 });
 
@@ -92,12 +118,18 @@ tester.run('no-runtime-css-in-js', rules['no-runtime-css-in-js']!, {
     "import { style } from '@vanilla-extract/css';",
     "import { css } from '@linaria/core';",
     { code: "import styled from 'styled-components';", options: [{ allow: ['styled-components'] }] },
+    "import x from 'styled-components-like';",
+    "import { styled } from '@stitches/react-extra';",
   ],
   invalid: [
     { code: "import styled from '@emotion/styled';", errors: [{ messageId: 'css' }] },
     { code: "import styled from 'styled-components';", errors: 1 },
     { code: "import { Button } from '@mui/material';", errors: 1 },
     { code: "import { assignInlineVars } from '@vanilla-extract/dynamic';", errors: 1 },
+    { code: "import { css } from 'styled-components/macro';", options: [{ allow: ['styled-components'] }], errors: [{ messageId: 'css', data: { source: 'styled-components/macro' } }] },
+    { code: "const m = await import('goober');", errors: 1 },
+    { code: "export { styled } from '@stitches/react';", errors: 1 },
+    { code: "const s = require('styled-jsx/style');", errors: 1 },
   ],
 });
 
@@ -108,11 +140,21 @@ tester.run('api-route-template', rules['api-route-template']!, {
     'cache.get(`${tenant}:${key}`);',
     'map.delete(prefix + key);',
     'api.get(TEMPLATES.tender);',
+    'api.get();',
+    'api.fetch(`/tenders/${id}`);', // not an ApiClient method
+    'get(`/tenders/${id}`);', // not a method call
+    'api.get(`/tenders/:id`);', // a template literal without expressions is a template
+    "api.get(base + '/tenders');", // leftmost part is not a path
+    'api.get(`${base}/tenders`);',
+    "api.get(id * '/x');",
+    "api[method](`/tenders/${id}`);",
   ],
   invalid: [
     { code: 'api.get(`/tenders/${id}`);', errors: [{ messageId: 'template' }] },
     { code: "client.delete('/tenders/' + id);", errors: 1 },
     { code: "api.patch(`/tenders/${id}/items/` + item, { body });", errors: 1 },
+    { code: "api.put('/tenders/' + id + '/items', { body });", errors: 1 },
+    { code: "api['post'](`/tenders/${id}/bids`);", errors: 1 },
   ],
 });
 

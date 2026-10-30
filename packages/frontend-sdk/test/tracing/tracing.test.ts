@@ -5,8 +5,8 @@ import { SamplingDecision, type ReadableSpan, type SpanExporter } from '@opentel
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NotInitializedError, initializeCore, setConsentProvider, type ConsentCategory } from '../../src/core/index.ts';
 import { resetRuntimeForTests } from '../../src/internal/runtime.ts';
-import { DEFAULT_QUEUE } from '../../src/tracing/processor.ts';
-import { GoTraceIdRatioSampler, rootSampler } from '../../src/tracing/sampler.ts';
+import { DEFAULT_QUEUE, DropOldestBatchSpanProcessor, type TracingStats } from '../../src/tracing/processor.ts';
+import { GoTraceIdRatioSampler, platformSampler, rootSampler } from '../../src/tracing/sampler.ts';
 import {
   currentTraceId,
   getTracer,
@@ -76,6 +76,23 @@ describe('sampler (gincommon semantics)', () => {
     expect(rootSampler(7).shouldSample(ROOT_CONTEXT, id, 'x', 0, {}, []).decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
     expect(rootSampler(0).shouldSample(ROOT_CONTEXT, id, 'x', 0, {}, []).decision).toBe(SamplingDecision.NOT_RECORD);
     expect(rootSampler(-1).shouldSample(ROOT_CONTEXT, id, 'x', 0, {}, []).decision).toBe(SamplingDecision.NOT_RECORD);
+  });
+
+  it("describes itself as Go's TraceIDRatioBased{<fraction>} and is the root sampler for 0 < ratio < 1", () => {
+    // Go: fmt.Sprintf("TraceIDRatioBased{%g}", fraction); %g and JS agree for these ratios.
+    for (const [ratio, text] of [
+      [0.1, 'TraceIDRatioBased{0.1}'],
+      [0.25, 'TraceIDRatioBased{0.25}'],
+      [0.5, 'TraceIDRatioBased{0.5}'],
+      [0.001, 'TraceIDRatioBased{0.001}'],
+    ] as const) {
+      const root = rootSampler(ratio);
+      expect(root).toBeInstanceOf(GoTraceIdRatioSampler);
+      expect(root.toString()).toBe(text);
+      expect(platformSampler(ratio).toString()).toContain(`root=${text}`);
+    }
+    expect(rootSampler(1).toString()).toBe('AlwaysOnSampler');
+    expect(rootSampler(0).toString()).toBe('AlwaysOffSampler');
   });
 
   it('never samples a malformed trace id', () => {
@@ -165,6 +182,86 @@ describe('initializeTracing', () => {
 });
 
 describe('export queue', () => {
+  it('flushes when the page becomes hidden, not while visible, and stops listening after shutdown', async () => {
+    const win = new EventTarget();
+    vi.stubGlobal('addEventListener', win.addEventListener.bind(win));
+    vi.stubGlobal('removeEventListener', win.removeEventListener.bind(win));
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+    vi.stubGlobal('document', doc);
+    let flushes = 0;
+    setTracingInternalsForTests({
+      exporter: () => ({
+        ...exporter,
+        forceFlush: async () => {
+          flushes++;
+        },
+      }),
+    });
+    start();
+    getTracer('t').startSpan('queued').end();
+    doc.dispatchEvent(new Event('visibilitychange'));
+    await Promise.resolve();
+    expect(spans()).toHaveLength(0); // still visible: waiting for the 5 s batch timer
+    doc.visibilityState = 'hidden';
+    doc.dispatchEvent(new Event('visibilitychange'));
+    await vi.waitFor(() => expect(spans().map((s) => s.name)).toEqual(['queued']));
+    await vi.waitFor(() => expect(flushes).toBe(1));
+    await shutdownTracing();
+    const afterShutdown = flushes;
+    doc.dispatchEvent(new Event('visibilitychange'));
+    win.dispatchEvent(new Event('pagehide'));
+    await Promise.resolve();
+    expect(flushes).toBe(afterShutdown);
+  });
+
+  it('never rejects on shutdown when the exporter fails to flush or shut down', async () => {
+    const rejecting: SpanExporter = {
+      export: exporter.export,
+      forceFlush: () => Promise.reject(new Error('flush failed')),
+      shutdown: () => Promise.reject(new Error('shutdown failed')),
+    };
+    const throwing: SpanExporter = {
+      export: exporter.export,
+      forceFlush: () => {
+        throw new Error('not a promise');
+      },
+      shutdown: async () => {},
+    };
+    for (const e of [rejecting, throwing]) {
+      setTracingInternalsForTests({ exporter: () => e });
+      collected = [];
+      start();
+      getTracer('t').startSpan('delivered').end();
+      await expect(shutdownTracing()).resolves.toBeUndefined();
+      expect(spans().map((s) => s.name)).toEqual(['delivered']);
+      expect(tracingStats()).toBeUndefined();
+      expect(getTracer('t').startSpan('after').traceId).toBe(''); // tracing is off even though the exporter failed
+    }
+  });
+
+  it('does not export a span that ends after shutdown', async () => {
+    start();
+    const open = getTracer('t').startSpan('open');
+    const stats = tracingStats()!;
+    await shutdownTracing();
+    open.end();
+    await Promise.resolve();
+    expect(spans()).toEqual([]);
+    expect(stats).toEqual({ exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, exportFailures: 0 });
+  });
+
+  it('ignores ended spans that are recorded but not sampled', async () => {
+    const stats: TracingStats = { exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, exportFailures: 0 };
+    const processor = new DropOldestBatchSpanProcessor(exporter, stats, { maxQueueSize: 10, maxExportBatchSize: 1, scheduledDelayMillis: 60_000 });
+    const span = (name: string, traceFlags: number) =>
+      ({ name, spanContext: () => ({ traceId: '4bf92f3577b34da6a3ce929d0e0e4736', spanId: '00f067aa0ba902b7', traceFlags }) }) as unknown as ReadableSpan;
+    processor.onEnd(span('record-only', 0));
+    processor.onEnd(span('sampled', 1));
+    await processor.shutdown();
+    expect(spans().map((s) => s.name)).toEqual(['sampled']);
+    expect(stats).toEqual({ exported: 1, droppedQueueFull: 0, droppedNoConsent: 0, exportFailures: 0 });
+  });
+
   it('exports only with telemetry consent', async () => {
     consent([]);
     start();

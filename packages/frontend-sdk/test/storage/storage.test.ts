@@ -148,3 +148,43 @@ describe('clearAllAppStorage', () => {
     expect(storage('tenders').get('a')).toBeUndefined();
   });
 });
+
+describe('storage without browser storage', () => {
+  it('falls back to the page when reading localStorage itself throws (blocked site data)', () => {
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('denied', 'SecurityError');
+      },
+    });
+    const s = storage('tenders');
+    s.set('a', { v: 1 });
+    expect(s.get('a')).toEqual({ v: 1 });
+    expect(local.length).toBe(0); // kept for this page only
+    s.remove('a');
+    expect(s.get('a')).toBeUndefined();
+  });
+
+  it('clear() drops only this app and workspace from the page fallback when storage is unavailable', () => {
+    vi.stubGlobal('localStorage', undefined);
+    storage('tenders').set('a', 1);
+    storage('iam-admin').set('a', 2);
+    getRuntime().storageNamespace = 'tenant-globex';
+    storage('tenders').set('a', 3);
+    getRuntime().storageNamespace = 'tenant-acme';
+    storage('tenders').clear();
+    expect(storage('tenders').get('a')).toBeUndefined();
+    expect(storage('iam-admin').get('a')).toBe(2);
+    getRuntime().storageNamespace = 'tenant-globex';
+    expect(storage('tenders').get('a')).toBe(3);
+  });
+
+  it('clearAllAppStorage() clears the page fallback and the other area when one area is unavailable', () => {
+    vi.stubGlobal('localStorage', undefined);
+    storage('tenders').set('a', 1);
+    storage('tenders', { area: 'session' }).set('b', 2);
+    clearAllAppStorage();
+    expect(storage('tenders').get('a')).toBeUndefined();
+    expect(session.length).toBe(0);
+  });
+});

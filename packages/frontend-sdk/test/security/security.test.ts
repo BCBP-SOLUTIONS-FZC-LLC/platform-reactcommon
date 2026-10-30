@@ -131,3 +131,32 @@ describe('installTrustedTypesPolicy', () => {
     expect(getRuntime().trustedTypesPolicy).toBeUndefined();
   });
 });
+
+describe('without a usable DOM', () => {
+  it('escapes, in sanitizeHtml and the platform-sdk policy, when DOMPurify is unsupported', async () => {
+    vi.stubGlobal('window', {}); // a window without a document: DOMPurify reports isSupported false
+    vi.stubGlobal('location', new URL('https://app.bcbpsolutions.com/'));
+    let rules: { createHTML: (s: string) => string; createScriptURL: (s: string) => string } | undefined;
+    vi.stubGlobal('trustedTypes', {
+      createPolicy: (_name: string, r: typeof rules) => {
+        rules = r;
+        return {};
+      },
+    });
+    vi.resetModules();
+    const fresh = await import('../../src/security/index.ts');
+    const rt = await import('../../src/internal/runtime.ts');
+    rt.resetRuntimeForTests();
+    expect(fresh.sanitizeHtml('<img src=x onerror="alert(1)">')).toBe('&lt;img src=x onerror=&quot;alert(1)&quot;&gt;');
+    fresh.installTrustedTypesPolicy();
+    expect(rules!.createHTML("<script>alert('x')</script>")).toBe('&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;');
+    // no runtime config: only the page's own origin is an allowed script origin
+    expect(() => rules!.createScriptURL('https://cdn.bcbpsolutions.com/r.js')).toThrow(TypeError);
+    expect(rules!.createScriptURL('/r.js')).toBe('https://app.bcbpsolutions.com/r.js');
+  });
+
+  it('treats a non-string input as text', () => {
+    expect(String(sanitizeHtml(undefined as never))).toBe('');
+    expect(String(sanitizeHtml(42 as never))).toBe('42');
+  });
+});

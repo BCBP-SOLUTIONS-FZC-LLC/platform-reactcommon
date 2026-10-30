@@ -174,6 +174,8 @@ export async function loadRemote<T = unknown>(
     let lastError: AttemptError | undefined;
     for (let n = 0; n <= retries; n++) {
       try {
+        // Checked before loadContainer, so an aborted caller never injects the entry script.
+        if (o?.signal?.aborted) throw new AttemptError('aborted', 'aborted');
         let pending = containers.get(name);
         if (!pending) {
           pending = loadContainer(name, timeoutMs);
