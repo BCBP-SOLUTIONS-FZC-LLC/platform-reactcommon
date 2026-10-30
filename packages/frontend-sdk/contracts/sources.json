@@ -19,7 +19,7 @@
     "platform-fastapicommon": {
       "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-fastapicommon",
       "path": "python/platform-fastapicommon",
-      "sha": "2f653bfa5f07f9e8dce77d5fe223d34767eac6a7"
+      "sha": "b0fcdfd6e3bacbf5bb15652f219b0d7aee45a09e"
     },
     "platform-interop-tests": {
       "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-interop-tests",
