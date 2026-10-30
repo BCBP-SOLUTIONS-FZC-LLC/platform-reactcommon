@@ -30,11 +30,13 @@ let resolver: WorkspaceResolver & { resolve: ReturnType<typeof vi.fn> };
 let errors: ReturnType<typeof vi.spyOn>;
 let warns: ReturnType<typeof vi.spyOn>;
 
-// Timers are fake; WebCrypto (the PKCE challenge) settles on the real event loop.
-const flush = async () => {
-  for (let i = 0; i < 5; i++) {
+// Timers are fake; WebCrypto (the PKCE challenge) settles on the real event loop, so a test that
+// expects a redirect waits for it rather than for a fixed number of ticks.
+const flush = async (until?: () => boolean) => {
+  for (let i = 0; i < (until ? 500 : 5); i++) {
     await vi.advanceTimersByTimeAsync(0);
     await new Promise((r) => setImmediate(r));
+    if (until?.()) return;
   }
 };
 const authorizeParams = (page: FakePage) => new URL(page.assigned.at(-1)!).searchParams;
@@ -256,7 +258,7 @@ describe('callback', () => {
     cache(page, [{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
     page.install();
     void provider().init(); // silent restore
-    await flush();
+    await flush(() => page.assigned.length > 0);
     expect(authorizeParams(page).get('prompt')).toBe('none');
     page.url = new URL(kc.deny(page.assigned.at(-1)!, 'login_required'));
     expect(await provider().init()).toEqual({ status: 'anonymous', reason: 'login-required', workspace: { realm: 'tenant-acme', trial: false, slug: 'acme' } });
@@ -282,7 +284,7 @@ describe('restoring a session on page load', () => {
     page.install();
     let settled = false;
     void provider().init().then(() => (settled = true));
-    await flush();
+    await flush(() => page.assigned.length > 0);
     expect(settled).toBe(false);
     expect(new URL(page.assigned[0]!).pathname).toBe('/realms/tenant-acme/protocol/openid-connect/auth');
     const state = authorizeParams(page).get('state')!;
@@ -312,7 +314,7 @@ describe('restoring a session on page load', () => {
     ]);
     page.install();
     void provider().init();
-    await flush();
+    await flush(() => page.assigned.length > 0);
     expect(new URL(page.assigned[0]!).pathname).toContain('/realms/tenant-globex/');
   });
 
@@ -421,7 +423,7 @@ describe('refresh', () => {
       page.assigned.length = 0;
       kc.failures = [failure];
       expect(await idp.refresh()).toBe(false);
-      await flush();
+      await flush(() => page.assigned.length > 0);
       expect(await idp.getAccessToken()).toBeUndefined();
       expect(reasons).toEqual(['restore']);
       const p = authorizeParams(page);
@@ -447,7 +449,7 @@ describe('refresh', () => {
     await flush();
     expect(page.assigned).toEqual([]);
     page.goOnline();
-    await flush();
+    await flush(() => page.assigned.length > 0);
     expect(authorizeParams(page).get('prompt')).toBe('none');
   });
 
