@@ -1,0 +1,30 @@
+{
+  "_comment": "Commits the generated contracts/ files come from (design doc §C5). CI checks each repo out at its sha into PLATFORM_ROOT/<path>; locally scripts/sync-contracts.ts fails unless each checkout is at its sha. Move pins with `pnpm contracts:sync --update-pins` and review the resulting contracts diff. The IAM repos are added with /problem (deny codes) and /auth (resolve and session-context fixtures).",
+  "platform": {
+    "platform-gincommon": {
+      "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-gincommon",
+      "path": "go/platform-gincommon",
+      "sha": "f786d6b7be754ceb164a1137fcd3f71e9d549d6b"
+    },
+    "platform-events": {
+      "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-events",
+      "path": "go/platform-events",
+      "sha": "d85f6c8f127390c2e103f3940f4ad1999448d912"
+    },
+    "platform-pgcommon": {
+      "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon",
+      "path": "go/platform-pgcommon",
+      "sha": "9daebf8010ad207d101e7ebbf525d85d58129de0"
+    },
+    "platform-fastapicommon": {
+      "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-fastapicommon",
+      "path": "python/platform-fastapicommon",
+      "sha": "2f653bfa5f07f9e8dce77d5fe223d34767eac6a7"
+    },
+    "platform-interop-tests": {
+      "repo": "BCBP-SOLUTIONS-FZC-LLC/platform-interop-tests",
+      "path": "platform-interop-tests",
+      "sha": "b2915d287cfa69237e9276e170d165ac4ffc498f"
+    }
+  }
+}
