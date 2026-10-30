@@ -1,0 +1,10 @@
+{
+  "mode": "pre",
+  "tag": "alpha",
+  "initialVersions": {
+    "@platform/frontend-sdk": "1.0.0-alpha.0",
+    "@platform/webpack-preset": "1.0.0-alpha.0",
+    "@platform/eslint-plugin": "1.0.0-alpha.0"
+  },
+  "changesets": []
+}
