@@ -14,6 +14,8 @@ fails when they differ from what the pinned sources generate.
 | `headers.json` | `go-probe contracts-export` (gincommon `pkg/gincommon`) + gincommon `internal/core/domain` limits and patterns | `/core`, `/http` |
 | `log-fields.json` | gincommon `internal/adapter/inbound/http/middleware/logging.go` | `/logging` |
 | `redaction.json` | gincommon `internal/core/service/log_sanitizer.go` (unexported): exact keys, substrings, `*_key` rule, placeholder, 256-byte limit | `/core` |
+| `tenant-resolve-cases.json` | SDK-authored PUB-1 cases (`scripts/lib/iam-cases.ts`), each response checked against iam-org-membership `docs/swagger/swagger.json` (`GET /public/tenants/resolve`, 200 schema inlined) | `/auth` tests; `/testing` contract tests of the shell's `WorkspaceResolver` |
+| `session-context-cases.json` | SDK-authored P-35 cases (`scripts/lib/iam-cases.ts`), checked against the same swagger (`GET /me/session-context`) | `/auth` tests; `/testing` contract tests of the shell's `SessionContextSource` |
 | `fixtures/header_cases.json` | platform-interop-tests `fixtures/header_cases.json` (byte copy) | `/core`, `/http` tests |
 | `fixtures/identity_cases.json` | platform-interop-tests `fixtures/identity_cases.json` (byte copy; Go runs it with `go-probe identity-check`) | `/core` tests |
 | `fixtures/redaction_cases.json` | platform-interop-tests `fixtures/redaction_cases.json` (byte copy) | `/core` tests |
@@ -22,4 +24,4 @@ fails when they differ from what the pinned sources generate.
 
 Sources are read from checkouts at the paths in `sources.json`: the `platform` group under
 `PLATFORM_ROOT` (default: two levels above this repo, the workspace root), the `iam` group under
-`IAM_REPOS_DIR` (default: `../../../XPertPMS/IAM`). The PUB-1 and P-35 fixtures are added with `/auth`.
+`IAM_REPOS_DIR` (default: `../../../XPertPMS/IAM`).

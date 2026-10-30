@@ -9,16 +9,20 @@ import {
   buildProblemTypes,
   buildRedaction,
   buildRegistryVocab,
+  buildResponseCases,
   buildTsConstants,
   diffRegistries,
   extractGoIntConsts,
   extractGoRegexp,
   extractLogFieldKeys,
+  inlineSwaggerSchema,
   pascalCase,
   toJsonText,
   type ContractsExport,
   type Registry,
+  type Swagger,
 } from './contracts.ts';
+import { SESSION_CONTEXT_CASES, TENANT_RESOLVE_CASES } from './iam-cases.ts';
 
 const registry: Registry = {
   schema_version: 1,
@@ -372,5 +376,65 @@ const (
   it('fails when the block or its headers are gone', () => {
     expect(() => buildGatewayHeaders('const ()', 'd.go')).toThrow('InjectedHeaders not found');
     expect(() => buildGatewayHeaders('// InjectedHeaders\nconst (\n)', 'd.go')).toThrow('no injected headers');
+  });
+});
+
+describe('IAM response cases (swagger)', () => {
+  const swagger: Swagger = {
+    basePath: '/api/v1',
+    paths: {
+      '/x': { get: { responses: { '200': { schema: { $ref: '#/definitions/http.X' } } } } },
+      '/none': { get: { responses: { '400': {} } } },
+    },
+    definitions: {
+      'http.X': {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid', example: 'e' },
+          kind: { type: 'string', enum: ['a', 'b'] },
+          n: { type: 'integer' },
+          items: { type: 'array', items: { $ref: '#/definitions/http.Item' } },
+        },
+      },
+      'http.Item': { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] },
+    },
+  };
+  const ok = { name: 'ok', response: { id: '0b7e4c1a-2d3f-4a5b-9c8d-7e6f5a4b3c2d', kind: 'a', n: 1, items: [{ ok: true }] } };
+
+  it('inlines $refs and drops examples', () => {
+    expect(inlineSwaggerSchema({ $ref: '#/definitions/http.X' }, swagger.definitions).properties!.items).toEqual({
+      type: 'array',
+      items: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] },
+    });
+    expect(() => inlineSwaggerSchema({ $ref: '#/definitions/nope' }, swagger.definitions)).toThrow('not defined');
+  });
+
+  it('accepts fitting cases and records the full path', () => {
+    const out = buildResponseCases(swagger, '/x', [ok], 'org swagger.json');
+    expect(out.path).toBe('/api/v1/x');
+    expect(out.cases).toEqual([ok]);
+  });
+
+  it.each([
+    ['an unknown field', { extra: 1 }, '$.extra: not in the schema'],
+    ['a bad enum', { kind: 'c' }, 'is not one of'],
+    ['a bad uuid', { id: 'nope' }, '$.id: not a uuid'],
+    ['a non-integer', { n: 1.5 }, '$.n: not an integer'],
+    ['a missing required field', { items: [{}] }, '$.items[0].ok: required'],
+    ['a wrong type', { items: {} }, '$.items: not an array'],
+  ])('rejects %s', (_n, response, message) => {
+    expect(() => buildResponseCases(swagger, '/x', [{ name: 'bad', response }], 'org swagger.json')).toThrow(message);
+  });
+
+  it('fails without a 200 schema, and on duplicate case names', () => {
+    expect(() => buildResponseCases(swagger, '/none', [], 's')).toThrow('no 200 schema');
+    expect(() => buildResponseCases(swagger, '/x', [ok, ok], 's')).toThrow('duplicated');
+  });
+
+  it('the SDK cases have unique names and an expected value each', () => {
+    for (const cases of [TENANT_RESOLVE_CASES, SESSION_CONTEXT_CASES] as { name: string; expected: unknown }[][]) {
+      expect(new Set(cases.map((c) => c.name)).size).toBe(cases.length);
+      for (const c of cases) expect(c.expected).not.toBeUndefined();
+    }
   });
 });

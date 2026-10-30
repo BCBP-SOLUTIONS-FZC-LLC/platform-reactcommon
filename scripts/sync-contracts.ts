@@ -25,13 +25,16 @@ import {
   buildProblemTypes,
   buildRedaction,
   buildRegistryVocab,
+  buildResponseCases,
   buildTsConstants,
   diffRegistries,
   pascalCase,
   toJsonText,
   type ContractsExport,
   type Registry,
+  type Swagger,
 } from './lib/contracts.ts';
+import { SESSION_CONTEXT_CASES, TENANT_RESOLVE_CASES } from './lib/iam-cases.ts';
 import { REPO_ROOT, SDK_DIR } from './lib/subpaths.ts';
 
 const CONTRACTS_DIR = join(SDK_DIR, 'contracts');
@@ -107,6 +110,7 @@ function generate(roots: Roots, sources: Sources): Map<string, string> {
   const fastapi = repoDir(roots, sources, 'platform-fastapicommon');
   const interop = repoDir(roots, sources, 'platform-interop-tests');
   const authz = repoDir(roots, sources, 'iam-authz-enrichment', 'iam');
+  const orgMembership = repoDir(roots, sources, 'iam-org-membership', 'iam');
   const read = (dir: string, rel: string) => readFileSync(join(dir, rel), 'utf8');
 
   const REGISTRY = 'internal/obsregistry/registry.json';
@@ -162,6 +166,12 @@ function generate(roots: Roots, sources: Sources): Map<string, string> {
   files.set('headers.json', toJsonText(headers));
   files.set('redaction.json', toJsonText(redaction));
   files.set('log-fields.json', toJsonText(buildLogFields(read(gin, LOGGING), `platform-gincommon ${LOGGING}`)));
+  // PUB-1 and P-35 (contract #18): SDK-authored cases, each checked against the pinned swagger.
+  const SWAGGER = 'docs/swagger/swagger.json';
+  const swagger = JSON.parse(read(orgMembership, SWAGGER)) as Swagger;
+  const swaggerSource = `iam-org-membership ${SWAGGER}`;
+  files.set('tenant-resolve-cases.json', toJsonText(buildResponseCases(swagger, '/public/tenants/resolve', TENANT_RESOLVE_CASES, swaggerSource)));
+  files.set('session-context-cases.json', toJsonText(buildResponseCases(swagger, '/me/session-context', SESSION_CONTEXT_CASES, swaggerSource)));
   // Shared golden fixtures, copied byte for byte (design doc §C5 drift item 2).
   for (const fixture of ['header_cases.json', 'identity_cases.json', 'redaction_cases.json', 'problem_bodies.json']) {
     files.set(`fixtures/${fixture}`, read(interop, `fixtures/${fixture}`));

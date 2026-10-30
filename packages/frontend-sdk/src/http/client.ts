@@ -13,7 +13,7 @@ import {
   parseProblemResponse,
 } from '../problem/index.ts';
 import { getTracer, injectTraceHeaders, type Span } from '../tracing/index.ts';
-import { isOnline } from './online.ts';
+import { isOnline } from '../internal/online.ts';
 
 export { FORBIDDEN_REQUEST_HEADERS };
 

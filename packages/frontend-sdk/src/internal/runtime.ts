@@ -58,6 +58,8 @@ export interface PlatformRuntime {
   i18n: unknown;
   /** Where /http gets access tokens (/auth provides it; /http owns the type). */
   tokenSource: unknown;
+  /** The shell's IdentityProvider once initializeAuth has run (/auth owns the type). */
+  identityProvider: unknown;
   /** The validated remote manifest (/mfe owns its type). */
   manifest: unknown;
   /** Running and available app versions, and update listeners (/mfe owns the type). */
@@ -102,6 +104,7 @@ function createRuntime(): PlatformRuntime {
     navigator: undefined,
     i18n: undefined,
     tokenSource: undefined,
+    identityProvider: undefined,
     manifest: undefined,
     appUpdate: undefined,
   };
