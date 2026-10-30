@@ -23,6 +23,6 @@ describe('the production OTLP span exporter', () => {
     getTracer('t').startSpan('b').end();
     const stats = tracingStats()!;
     await expect(shutdownTracing()).resolves.toBeUndefined();
-    expect(stats).toEqual({ exported: 0, droppedQueueFull: 0, droppedNoConsent: 2, exportFailures: 0 });
+    expect(stats).toEqual({ exported: 0, droppedQueueFull: 0, droppedNoConsent: 2, droppedOnUnload: 0, exportFailures: 0 });
   });
 });

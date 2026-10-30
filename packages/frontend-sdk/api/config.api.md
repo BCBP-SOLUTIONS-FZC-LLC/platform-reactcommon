@@ -53,6 +53,7 @@ export interface RuntimeConfig {
     };
     // (undocumented)
     readonly telemetry: {
+        readonly enabled: boolean;
         readonly otlpBaseUrl: string;
         readonly sampleRatio: number;
         readonly logLevel: 'debug' | 'info' | 'warn' | 'error';

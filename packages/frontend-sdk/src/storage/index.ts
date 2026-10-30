@@ -121,12 +121,18 @@ export function storage(appId: string, o?: { area?: Area }): AppStorage {
         throw new TypeError(`storage value for ${JSON.stringify(key)} is not JSON-serialisable`, { cause: e });
       }
       const k = fullKey(key);
+      const s = browserStorage(area);
       try {
-        const s = browserStorage(area);
         if (!s) throw new Error('unavailable');
         s.setItem(k, text);
         memory[area].delete(k);
       } catch {
+        // read() prefers browser storage: an older value left there would shadow the new one.
+        try {
+          s?.removeItem(k);
+        } catch {
+          // unavailable: nothing there to shadow it
+        }
         memory[area].set(k, text);
         warnOnce(`write:${area}`, `${area}Storage is unavailable or full; values are kept for this page only`);
       }

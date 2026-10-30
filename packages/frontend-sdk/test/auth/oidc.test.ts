@@ -582,6 +582,40 @@ describe('shared device', () => {
     expect(shared.getItem(LAST_USER_KEY)).toMatch(/^[0-9a-f]{64}$/);
     expect(new FakePage('/', shared).storedValues()).not.toMatch(/user-1|user-2/);
   });
+
+  it('the first recorded sign-in keeps a draft saved before the redirect; a different user afterwards still clears', async () => {
+    // A browser with no user fingerprint yet (first sign-in, or the SDK was just upgraded) and a
+    // draft saved by useBeforeAuthRedirect just before the login redirect.
+    const page = new FakePage('/');
+    page.install();
+    getRuntime().storageNamespace = 'tenant-acme';
+    storage('tenders', { area: 'session' }).set('draft:edit-1', { title: 'x' });
+    storage('tenders').set('filter', 'mine');
+    expect(page.local.getItem(LAST_USER_KEY)).toBeNull();
+
+    expect((await signIn(page)).state.status).toBe('authenticated');
+    expect(storage('tenders', { area: 'session' }).get('draft:edit-1')).toEqual({ title: 'x' });
+    expect(storage('tenders').get('filter')).toBe('mine');
+    expect(page.local.getItem(LAST_USER_KEY)).toMatch(/^[0-9a-f]{64}$/);
+
+    // Someone else signs in on this browser: the first user's storage goes.
+    await signIn(new FakePage('/', page.local), ACME, { claims: { sub: 'user-2', name: 'Bob' } });
+    expect(page.local.getItem('tenant-acme:tenders:filter')).toBeNull();
+    expect(storage('tenders').get('filter')).toBeUndefined();
+  });
+
+  it('an unreadable user fingerprint clears app storage (fail safe)', async () => {
+    const shared = new FakePage('/').local;
+    await signIn(new FakePage('/', shared));
+    storage('tenders').set('filter', 'mine');
+    const getItem = shared.getItem.bind(shared);
+    vi.spyOn(shared, 'getItem').mockImplementation((k: string) => {
+      if (k === LAST_USER_KEY) throw new DOMException('denied', 'SecurityError');
+      return getItem(k);
+    });
+    await signIn(new FakePage('/', shared));
+    expect(shared.getItem('tenant-acme:tenders:filter')).toBeNull();
+  });
 });
 
 describe('switchWorkspace', () => {

@@ -1,10 +1,18 @@
-// /csp-report (design doc §C3): a Lambda function URL behind CloudFront (OAC-signed, POST only, WAF rate
-// rule, 64 KB). Browsers post application/reports+json (Reporting API) or application/csp-report
-// (report-uri). The OTel Collector has no receiver for those, so this turns each violation into an
-// OTLP log (event.name=csp.violation): URLs lose their query string and fragment, every value goes
-// through the platform's redaction, and nothing else from the report is kept.
-// Environment: COLLECTOR_LOGS_URL (e.g. http://otel-collector:4318/v1/logs), SERVICE_NAMESPACE (the
-// page's domain, 'portal' per §D1), DEPLOYMENT_ENVIRONMENT.
+// /csp-report (design doc §C3): a Lambda function URL behind CloudFront (POST only, WAF rate rule,
+// 64 KB). Browsers post application/reports+json (Reporting API, `report-to`) or
+// application/csp-report (`report-uri`). The OTel Collector has no receiver for those, so this turns
+// each violation into an OTLP log (event.name=csp.violation): URLs lose their query string and
+// fragment, every value goes through the platform's redaction, and nothing else from the report is kept.
+//
+// Origin authentication: NOT OAC. A function URL with AuthType AWS_IAM behind OAC needs the viewer to
+// send x-amz-content-sha256 for a POST body, which a browser's report delivery never does, so every
+// report would be a 403. The function URL is AuthType NONE instead, CloudFront adds a secret custom
+// origin header (x-origin-verify) on this origin, and the handler rejects anything without it (403,
+// constant-time compare). ORIGIN_VERIFY_SECRET holds the accepted values, comma-separated
+// (current,previous) so the secret rotates without dropping reports; unset or empty fails closed.
+// Environment: ORIGIN_VERIFY_SECRET, COLLECTOR_LOGS_URL (e.g. http://otel-collector:4318/v1/logs),
+// SERVICE_NAMESPACE (the page's domain, 'portal' per §D1), DEPLOYMENT_ENVIRONMENT.
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { sanitizeString } from '@platform/frontend-sdk/core';
 
 const MAX_BODY = 64 * 1024;
@@ -96,10 +104,31 @@ export function toOtlp(violations, env = process.env, now = Date.now()) {
   };
 }
 
+/** The custom origin header CloudFront adds on the /csp-report origin. */
+export const ORIGIN_VERIFY_HEADER = 'x-origin-verify';
+
+const digest = (v) => createHash('sha256').update(v, 'utf8').digest();
+
+/**
+ * Whether `presented` equals one of the comma-separated `secrets`. Compares SHA-256 digests with
+ * timingSafeEqual (equal lengths, so neither the secret nor its length leaks through timing) and
+ * checks every candidate. No configured secret → false (fail closed).
+ */
+export function originVerified(presented, secrets) {
+  if (typeof presented !== 'string' || presented === '' || typeof secrets !== 'string') return false;
+  const candidates = secrets.split(',').map((s) => s.trim()).filter(Boolean);
+  const got = digest(presented);
+  let ok = false;
+  for (const c of candidates) ok = timingSafeEqual(got, digest(c)) || ok;
+  return ok;
+}
+
 const reply = (statusCode) => ({ statusCode, headers: { 'cache-control': 'no-store' }, body: '' });
 
 /** Lambda function URL handler (payload format 2.0). */
 export async function handler(event, deps = { fetch: globalThis.fetch, env: process.env }) {
+  // Before anything else, so a caller that bypassed CloudFront learns nothing about the endpoint.
+  if (!originVerified(event?.headers?.[ORIGIN_VERIFY_HEADER], deps.env.ORIGIN_VERIFY_SECRET)) return reply(403);
   if (event?.requestContext?.http?.method !== 'POST') return reply(405);
   const type = String(event.headers?.['content-type'] ?? '').split(';')[0].trim().toLowerCase();
   if (!TYPES.has(type)) return reply(415);

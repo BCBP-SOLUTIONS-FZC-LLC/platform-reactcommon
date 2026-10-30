@@ -111,6 +111,29 @@ describe('storage', () => {
     expect(s.get('b')).toBe(2);
   });
 
+  it('a write that fails when storage is full never leaves the older stored value to shadow it', () => {
+    storage('tenders').set('draft', 'v1');
+    expect(local.getItem('tenant-acme:tenders:draft')).toBe('"v1"');
+    local.failWrites = true; // QuotaExceededError from here on
+    storage('tenders').set('draft', 'v2');
+    expect(storage('tenders').get('draft')).toBe('v2');
+    // A fresh handle in the same page (what a remount sees) reads the new value too.
+    expect(storage('tenders').get('draft')).toBe('v2');
+    expect(local.getItem('tenant-acme:tenders:draft')).toBeNull();
+    // remove() and clear() still drop the page-only value.
+    storage('tenders').remove('draft');
+    expect(storage('tenders').get('draft')).toBeUndefined();
+    storage('tenders').set('draft', 'v3');
+    storage('tenders').clear();
+    expect(storage('tenders').get('draft')).toBeUndefined();
+    // Storage that also refuses removeItem: the value is still kept for the page.
+    local.removeItem = () => {
+      throw new DOMException('denied', 'SecurityError');
+    };
+    expect(() => storage('tenders').set('draft', 'v4')).not.toThrow();
+    expect(storage('tenders').get('draft')).toBe('v4');
+  });
+
   it('clear() removes only this app in this workspace and area', () => {
     storage('tenders').set('a', 1);
     storage('tenders').set('b', 2);

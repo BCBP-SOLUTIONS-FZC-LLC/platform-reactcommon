@@ -7,6 +7,7 @@ import type { Counter as OtelCounter, Histogram as OtelHistogram } from '@opente
 import { AggregationTemporalityPreference, OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { MeterProvider, PeriodicExportingMetricReader, type PushMetricExporter } from '@opentelemetry/sdk-metrics';
+import { tryGetConfig } from '../config/index.ts';
 import { NotInitializedError, getIdentity, hasConsent, sanitizeString, type MfeScope } from '../core/index.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { collectorUrl } from '../internal/urls.ts';
@@ -328,7 +329,8 @@ function consentGated(inner: PushMetricExporter, stats: MetricsStats): PushMetri
 
 /**
  * Shell only: starts exporting to `${otlpBaseUrl}/v1/metrics` every `exportIntervalMs`
- * (default 60 s), with delta temporality. Requires initializeCore. A second call is a no-op.
+ * (default 60 s), with delta temporality. Requires initializeCore. A second call is a no-op. With
+ * `telemetry.enabled: false` in the runtime config it is a no-op: nothing is exported.
  */
 export function initializeMetrics(o: { otlpBaseUrl: string; exportIntervalMs?: number }): void {
   const identity = getIdentity();
@@ -340,6 +342,7 @@ export function initializeMetrics(o: { otlpBaseUrl: string; exportIntervalMs?: n
     throw new RangeError(`exportIntervalMs must be an integer in [1000, 3600000], got ${interval}`);
   }
   const url = collectorUrl(o.otlpBaseUrl, 'metrics');
+  if (tryGetConfig()?.telemetry.enabled === false) return; // the runtime config's off switch
   const reader = new PeriodicExportingMetricReader({
     exporter: consentGated(exporterFactory(url), s.stats),
     exportIntervalMillis: interval,

@@ -69,6 +69,17 @@ describe('sessionContextFlagProvider', () => {
     expect(getFlag('ai_drafting', true)).toBe(false);
   });
 
+  it('read_only is true when the platform or the tenant says so: a platform false never lifts it', () => {
+    config({ read_only: false });
+    expect(sessionContextFlagProvider({ featureFlags: [], readOnly: true }).get('read_only')).toBe(true);
+    expect(sessionContextFlagProvider({ featureFlags: ['read_only'], readOnly: false }).get('read_only')).toBe(true);
+    expect(sessionContextFlagProvider({ featureFlags: [], readOnly: false }).get('read_only')).toBe(false);
+    resetRuntimeForTests();
+    config({ read_only: true });
+    setFlagProvider(sessionContextFlagProvider({ featureFlags: [], readOnly: false }));
+    expect(getFlag('read_only', false)).toBe(true);
+  });
+
   it('tolerates a malformed context', () => {
     const p = sessionContextFlagProvider({ featureFlags: 'x' as never, readOnly: 'yes' as never });
     expect(p.get('x')).toBeUndefined();

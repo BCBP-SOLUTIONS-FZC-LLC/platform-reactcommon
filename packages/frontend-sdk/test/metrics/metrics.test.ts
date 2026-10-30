@@ -1,5 +1,6 @@
 import { AggregationTemporality, InMemoryMetricExporter, type PushMetricExporter } from '@opentelemetry/sdk-metrics';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RuntimeConfigSchema, setRuntimeConfig } from '../../src/config/index.ts';
 import { initializeCore, setConsentProvider, type ConsentCategory } from '../../src/core/index.ts';
 import { getRuntime, resetRuntimeForTests } from '../../src/internal/runtime.ts';
 import { METRIC_REGISTRY } from '../../src/internal/generated/metric-registry.ts';
@@ -13,6 +14,19 @@ let exporter: InMemoryMetricExporter;
 let exportedUrl: string | undefined;
 const consent = (granted: ConsentCategory[]) => setConsentProvider({ has: (c) => granted.includes(c), subscribe: () => () => {} });
 const core = (domain = 'tender_management') => initializeCore({ serviceName: 'web-app', domain, environment: 'dev', buildVersion: '1.0.0' });
+
+/** Sets the page's runtime config with telemetry.enabled = `enabled`. */
+const telemetryConfig = (enabled: boolean) =>
+  setRuntimeConfig(
+    RuntimeConfigSchema.parse({
+      api: { baseUrl: '/api' },
+      telemetry: { enabled },
+      auth: { idleTimeoutMs: 1_800_000, redirectPath: '/auth/callback' },
+      remotes: { loadTimeoutMs: 10_000, retries: 0 },
+      i18n: { defaultLocale: 'en', supportedLocales: ['en'] },
+      appUpdate: { pollIntervalMs: 300_000 },
+    }),
+  );
 
 /** Exported data points of `name`, after a flush. */
 async function points(name: string) {
@@ -104,6 +118,23 @@ describe('initializeMetrics', () => {
     expect(() => initializeMetrics({ otlpBaseUrl: 'https://collector.example' })).toThrow(TypeError);
     resetRuntimeForTests();
     expect(() => initializeMetrics({ otlpBaseUrl: '/otel' })).toThrow('initializeCore');
+  });
+
+  it('exports nothing, and does not throw, when the runtime config turns telemetry off', async () => {
+    telemetryConfig(false);
+    expect(() => initializeMetrics({ otlpBaseUrl: '/otel' })).not.toThrow();
+    expect(metricsState().provider).toBeUndefined();
+    getServiceMeter().counter('tender_management_web_app_saves_total', 'Saves.', []).add(1);
+    globalThis.dispatchEvent?.(new Event('pagehide'));
+    expect(await points('tender_management_web_app_saves_total')).toEqual([]);
+    expect(exportedUrl).toBeUndefined(); // no exporter was even built
+  });
+
+  it('exports as usual when the runtime config leaves telemetry on', async () => {
+    telemetryConfig(true);
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    getServiceMeter().counter('tender_management_web_app_saves_total', 'Saves.', []).add(1);
+    expect((await points('tender_management_web_app_saves_total')).map((p) => p.value)).toEqual([1]);
   });
 
   it('exports nothing without telemetry consent', async () => {

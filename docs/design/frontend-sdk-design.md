@@ -195,7 +195,8 @@ export interface RuntimeConfig {
                   readonly timeoutMs: number /* default 35000 */;
                   readonly propagationAllowlist: readonly string[] /* exact origins */ };
   readonly telemetry: { readonly otlpBaseUrl: string /* '/otel' */; readonly sampleRatio: number /* [0,1], 0.1 */;
-                        readonly logLevel: 'debug'|'info'|'warn'|'error'; readonly sendSessionHeader: boolean };
+                        readonly logLevel: 'debug'|'info'|'warn'|'error'; readonly sendSessionHeader: boolean;
+                        readonly enabled: boolean /* default true; false: no trace, log or metric export at all */ };
   readonly auth: { readonly idpOrigin: string /* 'https://auth.bcbpsolutions.com' (IAM HLD §8.2.4) */;
                    readonly trialRealm: string /* 'trial' (shared realm) */;
                    readonly paidRealmPrefix: string /* 'tenant-': a resolved paid realm must equal `${prefix}${slug}` (sanity check) */;
@@ -212,6 +213,16 @@ export interface RuntimeConfig {
 export class RuntimeConfigError extends Error { readonly issues: readonly { path: string; message: string }[] }
 export function loadRuntimeConfig(opts?: { url?: string /* '/config/runtime.json' */; signal?: AbortSignal }): Promise<RuntimeConfig>; // shell only
 export function setRuntimeConfig(c: RuntimeConfig): void;   // shell only, deep-freezes, set-once
+```
+
+Every exact origin (`auth.idpOrigin`, `api.propagationAllowlist`, `remotes.allowedOrigins`) is `https:`. An
+`http:` origin on `localhost`, `127.0.0.1` or `[::1]` is accepted only when the page environment is `local`
+or `dev`, checked by `loadRuntimeConfig` and `setRuntimeConfig`; so `initializeCore` runs first, and a
+leftover dev origin in a production `runtime.json` fails the load. `telemetry.enabled: false` (for a
+Collector incident) makes `initializeTracing`, `initializeLogging` and `initializeMetrics` no-ops, errors
+and essential warnings included (the dev console stays); `setRuntimeConfig` runs before them.
+
+```ts
 export function getConfig(): RuntimeConfig;                 // throws NotInitializedError before shell bootstrap
 export function tryGetConfig(): RuntimeConfig | undefined;
 ```
@@ -239,8 +250,11 @@ Resource: `service.name`, `service.version`, `service.namespace=<domain>`,
 `deployment.environment.name=<environment>`. **No** `service.instance.id` per browser: it would
 explode series cardinality. Sampler: `ParentBased(TraceIdRatioBased(ratio))`, with ratio ≤ 0 →
 NeverSample and ≥ 1 → AlwaysSample (same as Go `Sampler()`). Exporter failures are swallowed and counted
-in an internal counter; the batch queue is bounded and drops the oldest entries. On page hide the queue
-is sent in requests of at most 60 KiB, so each fits the keepalive budget. Span attribute strings and
+in an internal counter; the batch queue is bounded and drops the oldest entries. When the page is hidden the
+whole queue is flushed, two requests at a time, dropping nothing (the page may come back). On `pagehide`
+one keepalive request (the browser's budget is about 64 KiB for the whole page) carries the newest queued
+spans that fit in 60 KiB; the rest are counted as dropped (`droppedOnUnload`). The exporter allows three
+requests in flight, so that request is never refused behind a hidden-page flush. Span attribute strings and
 recorded error messages are redacted like log strings: sensitive keys, `sanitizeString`, then JWT- and
 Bearer-shaped values (`scrubSecrets` in `/core`).
 
@@ -777,6 +791,9 @@ Shared device, user swap. Storage namespaces are per tenant, not per user, so a 
 realm can sign in after the idle timeout, a step-up or `signInAgain` without a logout. Every sign-in
 compares SHA-256(realm + `sub`) of its ID token with the SDK-reserved last-user key (localStorage, hex;
 never the raw `sub` or a token) and, when it differs, runs `clearAllAppStorage()` before `authenticated`.
+When no last-user key is recorded yet (the first sign-in on this browser, or after an upgrade), the
+sign-in only records it, so a draft saved before the login redirect survives; a key that cannot be read
+clears the storage (fail safe).
 
 Cost: one Keycloak round trip (two redirects plus the token `fetch`) on every full page load or new tab,
 roughly the latency of a normal login with an SSO cookie. It does not count against the PUB-1 rate
@@ -984,7 +1001,9 @@ export function isRemoteKilled(remote: string): boolean;     // runtime config k
 
 Flag names are opaque strings: IAM accepts both `sso_enabled` and dotted names like
 `llm.refiner.query` (HLD §5.4). Platform flags (kill switches, rollout) come from runtime config;
-plan and tenant flags come from `SessionContext` (P-35), once it has loaded.
+plan and tenant flags come from `SessionContext` (P-35), once it has loaded. A platform value wins for
+every flag except `read_only`, which is true when the platform flag, the tenant's `readOnly` or the
+tenant flag says so: a platform `false` never lifts a tenant's read-only state.
 
 #### `/storage`
 
@@ -1128,6 +1147,7 @@ export const platformShared = {
       { singleton: true, strictVersion: true, requiredVersion: '^1.0.0-0' }])),
 } as const;
 // shell: eager:false for all; remotes: import:false for the SDK (must come from the shell, never bundled)
+// and requiredVersion '^<the SDK version the remote was built against>' for every SDK entry
 ```
 
 The preset also sets `output.trustedTypes: { policyName: 'platform-webpack' }`,
@@ -1136,13 +1156,17 @@ privately and not served), no `eval` devtools in any mode, `publicPath: 'auto'`,
 
 **Versioning.** The SDK is not started at `0.x`. A caret range on `0.x` pins the minor version
 (`^0.3.0` means below `0.4.0`), so with `strictVersion` every minor release would break every remote.
-It is published as `1.0.0-alpha.N` while nothing is deployed, and remotes share it with
-`^1.0.0-0`, which accepts those pre-releases and every later `1.x`. Breaking changes during the alpha
+It is published as `1.0.0-alpha.N` while nothing is deployed. The shell shares it under
+`^1.0.0-0`, which accepts those pre-releases and every later `1.x`; a remote requires
+`^<the SDK version it was built against>` (`sharedFor('remote')`), so it runs only on a shell whose SDK
+has every export it can use. Breaking changes during the alpha
 bump `N` and are listed in the CHANGELOG. `1.0.0` is cut when the first end-to-end environment goes
 live, and SemVer is strict from then on.
 
-A remote built against SDK `2.x` fails `strictVersion` at share negotiation. That surfaces as a
-`RemoteLoadError` inside its `RemoteBoundary`, not as a broken shell.
+A remote built against SDK `2.x`, or against a newer `1.x` than the shell provides, fails
+`strictVersion` at share negotiation. That surfaces as a `RemoteLoadError` inside its `RemoteBoundary`,
+not as a broken shell, and never as a missing export at run time. So the shell is upgraded first, and is
+rolled back only to an SDK version at or above the newest one any deployed remote was built against.
 
 ### CloudFront behaviors (precedence order)
 
@@ -1150,7 +1174,7 @@ A remote built against SDK `2.x` fails `strictVersion` at share negotiation. Tha
 |---|---|---|---|---|
 | `/api/*` | API gateway / ALB | CachingDisabled | AllViewerExceptHostHeader | All methods. WAF. Envoy strips the HLD §11.1 list (`x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`). `/api/v1/public/tenants/resolve` must route without `jwt_authn`/`ext_authz`, with a per-IP rate limit and CAPTCHA (D2 item B) |
 | `/otel/*` | OTel Collector (OTLP/HTTP) | CachingDisabled | no cookies, no `Authorization` | POST only. WAF rate-based rule + 1 MB body limit. Unauthenticated by design (pre-login errors), so the collector drops unknown resource attrs and enforces label allowlists |
-| `/csp-report` | Lambda function URL (OAC-signed) | CachingDisabled | no cookies | POST only, WAF rate rule, 64 KB limit. The browser posts `application/reports+json`, which the OTel Collector has no receiver for. The Lambda drops query strings from `blocked-uri`/`document-uri`, sanitizes with the shared redaction rules, and forwards to the Collector as OTLP logs (`event.name=csp.violation`) |
+| `/csp-report` | Lambda function URL (AuthType NONE) + secret origin header `x-origin-verify` | CachingDisabled | no cookies | POST only, WAF rate rule, 64 KB limit. Not OAC: a Lambda URL behind OAC needs the viewer to send `x-amz-content-sha256` on POST, which a browser's report can't. CloudFront adds the secret header; the Lambda compares it in constant time with `ORIGIN_VERIFY_SECRET` (comma-separated current and previous, for rotation) and returns 403 without it, or when the variable is unset. The browser posts `application/reports+json` (`report-to`) or `application/csp-report` (`report-uri`, for browsers without Reporting-API CSP reports), which the OTel Collector has no receiver for. The Lambda drops query strings from `blocked-uri`/`document-uri`, sanitizes with the shared redaction rules, and forwards to the Collector as OTLP logs (`event.name=csp.violation`) |
 | `/config/runtime.json` | S3 | TTL 0, honour origin `Cache-Control: no-cache` + ETag | — | Per-environment object |
 | `/version.json` | S3 | same as above | — | Written last by the deploy pipeline |
 | `/remotes/manifest.json` | S3 | same as above | — | Written after all remotes upload |
@@ -1167,7 +1191,7 @@ Content-Security-Policy:
   manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self';
   frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests;
   require-trusted-types-for 'script'; trusted-types platform-sdk platform-webpack dompurify;
-  report-to csp
+  report-uri /csp-report; report-to csp
 Reporting-Endpoints: csp="/csp-report"
 Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
 X-Content-Type-Options: nosniff

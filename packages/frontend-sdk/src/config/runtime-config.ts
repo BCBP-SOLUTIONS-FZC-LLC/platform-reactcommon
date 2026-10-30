@@ -1,8 +1,8 @@
 // Loading and holding the runtime config (design doc §C1 /config, §C2 step 3). The config lives
 // on the PlatformRuntime, so every copy of the SDK on the page sees the one the shell set.
-import { NotInitializedError } from '../core/index.ts';
+import { NotInitializedError, getIdentity } from '../core/index.ts';
 import { getRuntime } from '../internal/runtime.ts';
-import { RuntimeConfigSchema, type RuntimeConfig } from './schema.ts';
+import { RuntimeConfigSchema, isLocalHttpOrigin, type RuntimeConfig } from './schema.ts';
 
 /** /config/runtime.json could not be loaded or does not match the schema. */
 export class RuntimeConfigError extends Error {
@@ -27,11 +27,34 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-/** Validates `raw` against the schema; issues name every offending key path. */
+/**
+ * http origins on a local host (a dev setup) are accepted only when the page identity's
+ * environment is local or dev; anywhere else (or before initializeCore) a leftover dev entry
+ * would weaken a deployed config, so it is an issue.
+ */
+function environmentIssues(c: RuntimeConfig): { path: string; message: string }[] {
+  const env = getIdentity()?.environment;
+  if (env === 'local' || env === 'dev') return [];
+  const origins: [string, string][] = [
+    ['auth.idpOrigin', c.auth.idpOrigin],
+    ...c.api.propagationAllowlist.map((o, i): [string, string] => [`api.propagationAllowlist.${i}`, o]),
+    ...c.remotes.allowedOrigins.map((o, i): [string, string] => [`remotes.allowedOrigins.${i}`, o]),
+  ];
+  return origins
+    .filter(([, o]) => isLocalHttpOrigin(o))
+    .map(([path, o]) => ({
+      path,
+      message: `http origins are allowed only in the local and dev environments (page environment: ${env ?? 'unknown, initializeCore not called'}), got ${JSON.stringify(o)}`,
+    }));
+}
+
+/** Validates `raw` against the schema and the page's environment; issues name every offending key path. */
 function parseConfig(raw: unknown, source: string): RuntimeConfig {
   const result = RuntimeConfigSchema.safeParse(raw);
-  if (result.success) return result.data;
-  const issues = result.error.issues.map((i) => ({ path: i.path.map(String).join('.'), message: i.message }));
+  const issues = result.success
+    ? environmentIssues(result.data)
+    : result.error.issues.map((i) => ({ path: i.path.map(String).join('.'), message: i.message }));
+  if (result.success && issues.length === 0) return result.data;
   throw new RuntimeConfigError(
     `${source} is invalid: ${issues.map((i) => `${i.path || '(root)'}: ${i.message}`).join('; ')}`,
     issues,
@@ -41,7 +64,8 @@ function parseConfig(raw: unknown, source: string): RuntimeConfig {
 /**
  * Shell only: fetches and validates the runtime config (no HTTP cache: `cache: 'no-cache'`
  * revalidates with the ETag). Any failure (network, HTTP status, JSON, schema) is a
- * RuntimeConfigError; the shell shows its static "unavailable" page.
+ * RuntimeConfigError; the shell shows its static "unavailable" page. As for setRuntimeConfig, an
+ * http origin on a local host is an error unless initializeCore set the local or dev environment.
  */
 export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSignal }): Promise<RuntimeConfig> {
   const url = opts?.url ?? DEFAULT_URL;
@@ -75,7 +99,8 @@ export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSig
 }
 
 /**
- * Shell only: makes `c` the page's config, validated and deep-frozen. Set once: setting an equal
+ * Shell only: makes `c` the page's config, validated and deep-frozen. Call initializeCore first:
+ * http origins on a local host are accepted only when the page environment is local or dev. Set once: setting an equal
  * config again is a no-op, a different one throws.
  */
 export function setRuntimeConfig(c: RuntimeConfig): void {

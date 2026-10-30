@@ -109,19 +109,21 @@ async function s256(verifier: string): Promise<string> {
 /**
  * Storage namespaces are per tenant, not per user: when this sign-in is a different user from the last
  * one on this browser (a shared device after idle expiry, step-up or signInAgain), the previous user's
- * app storage goes before the new one sees it. Only a hash of realm + sub is kept.
+ * app storage goes before the new one sees it. Only a hash of realm + sub is kept. With no
+ * fingerprint recorded yet (first sign-in on this browser, or after an upgrade) nothing is cleared,
+ * so a draft saved just before the login redirect survives; an unreadable fingerprint clears.
  */
 async function forgetPreviousUser(realm: string, sub: string): Promise<void> {
   const fp = Array.from(await sha256(`${realm}\n${sub}`), (b) => b.toString(16).padStart(2, '0')).join('');
   const s = store('local');
-  let last: string | null = null;
+  let last: string | null | undefined;
   try {
-    last = s?.getItem(LAST_USER_KEY) ?? null;
+    last = s ? s.getItem(LAST_USER_KEY) : undefined;
   } catch {
-    // unreadable: treat as a different user
+    last = undefined; // unreadable: treat as a different user
   }
   if (last === fp) return;
-  clearAllAppStorage();
+  if (last !== null) clearAllAppStorage();
   try {
     s?.setItem(LAST_USER_KEY, fp);
   } catch {

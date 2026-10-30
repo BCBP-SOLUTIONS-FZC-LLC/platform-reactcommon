@@ -8,7 +8,7 @@ import {
   tryGetConfig,
   type RuntimeConfig,
 } from '../../src/config/index.ts';
-import { NotInitializedError } from '../../src/core/index.ts';
+import { NotInitializedError, initializeCore, type Environment } from '../../src/core/index.ts';
 import { resetRuntimeForTests } from '../../src/internal/runtime.ts';
 
 /** The fields a runtime.json must always spell out; everything else has a design-doc default. */
@@ -44,7 +44,7 @@ describe('RuntimeConfigSchema', () => {
     expect(r.success).toBe(true);
     expect(r.data).toEqual({
       api: { baseUrl: '/api', timeoutMs: 35_000, propagationAllowlist: [] },
-      telemetry: { otlpBaseUrl: '/otel', sampleRatio: 0.1, logLevel: 'info', sendSessionHeader: true },
+      telemetry: { enabled: true, otlpBaseUrl: '/otel', sampleRatio: 0.1, logLevel: 'info', sendSessionHeader: true },
       auth: {
         idpOrigin: 'https://auth.bcbpsolutions.com',
         trialRealm: 'trial',
@@ -189,6 +189,62 @@ describe('setRuntimeConfig / getConfig / tryGetConfig', () => {
       expect((e as RuntimeConfigError).issues.map((i) => i.path)).toEqual(['api.baseUrl']);
     }
     expect(tryGetConfig()).toBeUndefined();
+  });
+});
+
+describe('http origins on a local host', () => {
+  const identity = (environment: Environment) =>
+    initializeCore({ serviceName: 'web-app', domain: 'portal', environment, buildVersion: '1.0.0' });
+  const withLocal = (origin: string) => {
+    const c = withPatch('auth.idpOrigin', origin);
+    (c.api as Record<string, unknown>).propagationAllowlist = ['https://api.example.com', origin];
+    (c.remotes as Record<string, unknown>).allowedOrigins = [origin];
+    return c;
+  };
+  const LOCAL_PATHS = ['auth.idpOrigin', 'api.propagationAllowlist.1', 'remotes.allowedOrigins.0'];
+
+  it.each(['prod', 'staging', 'test'] as const)('are refused by setRuntimeConfig in %s', (env) => {
+    identity(env);
+    for (const origin of ['http://localhost:8080', 'http://127.0.0.1', 'http://[::1]:3000']) {
+      const err = (() => {
+        try {
+          setRuntimeConfig(withLocal(origin) as unknown as RuntimeConfig);
+        } catch (e) {
+          return e;
+        }
+      })();
+      expect(err, origin).toBeInstanceOf(RuntimeConfigError);
+      expect((err as RuntimeConfigError).issues.map((i) => i.path)).toEqual(LOCAL_PATHS);
+      expect((err as Error).message).toContain(`page environment: ${env}`);
+      expect(tryGetConfig()).toBeUndefined();
+    }
+  });
+
+  it('are refused before initializeCore (the environment is unknown)', () => {
+    expect(() => setRuntimeConfig(withLocal('http://localhost:8080') as unknown as RuntimeConfig)).toThrow(/initializeCore not called/);
+  });
+
+  it('are refused by loadRuntimeConfig in prod', async () => {
+    identity('prod');
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify(withLocal('http://localhost:8080')))));
+    const err = await loadRuntimeConfig().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RuntimeConfigError);
+    expect((err as RuntimeConfigError).issues.map((i) => i.path)).toEqual(LOCAL_PATHS);
+  });
+
+  it.each(['local', 'dev'] as const)('are accepted in %s', async (env) => {
+    identity(env);
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify(withLocal('http://localhost:8080')))));
+    const loaded = await loadRuntimeConfig();
+    setRuntimeConfig(loaded);
+    expect(getConfig().auth.idpOrigin).toBe('http://localhost:8080');
+    expect(getConfig().remotes.allowedOrigins).toEqual(['http://localhost:8080']);
+  });
+
+  it('do not affect https origins in prod', () => {
+    identity('prod');
+    setRuntimeConfig(withPatch('auth.idpOrigin', 'https://auth.example.com') as unknown as RuntimeConfig);
+    expect(getConfig().auth.idpOrigin).toBe('https://auth.example.com');
   });
 });
 

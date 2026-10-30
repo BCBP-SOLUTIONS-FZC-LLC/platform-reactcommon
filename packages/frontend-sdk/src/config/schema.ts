@@ -19,6 +19,11 @@ export interface RuntimeConfig {
     readonly propagationAllowlist: readonly string[];
   };
   readonly telemetry: {
+    /**
+     * Off switch for the page's telemetry; default true. When false, tracing, logging and metrics
+     * send nothing to the collector (their initialize calls are no-ops; dev console logging stays).
+     */
+    readonly enabled: boolean;
     /** Same-origin path of the OTLP/HTTP collector; default '/otel'. */
     readonly otlpBaseUrl: string;
     /** Trace sampling ratio in [0, 1]; default 0.1. */
@@ -69,9 +74,23 @@ export interface RuntimeConfig {
 }
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** An http origin on a local host: accepted only on a local or dev page (checked by setRuntimeConfig and loadRuntimeConfig). */
+export function isLocalHttpOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return url.protocol === 'http:' && LOCAL_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
 const HOUR_MS = 3_600_000;
 
-/** An exact origin (scheme://host[:port], nothing else): https, or http on a local host only. */
+/**
+ * An exact origin (scheme://host[:port], nothing else): https, or http on a local host only. The
+ * schema cannot know the page's environment: http on a local host is refused outside local and dev
+ * when the config is loaded or set (runtime-config.ts).
+ */
 const exactOrigin = z.string().superRefine((value, ctx) => {
   let url: URL | undefined;
   try {
@@ -126,6 +145,7 @@ const schema = z
       .strict(),
     telemetry: z
       .object({
+        enabled: z.boolean().default(true),
         otlpBaseUrl: sameOriginPath.default('/otel'),
         sampleRatio: z.number().min(0).max(1).default(0.1),
         logLevel: z.enum(['debug', 'info', 'warn', 'error']).default('info'),

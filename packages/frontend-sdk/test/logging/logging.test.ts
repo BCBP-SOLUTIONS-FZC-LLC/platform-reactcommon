@@ -1,5 +1,6 @@
 import type { LogRecordExporter, ReadableLogRecord } from '@opentelemetry/sdk-logs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RuntimeConfigSchema, setRuntimeConfig } from '../../src/config/index.ts';
 import { NotInitializedError, getSessionId, initializeCore, setConsentProvider, type ConsentCategory } from '../../src/core/index.ts';
 import { getRuntime, resetRuntimeForTests } from '../../src/internal/runtime.ts';
 import { getLogger, initializeLogging, serializeError, setRouteTemplate } from '../../src/logging/index.ts';
@@ -27,6 +28,18 @@ const sent = async () => {
   return records;
 };
 const attrsOf = (r: ReadableLogRecord) => r.attributes as Record<string, unknown>;
+/** Sets the page's runtime config with telemetry.enabled = `enabled`. */
+const telemetryConfig = (enabled: boolean) =>
+  setRuntimeConfig(
+    RuntimeConfigSchema.parse({
+      api: { baseUrl: '/api' },
+      telemetry: { enabled },
+      auth: { idleTimeoutMs: 1_800_000, redirectPath: '/auth/callback' },
+      remotes: { loadTimeoutMs: 10_000, retries: 0 },
+      i18n: { defaultLocale: 'en', supportedLocales: ['en'] },
+      appUpdate: { pollIntervalMs: 300_000 },
+    }),
+  );
 const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
 
 beforeEach(() => {
@@ -59,6 +72,41 @@ describe('initializeLogging', () => {
     expect(() => start({ batchSize: 0 })).toThrow(RangeError);
     expect(() => start({ flushMs: 10 })).toThrow(RangeError);
     expect(() => start({ level: 'trace' as never })).toThrow(RangeError);
+  });
+
+  it('sends nothing at any level, and does not throw, when the runtime config turns telemetry off', async () => {
+    const beacon = vi.fn(() => true);
+    vi.stubGlobal('navigator', { sendBeacon: beacon });
+    telemetryConfig(false);
+    expect(() => start()).not.toThrow();
+    expect(loggingStats()).toBeUndefined();
+    const log = getLogger({ mfe: 'tenders' });
+    log.debug('d');
+    log.info('i');
+    log.warn('essential', { essential: true });
+    log.error('boom', { error: new Error('x') });
+    globalThis.dispatchEvent?.(new Event('pagehide'));
+    expect(await sent()).toEqual([]);
+    expect(exportedUrl).toBeUndefined(); // no exporter was even built
+    expect(beacon).not.toHaveBeenCalled();
+  });
+
+  it('keeps the dev console when the runtime config turns telemetry off', () => {
+    resetRuntimeForTests();
+    core('dev');
+    telemetryConfig(false);
+    start();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    getLogger().error('still visible');
+    expect(err).toHaveBeenCalledWith('[shell] still visible', expect.anything());
+    expect(exportedUrl).toBeUndefined();
+  });
+
+  it('sends as usual when the runtime config leaves telemetry on', async () => {
+    telemetryConfig(true);
+    start();
+    getLogger().error('sent');
+    expect((await sent()).map((r) => r.body)).toEqual(['sent']);
   });
 
   it('sends OTLP log records with gincommon resource attributes to <otlpBaseUrl>/v1/logs', async () => {

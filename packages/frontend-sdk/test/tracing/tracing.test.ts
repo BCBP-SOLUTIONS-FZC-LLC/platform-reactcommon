@@ -4,9 +4,16 @@ import { ROOT_CONTEXT } from '@opentelemetry/api';
 import { JsonTraceSerializer } from '@opentelemetry/otlp-transformer';
 import { SamplingDecision, type ReadableSpan, type SpanExporter } from '@opentelemetry/sdk-trace';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RuntimeConfigSchema, setRuntimeConfig } from '../../src/config/index.ts';
 import { NotInitializedError, initializeCore, setConsentProvider, type ConsentCategory } from '../../src/core/index.ts';
-import { resetRuntimeForTests } from '../../src/internal/runtime.ts';
-import { DEFAULT_QUEUE, DropOldestBatchSpanProcessor, KEEPALIVE_MAX_BYTES, type TracingStats } from '../../src/tracing/processor.ts';
+import { getRuntime, resetRuntimeForTests } from '../../src/internal/runtime.ts';
+import {
+  DEFAULT_QUEUE,
+  DropOldestBatchSpanProcessor,
+  EXPORTER_CONCURRENCY,
+  KEEPALIVE_MAX_BYTES,
+  type TracingStats,
+} from '../../src/tracing/processor.ts';
 import { GoTraceIdRatioSampler, goFormatG, platformSampler, rootSampler } from '../../src/tracing/sampler.ts';
 import {
   currentTraceId,
@@ -39,6 +46,19 @@ const consent = (granted: ConsentCategory[]) =>
 function start(o: Partial<Parameters<typeof initializeTracing>[0]> = {}) {
   initializeTracing({ otlpBaseUrl: '/otel', sampleRatio: 1, ...o });
 }
+
+/** Sets the page's runtime config with telemetry.enabled = `enabled`. */
+const telemetryConfig = (enabled: boolean) =>
+  setRuntimeConfig(
+    RuntimeConfigSchema.parse({
+      api: { baseUrl: '/api' },
+      telemetry: { enabled },
+      auth: { idleTimeoutMs: 1_800_000, redirectPath: '/auth/callback' },
+      remotes: { loadTimeoutMs: 10_000, retries: 0 },
+      i18n: { defaultLocale: 'en', supportedLocales: ['en'] },
+      appUpdate: { pollIntervalMs: 300_000 },
+    }),
+  );
 
 const spans = (): ReadableSpan[] => collected;
 
@@ -199,6 +219,31 @@ describe('initializeTracing', () => {
     expect(tracingStats()).toBeUndefined();
   });
 
+  it('records and sends nothing, and does not throw, when the runtime config turns telemetry off', async () => {
+    const target = new EventTarget();
+    vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
+    vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
+    telemetryConfig(false);
+    expect(() => start()).not.toThrow();
+    expect(tracingStats()).toBeUndefined();
+    const span = getTracer('t').startSpan('off');
+    expect(span.traceId).toBe('');
+    span.end();
+    await withSpan('off-too', () => {});
+    target.dispatchEvent(new Event('pagehide'));
+    await shutdownTracing();
+    expect(spans()).toEqual([]);
+    expect(exportedUrl).toBeUndefined(); // no exporter was even built
+  });
+
+  it('sends as usual when the runtime config leaves telemetry on', async () => {
+    telemetryConfig(true);
+    start();
+    getTracer('t').startSpan('on').end();
+    await shutdownTracing();
+    expect(spans().map((s) => s.name)).toEqual(['on']);
+  });
+
   it('flushes on pagehide', async () => {
     const target = new EventTarget();
     vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
@@ -236,36 +281,138 @@ describe('export queue', () => {
     expect(spans().map((s) => s.name)).toEqual(['queued']);
   });
 
-  it('on page hide sends the queue in several requests that each fit the keepalive budget', async () => {
+  /**
+   * Like the OTLP exporter: at most `limit` exports pending, and one more fails at once ("Concurrent
+   * export limit reached"). Each export completes on a later macrotask.
+   */
+  function limitedExporter(limit: number) {
+    const batches: ReadableSpan[][] = [];
+    let pending = 0;
+    let rejected = 0;
+    const e: SpanExporter = {
+      export: (batch, cb) => {
+        if (pending >= limit) {
+          rejected++;
+          cb({ code: 1, error: new Error('Concurrent export limit reached') });
+          return;
+        }
+        pending++;
+        setTimeout(() => {
+          pending--;
+          batches.push(batch);
+          collected.push(...batch);
+          cb({ code: 0 });
+        }, 1);
+      },
+      shutdown: async () => {},
+    };
+    return { e, batches, rejected: () => rejected };
+  }
+
+  const filler = 'x'.repeat(200);
+  const queueBigSpans = (n: number) => {
+    for (let i = 0; i < n; i++) getTracer('t').startSpan(`s${i}`, { a: filler, b: filler, c: filler, d: filler }).end();
+  };
+  const names = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `s${from + i}`);
+
+  it('when the page is hidden, delivers a backed-up queue without exceeding the exporter concurrency limit', async () => {
     const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
     vi.stubGlobal('document', doc);
-    const batches: ReadableSpan[][] = [];
-    setTracingInternalsForTests({ exporter: () => ({ ...exporter, export: (b, cb) => (batches.push(b), exporter.export(b, cb)) }) });
+    const limited = limitedExporter(2); // the Batcher's in-flight limit: the flush alone never needs more
+    setTracingInternalsForTests({ exporter: () => limited.e, queue: { maxQueueSize: 2048, maxExportBatchSize: 50, scheduledDelayMillis: 60_000 } });
     start();
-    const filler = 'x'.repeat(200);
-    for (let i = 0; i < 300; i++) getTracer('t').startSpan(`s${i}`, { a: filler, b: filler, c: filler, d: filler }).end();
-    expect(batches).toHaveLength(0); // under the 512-span batch size: waiting for the timer
-    doc.visibilityState = 'hidden';
+    queueBigSpans(300); // about 300 KB: two batches go out, the rest waits behind them
+    doc.visibilityState = 'hidden'; // a tab switch with the queue backed up
     doc.dispatchEvent(new Event('visibilitychange'));
     await vi.waitFor(() => expect(spans()).toHaveLength(300));
-    expect(batches.length).toBeGreaterThan(1);
-    for (const b of batches) expect(JsonTraceSerializer.serializeRequest(b)!.byteLength).toBeLessThanOrEqual(KEEPALIVE_MAX_BYTES);
-    expect(spans().map((s) => s.name)).toEqual(Array.from({ length: 300 }, (_, i) => `s${i}`));
-    await vi.waitFor(() => expect(tracingStats()).toMatchObject({ exported: 300, exportFailures: 0 }));
+    expect(limited.rejected()).toBe(0);
+    expect(spans().map((x) => x.name)).toEqual(names(0, 300));
+    expect(tracingStats()).toMatchObject({ exported: 300, exportFailures: 0, droppedOnUnload: 0 });
   });
 
-  it('on page hide counts a refused or throwing export as a failure', () => {
-    const stats: TracingStats = { exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, exportFailures: 0 };
-    const sampled = { name: 's', spanContext: () => ({ traceId: '4bf92f3577b34da6a3ce929d0e0e4736', spanId: '00f067aa0ba902b7', traceFlags: 1 }) };
-    for (const e of [
-      { export: (_b: unknown, cb: (r: { code: number }) => void) => cb({ code: 1 }), shutdown: async () => {} },
-      { export: () => { throw new Error('boom'); }, shutdown: async () => {} },
-    ]) {
-      const processor = new DropOldestBatchSpanProcessor(e as SpanExporter, stats, { maxQueueSize: 10, maxExportBatchSize: 10, scheduledDelayMillis: 60_000 });
-      processor.onEnd(sampled as unknown as ReadableSpan);
-      processor.drainOnHide();
+  it('on pagehide sends one keepalive-sized request with the newest spans and counts the rest as dropped', async () => {
+    const target = new EventTarget();
+    vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
+    vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
+    const limited = limitedExporter(3);
+    setTracingInternalsForTests({ exporter: () => limited.e });
+    start();
+    const processor = (getRuntime().tracing as { processor: DropOldestBatchSpanProcessor }).processor;
+    const spansBefore: ReadableSpan[] = [];
+    const onEnd = processor.onEnd.bind(processor);
+    processor.onEnd = (span) => (spansBefore.push(span), onEnd(span));
+    queueBigSpans(300); // about 300 KB, under the 512-span batch size: all still queued
+    expect(limited.batches).toHaveLength(0);
+    const stats = tracingStats()!;
+    target.dispatchEvent(new Event('pagehide'));
+    await vi.waitFor(() => expect(limited.batches).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(limited.batches).toHaveLength(1); // one request, and nothing follows it
+    const [sent] = limited.batches as [ReadableSpan[]];
+    expect(JsonTraceSerializer.serializeRequest(sent)!.byteLength).toBeLessThanOrEqual(KEEPALIVE_MAX_BYTES);
+    // The newest that fit, in queue order; one more would not have fitted.
+    expect(sent.length).toBeGreaterThan(10);
+    expect(sent.length).toBeLessThan(300);
+    expect(sent.map((x) => x.name)).toEqual(names(300 - sent.length, 300));
+    const withOneMore = spansBefore.slice(300 - sent.length - 1);
+    expect(JsonTraceSerializer.serializeRequest(withOneMore)!.byteLength).toBeGreaterThan(KEEPALIVE_MAX_BYTES);
+    expect(stats).toEqual({ exported: sent.length, droppedQueueFull: 0, droppedNoConsent: 0, droppedOnUnload: 300 - sent.length, exportFailures: 0 });
+  });
+
+  it('on pagehide right after a hide flush, the unload request still fits the exporter concurrency limit', async () => {
+    const target = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+    vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
+    vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
+    vi.stubGlobal('document', target);
+    expect(EXPORTER_CONCURRENCY).toBe(3); // what the production OTLP exporter is given
+    const limited = limitedExporter(3);
+    setTracingInternalsForTests({ exporter: () => limited.e, queue: { maxQueueSize: 2048, maxExportBatchSize: 20, scheduledDelayMillis: 60_000 } });
+    start();
+    for (let i = 0; i < 19; i++) getTracer('t').startSpan(`a${i}`).end();
+    for (let i = 0; i < 19; i++) getTracer('t').startSpan(`b${i}`).end(); // the 20th span sent a full batch; 18 wait
+    target.visibilityState = 'hidden';
+    target.dispatchEvent(new Event('visibilitychange')); // both send slots busy now
+    getTracer('t').startSpan('last').end();
+    target.dispatchEvent(new Event('pagehide'));
+    const stats = tracingStats()!;
+    await vi.waitFor(() => expect(spans()).toHaveLength(39));
+    expect(limited.rejected()).toBe(0);
+    expect(stats).toMatchObject({ exported: 39, exportFailures: 0, droppedOnUnload: 0 });
+  });
+
+  it('on pagehide counts a refused or throwing export as a failure, and sends nothing for an empty queue', async () => {
+    const target = new EventTarget();
+    vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
+    vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
+    let calls = 0;
+    const refusing: SpanExporter = { export: (_b, cb) => (calls++, cb({ code: 1 })), shutdown: async () => {} };
+    const throwing: SpanExporter = {
+      export: () => {
+        calls++;
+        throw new Error('boom');
+      },
+      shutdown: async () => {},
+    };
+    for (const e of [refusing, throwing]) {
+      setTracingInternalsForTests({ exporter: () => e });
+      start();
+      const stats = tracingStats()!;
+      getTracer('t').startSpan('lost').end();
+      target.dispatchEvent(new Event('pagehide'));
+      target.dispatchEvent(new Event('pagehide')); // the queue is empty now: no request
+      await vi.waitFor(() => expect(stats).toMatchObject({ exported: 0, exportFailures: 1, droppedOnUnload: 0 }));
+      await shutdownTracing();
     }
-    return vi.waitFor(() => expect(stats).toMatchObject({ exported: 0, exportFailures: 2 }));
+    expect(calls).toBe(2);
+  });
+
+  it('on pagehide drops a span that cannot be serialised instead of throwing', () => {
+    const stats: TracingStats = { exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, droppedOnUnload: 0, exportFailures: 0 };
+    const unserialisable = { name: 's', spanContext: () => ({ traceId: '4bf92f3577b34da6a3ce929d0e0e4736', spanId: '00f067aa0ba902b7', traceFlags: 1 }) };
+    const processor = new DropOldestBatchSpanProcessor(exporter, stats, { maxQueueSize: 10, maxExportBatchSize: 10, scheduledDelayMillis: 60_000 });
+    processor.onEnd(unserialisable as unknown as ReadableSpan);
+    expect(() => processor.drainOnUnload()).not.toThrow();
+    expect(stats).toMatchObject({ exported: 0, exportFailures: 0, droppedOnUnload: 1 });
   });
 
   it('never rejects on shutdown when the exporter fails to flush or shut down', async () => {
@@ -301,11 +448,11 @@ describe('export queue', () => {
     open.end();
     await Promise.resolve();
     expect(spans()).toEqual([]);
-    expect(stats).toEqual({ exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, exportFailures: 0 });
+    expect(stats).toEqual({ exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, droppedOnUnload: 0, exportFailures: 0 });
   });
 
   it('ignores ended spans that are recorded but not sampled', async () => {
-    const stats: TracingStats = { exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, exportFailures: 0 };
+    const stats: TracingStats = { exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, droppedOnUnload: 0, exportFailures: 0 };
     const processor = new DropOldestBatchSpanProcessor(exporter, stats, { maxQueueSize: 10, maxExportBatchSize: 1, scheduledDelayMillis: 60_000 });
     const span = (name: string, traceFlags: number) =>
       ({ name, spanContext: () => ({ traceId: '4bf92f3577b34da6a3ce929d0e0e4736', spanId: '00f067aa0ba902b7', traceFlags }) }) as unknown as ReadableSpan;
@@ -313,7 +460,7 @@ describe('export queue', () => {
     processor.onEnd(span('sampled', 1));
     await processor.shutdown();
     expect(spans().map((s) => s.name)).toEqual(['sampled']);
-    expect(stats).toEqual({ exported: 1, droppedQueueFull: 0, droppedNoConsent: 0, exportFailures: 0 });
+    expect(stats).toEqual({ exported: 1, droppedQueueFull: 0, droppedNoConsent: 0, droppedOnUnload: 0, exportFailures: 0 });
   });
 
   it('exports only with telemetry consent', async () => {
