@@ -1,0 +1,73 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exports:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test:coverage
+      - run: pnpm build
+      - run: pnpm api:check
+      - run: pnpm depcruise
+
+  # design doc §C5 "How drift is caught", item 1: contracts/ must equal what the pinned backend
+  # sources generate. The sources are checked out next to this repo in the same layout as the
+  # local workspace (PLATFORM_ROOT = the workspace root).
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: react/platform-reactcommon
+      - id: pins
+        working-directory: react/platform-reactcommon
+        run: |
+          for name in platform-gincommon platform-events platform-pgcommon platform-fastapicommon platform-interop-tests; do
+            echo "${name}=$(jq -r --arg n "$name" '.platform[$n].sha' packages/frontend-sdk/contracts/sources.json)" >> "$GITHUB_OUTPUT"
+          done
+      # Private sibling repos: PLATFORM_REPOS_TOKEN is a read-only token for the organisation.
+      - uses: actions/checkout@v5
+        with: { repository: BCBP-SOLUTIONS-FZC-LLC/platform-gincommon, ref: "${{ steps.pins.outputs.platform-gincommon }}", path: go/platform-gincommon, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
+      - uses: actions/checkout@v5
+        with: { repository: BCBP-SOLUTIONS-FZC-LLC/platform-events, ref: "${{ steps.pins.outputs.platform-events }}", path: go/platform-events, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
+      - uses: actions/checkout@v5
+        with: { repository: BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon, ref: "${{ steps.pins.outputs.platform-pgcommon }}", path: go/platform-pgcommon, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
+      - uses: actions/checkout@v5
+        with: { repository: BCBP-SOLUTIONS-FZC-LLC/platform-fastapicommon, ref: "${{ steps.pins.outputs.platform-fastapicommon }}", path: python/platform-fastapicommon, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
+      - uses: actions/checkout@v5
+        with: { repository: BCBP-SOLUTIONS-FZC-LLC/platform-interop-tests, ref: "${{ steps.pins.outputs.platform-interop-tests }}", path: platform-interop-tests, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: platform-interop-tests/go-probe/go.mod
+          cache: false
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: react/platform-reactcommon/package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: react/platform-reactcommon/.nvmrc
+          cache: pnpm
+          cache-dependency-path: react/platform-reactcommon/pnpm-lock.yaml
+      - working-directory: react/platform-reactcommon
+        run: pnpm install --frozen-lockfile
+      - working-directory: react/platform-reactcommon
+        env:
+          PLATFORM_ROOT: ${{ github.workspace }}
+        run: pnpm contracts:check
