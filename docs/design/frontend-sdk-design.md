@@ -295,7 +295,8 @@ export function getDomainMeter(scope?: Partial<MfeScope>): {
   histogram(name: string): Histogram;
 };
 /** Tier 3: `<domain>_<service>_<metric>`, prefix built like gincommon `ServicePrefix` (non-alphanumerics → `_`).
- *  Counters must end `_total`; histograms `_seconds` (or `_bytes`); gauges never `_total`. */
+ *  Counters must end `_total`; histograms `_seconds` (`_bytes` only for registry metrics with `unit: bytes`, as in
+ *  gincommon CheckCustom); gauges never `_total`. */
 export function getServiceMeter(scope?: Partial<MfeScope>): {
   counter(name: string, help: string, labels: readonly string[]): Counter;
   histogram(name: string, help: string, labels: readonly string[], buckets?: readonly number[]): Histogram;
