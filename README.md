@@ -653,6 +653,8 @@ Keeping scope to **identity, data access, errors, observability and the micro-fr
 | [`packages/frontend-sdk/contracts/README.md`](packages/frontend-sdk/contracts/README.md) | Each generated contract and its source |
 | [VERSIONING.md](VERSIONING.md) | SemVer rules, public API, Module Federation and versions, release process, compatibility matrix |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, supported versions, trust model and known limitations, scope |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, layout, adding a subpath, metric, lint rule or contract, testing, PR checklist, releases |
+| [CHANGELOG.md](CHANGELOG.md) | Release history (Keep a Changelog) |
 
 **A change to a published package:**
 - follows the design doc (update it in the same PR if behaviour changes);
