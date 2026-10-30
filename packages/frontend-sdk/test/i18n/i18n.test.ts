@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatDate, formatMoney, formatNumber, initializeI18n, problemMessage, registerNamespace, setLocale, t } from '../../src/i18n/index.ts';
-import { currentLocale, directionOf, subscribeI18n } from '../../src/i18n/i18n.ts';
+import { currentLocale, subscribeI18n } from '../../src/i18n/i18n.ts';
+import { directionOf } from '../../src/internal/locale.ts';
 import { resetRuntimeForTests } from '../../src/internal/runtime.ts';
 import { parseProblemResponse } from '../../src/problem/index.ts';
 

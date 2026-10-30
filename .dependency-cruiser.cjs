@@ -44,7 +44,8 @@ const forbidden = [
     name: 'index-only',
     severity: 'error',
     comment: "Another subpath is imported only through its index.ts (its public surface).",
-    from: { path: `${SRC}/([a-z0-9]+)/` },
+    // /testing (dev only, "testing ─► anything") may reach other subpaths' test seams.
+    from: { path: `${SRC}/([a-z0-9]+)/`, pathNot: `${SRC}/testing/` },
     // Subpath folders only: src/internal has no index.ts and is shared by every subpath.
     to: { path: `${SRC}/(${names.join('|')})/.+`, pathNot: [`${SRC}/$1/`, `${SRC}/[a-z0-9]+/index\\.ts$`] },
   },

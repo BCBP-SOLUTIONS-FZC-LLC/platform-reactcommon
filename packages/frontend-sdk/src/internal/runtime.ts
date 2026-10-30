@@ -64,6 +64,10 @@ export interface PlatformRuntime {
   manifest: unknown;
   /** Running and available app versions, and update listeners (/mfe owns the type). */
   appUpdate: unknown;
+  /** Change listeners per topic (src/internal/events.ts). */
+  events: Map<string, Set<() => void>>;
+  /** A DENY_TENANT_READ_ONLY answer was seen on this page (/http sets it; /react reads it). */
+  readOnlyDenied: boolean;
 }
 
 export const RUNTIME_KEY = Symbol.for('@platform/frontend-sdk');
@@ -107,6 +111,8 @@ function createRuntime(): PlatformRuntime {
     identityProvider: undefined,
     manifest: undefined,
     appUpdate: undefined,
+    events: new Map(),
+    readOnlyDenied: false,
   };
 }
 

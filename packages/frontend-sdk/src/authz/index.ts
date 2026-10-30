@@ -6,6 +6,7 @@
  *
  * @packageDocumentation
  */
+import { emitRuntime } from '../internal/events.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { parseRoles } from './roles.ts';
 
@@ -57,6 +58,7 @@ export function roleMapAuthorizer(map: Record<string, readonly `${string}:${stri
 /** Shell only: the authorizer every hasPermission call uses. */
 export function setAuthorizer(a: Authorizer): void {
   getRuntime().authorizer = a ?? denyAll;
+  emitRuntime('authz');
 }
 
 /**
@@ -68,6 +70,7 @@ export function setAuthzSubject(s: AuthzSubject | undefined): void {
     s === undefined
       ? undefined
       : Object.freeze({ roles: Object.freeze(parseRoles(s.roles)), ...(s.tenantId === undefined ? {} : { tenantId: s.tenantId }) });
+  emitRuntime('authz');
 }
 
 /**
