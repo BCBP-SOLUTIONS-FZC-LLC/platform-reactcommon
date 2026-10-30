@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildExportsMap } from '../sync-exports.ts';
-import { SDK_DIR, allowedImports, implementedSubpaths, loadSubpathConfig, validateSubpathConfig } from './subpaths.ts';
+import { REPO_ROOT, SDK_DIR, allowedImports, implementedSubpaths, loadSubpathConfig, validateAreas, validateSubpathConfig } from './subpaths.ts';
 
 describe('subpaths.json', () => {
   const config = loadSubpathConfig();
@@ -51,6 +51,46 @@ describe('subpaths.json', () => {
       ]),
     ).toThrow('duplicate');
     expect(() => validateSubpathConfig([{ name: 'A-b', layer: 0, imports: [] }])).toThrow('invalid subpath name');
+  });
+});
+
+describe('functional areas', () => {
+  const config = loadSubpathConfig();
+  const read = (rel: string) => readFileSync(join(REPO_ROOT, rel), 'utf8');
+
+  it('groups the 17 subpaths into the seven areas of docs/areas', () => {
+    const byArea = Object.fromEntries(config.areas.map((a) => [a.id, config.subpaths.filter((s) => s.area === a.id).map((s) => s.name)]));
+    expect(byArea).toEqual({
+      foundation: ['core', 'problem', 'config'],
+      observability: ['tracing', 'logging', 'metrics'],
+      'data-access': ['http'],
+      'identity-access': ['authz', 'storage', 'auth'],
+      'mfe-platform': ['flags', 'mfe', 'nav'],
+      'ui-support': ['security', 'i18n'],
+      'developer-surface': ['react', 'testing'],
+    });
+  });
+
+  it("each area's page names every subpath of the area, and the index lists every page and subpath", () => {
+    const index = read('docs/areas/README.md');
+    for (const a of config.areas) {
+      const page = read(a.page);
+      expect(page.startsWith(`# ${a.title}\n`), a.page).toBe(true);
+      expect(index, a.id).toContain(`(${a.page.replace('docs/areas/', '')})`);
+      for (const s of config.subpaths.filter((x) => x.area === a.id)) {
+        expect(page, `${a.page} → /${s.name}`).toContain(`\`/${s.name}\``);
+        expect(index, `index → /${s.name}`).toContain(`\`/${s.name}\``);
+      }
+    }
+  });
+
+  it('rejects subpaths without a known area, areas without subpaths, and bad pages', () => {
+    const area = { id: 'a', title: 'A', summary: 'S', page: 'docs/areas/a.md' };
+    expect(() => validateAreas([area], [{ name: 'x', layer: 0, imports: [] }])).toThrow('no known area');
+    expect(() => validateAreas([area], [{ name: 'x', layer: 0, area: 'b', imports: [] }])).toThrow('no known area');
+    expect(() => validateAreas([area, { ...area, id: 'b' }], [{ name: 'x', layer: 0, area: 'a', imports: [] }])).toThrow('area b has no subpath');
+    expect(() => validateAreas([area, area], [{ name: 'x', layer: 0, area: 'a', imports: [] }])).toThrow('duplicate area');
+    expect(() => validateAreas([{ ...area, page: 'README.md' }], [{ name: 'x', layer: 0, area: 'a', imports: [] }])).toThrow('docs/areas');
   });
 });
 

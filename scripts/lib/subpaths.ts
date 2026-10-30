@@ -7,11 +7,23 @@ import { fileURLToPath } from 'node:url';
 export interface SubpathRule {
   readonly name: string;
   readonly layer: number;
+  /** The functional area (an `areas[].id`); documentation and ownership only, no rule. */
+  readonly area?: string;
   /** Subpaths this one may import; '*' means any. */
   readonly imports: readonly string[];
 }
 
+/** A functional area: a group of subpaths with one purpose, documented on `page`. */
+export interface SubpathArea {
+  readonly id: string;
+  readonly title: string;
+  readonly summary: string;
+  /** Repository-relative path of the area's documentation page. */
+  readonly page: string;
+}
+
 export interface SubpathConfig {
+  readonly areas: readonly SubpathArea[];
   readonly subpaths: readonly SubpathRule[];
   /** Third-party package prefix → the only subpaths allowed to import it. */
   readonly packageImports: Readonly<Record<string, readonly string[]>>;
@@ -22,6 +34,7 @@ export const SDK_DIR = join(REPO_ROOT, 'packages/frontend-sdk');
 
 export function loadSubpathConfig(sdkDir: string = SDK_DIR): SubpathConfig {
   const raw = JSON.parse(readFileSync(join(sdkDir, 'subpaths.json'), 'utf8')) as {
+    areas: SubpathArea[];
     subpaths: SubpathRule[];
     packageImports: Record<string, string[] | string>;
   };
@@ -31,7 +44,8 @@ export function loadSubpathConfig(sdkDir: string = SDK_DIR): SubpathConfig {
     packageImports[pkg] = allowed as string[];
   }
   validateSubpathConfig(raw.subpaths);
-  return { subpaths: raw.subpaths, packageImports };
+  validateAreas(raw.areas, raw.subpaths);
+  return { areas: raw.areas, subpaths: raw.subpaths, packageImports };
 }
 
 /** Rejects unknown or duplicate names and imports that point at a subpath that does not exist. */
@@ -47,6 +61,23 @@ export function validateSubpathConfig(subpaths: readonly SubpathRule[]): void {
       if (i !== '*' && !names.has(i)) throw new Error(`subpath ${s.name} imports unknown subpath ${i}`);
       if (i === s.name) throw new Error(`subpath ${s.name} lists itself in imports`);
     }
+  }
+}
+
+/** Every subpath belongs to exactly one known area; every area has an id, a page, and at least one subpath. */
+export function validateAreas(areas: readonly SubpathArea[], subpaths: readonly SubpathRule[]): void {
+  const ids = new Set<string>();
+  for (const a of areas ?? []) {
+    if (!/^[a-z][a-z0-9-]*$/.test(a.id)) throw new Error(`invalid area id ${JSON.stringify(a.id)}`);
+    if (ids.has(a.id)) throw new Error(`duplicate area ${a.id}`);
+    if (!a.title || !a.summary || !/^docs\/areas\/[a-z0-9-]+\.md$/.test(a.page)) throw new Error(`area ${a.id} needs a title, a summary and a docs/areas/*.md page`);
+    ids.add(a.id);
+  }
+  for (const s of subpaths) {
+    if (!s.area || !ids.has(s.area)) throw new Error(`subpath ${s.name} has no known area (got ${JSON.stringify(s.area)})`);
+  }
+  for (const id of ids) {
+    if (!subpaths.some((s) => s.area === id)) throw new Error(`area ${id} has no subpath`);
   }
 }
 
