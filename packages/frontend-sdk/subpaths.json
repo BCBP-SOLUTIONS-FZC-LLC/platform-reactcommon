@@ -1,23 +1,67 @@
 {
-  "_comment": "Single source of truth for the SDK's subpaths and the dependency rules between them (design doc §C1 'Dependency rules'). The exports map, ESLint boundaries, dependency-cruiser and the Module Federation shared list are all generated from this file. `imports` lists the subpaths each one may import; '*' means any subpath. Layers are documentation only.",
+  "_comment": "Single source of truth for the SDK's subpaths and the dependency rules between them (design doc §C1 'Dependency rules'). The exports map, ESLint boundaries, dependency-cruiser and the Module Federation shared list are all generated from this file. `imports` lists the subpaths each one may import; '*' means any subpath. Layers are documentation only. `area` groups the subpaths by function (docs/areas/); it documents ownership and changes no rule.",
+  "areas": [
+    {
+      "id": "foundation",
+      "title": "Foundation",
+      "summary": "Page identity, consent, session id, runtime config and the RFC 9457 error model: what every other area stands on.",
+      "page": "docs/areas/foundation.md"
+    },
+    {
+      "id": "observability",
+      "title": "Observability",
+      "summary": "Traces, logs and metrics over OTLP to /otel, correlated, redacted and consent-gated, with the platform registry's rules.",
+      "page": "docs/areas/observability.md"
+    },
+    {
+      "id": "data-access",
+      "title": "Data access",
+      "summary": "The ApiClient: route templates, correlation headers, retries, 401 refresh, de-duplication and problems.",
+      "page": "docs/areas/data-access.md"
+    },
+    {
+      "id": "identity-access",
+      "title": "Identity & access",
+      "summary": "Keycloak sign-in, workspaces and sessions, UI permissions, and per-tenant browser storage.",
+      "page": "docs/areas/identity-access.md"
+    },
+    {
+      "id": "mfe-platform",
+      "title": "Micro-frontend platform",
+      "summary": "Loading remotes, kill switches and feature flags, cross-app navigation, new-version detection.",
+      "page": "docs/areas/mfe-platform.md"
+    },
+    {
+      "id": "ui-support",
+      "title": "UI support",
+      "summary": "Translations, locale and direction, formatting; HTML sanitizing and the Trusted Types policy.",
+      "page": "docs/areas/ui-support.md"
+    },
+    {
+      "id": "developer-surface",
+      "title": "Developer surface",
+      "summary": "React hooks, providers and error boundaries over every area, and the test kit.",
+      "page": "docs/areas/developer-surface.md"
+    }
+  ],
   "subpaths": [
-    { "name": "core",     "layer": 0, "imports": [] },
-    { "name": "problem",  "layer": 0, "imports": [] },
-    { "name": "authz",    "layer": 0, "imports": [] },
-    { "name": "config",   "layer": 1, "imports": ["core"] },
-    { "name": "security", "layer": 1, "imports": ["core"] },
-    { "name": "storage",  "layer": 1, "imports": ["core"] },
-    { "name": "tracing",  "layer": 2, "imports": ["core", "config"] },
-    { "name": "logging",  "layer": 2, "imports": ["core", "config"] },
-    { "name": "metrics",  "layer": 2, "imports": ["core", "config"] },
-    { "name": "http",     "layer": 3, "imports": ["core", "config", "problem", "tracing", "logging"] },
-    { "name": "flags",    "layer": 3, "imports": ["core", "config"] },
-    { "name": "i18n",     "layer": 3, "imports": ["core", "problem", "config"] },
-    { "name": "auth",     "layer": 4, "imports": ["core", "config", "logging", "storage"] },
-    { "name": "mfe",      "layer": 4, "imports": ["core", "config", "flags", "tracing", "logging"] },
-    { "name": "nav",      "layer": 4, "imports": ["core", "config"] },
-    { "name": "react",    "layer": 5, "imports": ["core", "config", "tracing", "logging", "metrics", "problem", "http", "flags", "i18n", "auth", "authz", "mfe", "nav", "storage", "security"] },
-    { "name": "testing",  "layer": 5, "imports": ["*"] }
+    { "name": "core",     "layer": 0, "area": "foundation",        "imports": [] },
+    { "name": "problem",  "layer": 0, "area": "foundation",        "imports": [] },
+    { "name": "authz",    "layer": 0, "area": "identity-access",   "imports": [] },
+    { "name": "config",   "layer": 1, "area": "foundation",        "imports": ["core"] },
+    { "name": "security", "layer": 1, "area": "ui-support",        "imports": ["core"] },
+    { "name": "storage",  "layer": 1, "area": "identity-access",   "imports": ["core"] },
+    { "name": "tracing",  "layer": 2, "area": "observability",     "imports": ["core", "config"] },
+    { "name": "logging",  "layer": 2, "area": "observability",     "imports": ["core", "config"] },
+    { "name": "metrics",  "layer": 2, "area": "observability",     "imports": ["core", "config"] },
+    { "name": "http",     "layer": 3, "area": "data-access",       "imports": ["core", "config", "problem", "tracing", "logging"] },
+    { "name": "flags",    "layer": 3, "area": "mfe-platform",      "imports": ["core", "config"] },
+    { "name": "i18n",     "layer": 3, "area": "ui-support",        "imports": ["core", "problem", "config"] },
+    { "name": "auth",     "layer": 4, "area": "identity-access",   "imports": ["core", "config", "logging", "storage"] },
+    { "name": "mfe",      "layer": 4, "area": "mfe-platform",      "imports": ["core", "config", "flags", "tracing", "logging"] },
+    { "name": "nav",      "layer": 4, "area": "mfe-platform",      "imports": ["core", "config"] },
+    { "name": "react",    "layer": 5, "area": "developer-surface", "imports": ["core", "config", "tracing", "logging", "metrics", "problem", "http", "flags", "i18n", "auth", "authz", "mfe", "nav", "storage", "security"] },
+    { "name": "testing",  "layer": 5, "area": "developer-surface", "imports": ["*"] }
   ],
   "packageImports": {
     "_comment": "Third-party packages restricted to specific subpaths (design doc §C1). Any subpath not listed may not import them.",
