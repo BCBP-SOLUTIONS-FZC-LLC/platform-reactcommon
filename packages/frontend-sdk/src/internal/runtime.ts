@@ -54,6 +54,8 @@ export interface PlatformRuntime {
   flagProvider: unknown;
   /** The shell's router navigation function (/nav owns its type). */
   navigator: unknown;
+  /** Locale, namespaces and catalogs (/i18n owns its type). */
+  i18n: unknown;
 }
 
 export const RUNTIME_KEY = Symbol.for('@platform/frontend-sdk');
@@ -92,6 +94,7 @@ function createRuntime(): PlatformRuntime {
     trustedTypesPolicy: undefined,
     flagProvider: undefined,
     navigator: undefined,
+    i18n: undefined,
   };
 }
 

@@ -53,6 +53,10 @@
       "types": "./dist/flags/index.d.ts",
       "import": "./dist/flags/index.js"
     },
+    "./i18n": {
+      "types": "./dist/i18n/index.d.ts",
+      "import": "./dist/i18n/index.js"
+    },
     "./nav": {
       "types": "./dist/nav/index.d.ts",
       "import": "./dist/nav/index.js"
