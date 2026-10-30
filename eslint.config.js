@@ -36,6 +36,12 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    // Interface methods (OTel SpanProcessor, Sampler, …) take parameters an implementation may not use.
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrors: 'none' }],
+    },
+  },
+  {
     files: ['**/*.{js,mjs}'],
     languageOptions: { globals: { process: 'readonly', console: 'readonly', URL: 'readonly' } },
   },
