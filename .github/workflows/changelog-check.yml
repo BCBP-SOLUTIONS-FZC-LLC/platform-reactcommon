@@ -2,7 +2,8 @@
 # A PR that changes what a package ships must:
 #   - add an entry under ## [Unreleased] in CHANGELOG.md (the repository's single history), and
 #   - add a .changeset/*.md (its bump type: patch, minor or major), which `pnpm changeset version`
-#     turns into the shared version of the three packages.
+#     turns into the shared version of the three packages. A change that ships nothing (e.g.
+#     subpaths.json's documentation-only fields) adds an empty one: `pnpm changeset --empty`.
 # So release.yml's CHANGELOG gate never surprises anyone at tag time. A release PR (it consumes
 # the changesets: `pnpm changeset version`) must update CHANGELOG.md too, renaming [Unreleased].
 name: Changelog check
@@ -42,7 +43,8 @@ jobs:
           # landed on main after the branch point.
           changed=$(git diff --name-status "$BASE...$HEAD")
           status=0
-          if ! grep -qE '^M\s+CHANGELOG\.md$' <<<"$changed"; then
+          # A (added) too: the PR that introduced CHANGELOG.md.
+          if ! grep -qE '^[AM]\s+CHANGELOG\.md$' <<<"$changed"; then
             echo "::error file=CHANGELOG.md,title=CHANGELOG not updated::This PR changes a published package but does not update CHANGELOG.md. Add an entry under the Unreleased section before merging."
             status=1
           fi
