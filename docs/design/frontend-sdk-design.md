@@ -99,7 +99,7 @@ platform-reactcommon/
 Build: `tsup`/`rollup` to ESM + `.d.ts`, `"sideEffects": false`. `exports` map has one entry per
 subpath and no root barrel export (`"."` throws a helpful type error), so subpaths stay
 tree-shakeable. Peer deps: `react`, `react-dom` (^18 || ^19), `@opentelemetry/api` (^1).
-Direct deps: `@opentelemetry/sdk-trace-web`, `exporter-*-otlp-http`, `sdk-logs`, `sdk-metrics`,
+Direct deps: `@opentelemetry/sdk-trace` (OTel JS 3; `sdk-trace-web`/`-base` 2.x are deprecated), `exporter-*-otlp-http`, `sdk-logs`, `sdk-metrics`,
 `web-vitals`, `zod`, `dompurify`. Telemetry goes over OTLP/HTTP directly. There is no Faro SDK
 (one pipeline). The `/otel` path may point at a Faro receiver or a plain collector.
 
@@ -271,7 +271,9 @@ fields. Redaction order: `sanitizeFields`, then
 `sanitizeString` on every string value, then value scrubbing of JWT- or `Bearer`-shaped substrings, then message
 sanitization. Stacks have URL query strings and fragments stripped. Transport: OTLP logs batched,
 `fetch(keepalive)`, and `navigator.sendBeacon` on `pagehide`/`visibilitychange=hidden`. Consent:
-`error` and essential `warn` are always sent; `debug`/`info` require `telemetry` consent.
+`error` and essential `warn` are always sent; `debug`/`info` and any other `warn` require `telemetry` consent.
+A `warn` is essential when its attributes carry `essential: true`, a reserved flag that is never sent as
+an attribute. The SDK's own security warns (CSP violations, a duplicate SDK copy) set it.
 
 #### `/metrics`
 
@@ -1099,7 +1101,7 @@ except `getConfig()`, which remotes call through `tryGetConfig()`.
 export const platformShared = {
   react:                     { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
   'react-dom':               { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
-  '@opentelemetry/api':      { singleton: true, strictVersion: true, requiredVersion: '^1.9.0' },
+  '@opentelemetry/api':      { singleton: true, strictVersion: true, requiredVersion: '~1.10.0' }, // OTel JS 3 needs >=1.10 <1.11
   '@platform/frontend-sdk':  { singleton: true, strictVersion: true, requiredVersion: '^1.0.0-0' },
   // subpaths share the same instance: MF keys by request, so each used subpath is listed
   ...Object.fromEntries(SUBPATHS.map(s => [`@platform/frontend-sdk/${s}`,
