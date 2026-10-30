@@ -7,6 +7,7 @@ import { initializeI18n, registerNamespace, setLocale } from '../../src/i18n/ind
 import { getRuntime } from '../../src/internal/runtime.ts';
 import { resetContainersForTests } from '../../src/mfe/remote.ts';
 import { AbortedError, NetworkError, PlatformProblemTypes, type ApiError } from '../../src/problem/index.ts';
+import { StrictMode } from 'react';
 import { renderToString } from 'react-dom/server';
 import {
   Can,
@@ -317,6 +318,23 @@ describe('read-only, flags, permissions, locale', () => {
 });
 
 describe('useApi and useApiClient', () => {
+  it('loads under StrictMode, whose remount aborts the first request and asks again at once', async () => {
+    mockApi({ 'GET /tenders/:id': (req) => Response.json({ id: req.url.split('/').pop() }) });
+    function View() {
+      const r = useApi((c, signal) => c.get<{ id: string }>('/tenders/:id', { params: { id: '7' }, signal }).then((x) => x.data), []);
+      return <p>{r.loading ? 'loading' : (r.data?.id ?? 'none')}</p>;
+    }
+    const r = await render(
+      <StrictMode>
+        <MFEErrorBoundary mfe="tenders">
+          <View />
+        </MFEErrorBoundary>
+      </StrictMode>,
+    );
+    await settle();
+    expect(r.container.textContent).toBe('7');
+  });
+
   it('loads, reloads, aborts on deps change, and records the MFE scope', async () => {
     let calls = 0;
     mockApi({ 'GET /tenders/:id': (req) => Response.json({ id: req.url.split('/').pop(), n: ++calls }) });
@@ -629,7 +647,7 @@ describe('hooks: edge cases', () => {
     expect(renderToString(<View />)).toBe('<p>true|en|ltr|true|true|true</p>');
   });
 
-  it('useApi ignores an AbortedError the call raised itself', async () => {
+  it('useApi ends the load quietly on an AbortedError it did not cause (never stuck loading)', async () => {
     let state: { loading: boolean; error?: ApiError; data?: unknown } | undefined;
     function View() {
       state = useApi(async () => {
@@ -643,7 +661,7 @@ describe('hooks: edge cases', () => {
       </MFEErrorBoundary>,
     );
     await settle();
-    expect(state).toMatchObject({ loading: true });
+    expect(state).toMatchObject({ loading: false });
     expect(state!.error).toBeUndefined();
     expect(platform.logs.filter((l) => l.level === 'error')).toEqual([]);
   });

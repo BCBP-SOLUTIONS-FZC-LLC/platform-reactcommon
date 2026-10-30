@@ -1101,7 +1101,11 @@ except `getConfig()`, which remotes call through `tryGetConfig()`.
 // shared — identical in shell and every remote; generated from the preset's own package.json pins
 export const platformShared = {
   react:                     { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
+  // the JSX runtimes and react-dom/client too: a remote's JSX must come from the shell's React
+  'react/jsx-runtime':       { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
+  'react/jsx-dev-runtime':   { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
   'react-dom':               { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
+  'react-dom/client':        { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
   '@opentelemetry/api':      { singleton: true, strictVersion: true, requiredVersion: '~1.10.0' }, // OTel JS 3 needs >=1.10 <1.11
   '@platform/frontend-sdk':  { singleton: true, strictVersion: true, requiredVersion: '^1.0.0-0' },
   // subpaths share the same instance: MF keys by request, so each used subpath is listed

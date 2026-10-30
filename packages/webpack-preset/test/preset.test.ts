@@ -21,10 +21,13 @@ const sdkPkg = JSON.parse(readFileSync(join(import.meta.dirname, '../../frontend
 const reactVersion = (JSON.parse(readFileSync(require.resolve('react/package.json', { paths: [join(import.meta.dirname, '../../frontend-sdk')] }), 'utf8')) as { version: string }).version;
 
 describe('platformShared', () => {
-  it('shares React, OTel API and every SDK subpath but /testing as strict singletons', () => {
+  it('shares React (with its JSX runtimes and react-dom/client), OTel API and every SDK subpath but /testing as strict singletons', () => {
     expect(Object.keys(platformShared)).toEqual([
       'react',
+      'react/jsx-runtime',
+      'react/jsx-dev-runtime',
       'react-dom',
+      'react-dom/client',
       '@opentelemetry/api',
       '@platform/frontend-sdk',
       ...SDK_SUBPATHS.filter((s) => s !== 'testing').map((s) => `@platform/frontend-sdk/${s}`),
@@ -36,6 +39,10 @@ describe('platformShared', () => {
   it('pins agree with the SDK peer ranges, under webpack semver', () => {
     expect(platformShared.react!.requiredVersion).toBe(sdkPkg.peerDependencies.react);
     expect(platformShared['react-dom']!.requiredVersion).toBe(sdkPkg.peerDependencies['react-dom']);
+    // A remote's JSX must come from the shell's React: the JSX runtimes share React's pin.
+    expect(platformShared['react/jsx-runtime']!.requiredVersion).toBe(platformShared.react!.requiredVersion);
+    expect(platformShared['react/jsx-dev-runtime']!.requiredVersion).toBe(platformShared.react!.requiredVersion);
+    expect(platformShared['react-dom/client']!.requiredVersion).toBe(platformShared['react-dom']!.requiredVersion);
     const otel = parseRange(platformShared['@opentelemetry/api']!.requiredVersion);
     expect(['1.10.0', '1.10.9'].map((v) => satisfy(otel, v))).toEqual([true, true]);
     expect(['1.9.0', '1.11.0'].map((v) => satisfy(otel, v))).toEqual([false, false]);

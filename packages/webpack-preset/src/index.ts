@@ -37,7 +37,12 @@ const NOT_SHARED = new Set(['testing']);
  */
 export const platformShared: Readonly<Record<string, SharedConfig>> = Object.freeze({
   react: shared(pin('react')),
+  // The entry points apps import besides the package roots: shared too, or each remote bundles its own
+  // JSX runtime, whose elements another React major refuses to render.
+  'react/jsx-runtime': shared(pin('react')),
+  'react/jsx-dev-runtime': shared(pin('react')),
   'react-dom': shared(pin('react-dom')),
+  'react-dom/client': shared(pin('react-dom')),
   '@opentelemetry/api': shared(pin('@opentelemetry/api')),
   [SDK_PACKAGE]: shared(SDK_SHARE_RANGE),
   ...Object.fromEntries(SDK_SUBPATHS.filter((s) => !NOT_SHARED.has(s)).map((s) => [`${SDK_PACKAGE}/${s}`, shared(SDK_SHARE_RANGE)])),

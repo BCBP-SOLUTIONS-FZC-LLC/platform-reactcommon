@@ -161,7 +161,12 @@ export function useApi<T>(
         if (!ctrl.signal.aborted) setState({ data, loading: false });
       },
       (e: unknown) => {
-        if (ctrl.signal.aborted || e instanceof AbortedError) return;
+        // Only this run's own abort is silent. An AbortedError from elsewhere ends the load like any error.
+        if (ctrl.signal.aborted) return;
+        if (e instanceof AbortedError) {
+          setState((s) => ({ ...(s.data !== undefined ? { data: s.data } : {}), loading: false }));
+          return;
+        }
         setState(isApiError(e) ? { error: e, loading: false } : { thrown: { e }, loading: false });
       },
     );

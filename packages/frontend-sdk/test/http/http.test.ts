@@ -107,6 +107,19 @@ describe('URL', () => {
     await expect(api.get('/a/../b' as never)).rejects.toThrow(TypeError);
     expect(calls).toHaveLength(0);
   });
+
+  it("refuses '.' and '..' as param values, which URL parsing would resolve as path steps", async () => {
+    setTokenSource(tokens());
+    const api = createApiClient();
+    await expect(api.post('/tenders/:id/approve', { params: { id: '..' } })).rejects.toThrow("must not be '.' or '..'");
+    await expect(api.get('/tenders/:id/bids', { params: { id: '.' } })).rejects.toThrow(TypeError);
+    await expect(api.get('/a/:x/:y', { params: { x: '..', y: '..' } })).rejects.toThrow(TypeError);
+    expect(calls).toHaveLength(0); // nothing sent, so no token went to another endpoint
+    // Encoded or longer dot strings stay one literal segment.
+    await api.get('/tenders/:id', { params: { id: '%2e%2e' } });
+    await api.get('/tenders/:id', { params: { id: '...' } });
+    expect(calls.map((c) => c.url.pathname)).toEqual(['/api/tenders/%252e%252e', '/api/tenders/...']);
+  });
 });
 
 describe('request headers (fixed pipeline)', () => {
@@ -258,6 +271,79 @@ describe('failures', () => {
     const e = await createApiClient().get('/slow', { timeoutMs: 20, retry: false }).catch((x: unknown) => x);
     expect(e).toBeInstanceOf(TimeoutError);
     expect((e as TimeoutError).timeoutMs).toBe(20);
+  });
+
+  describe('while the body is read', () => {
+    // A body that streams until the request's signal aborts it, as a browser's does.
+    const stalledBody = (_u: URL, init: RequestInit) =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            init.signal!.addEventListener('abort', () => c.error(init.signal!.reason));
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+
+    it('the deadline gives a TimeoutError, not a raw DOMException', async () => {
+      handler = stalledBody;
+      const e = await createApiClient().get('/slow-body', { timeoutMs: 20, retry: false }).catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(TimeoutError);
+      expect((e as TimeoutError).timeoutMs).toBe(20);
+    });
+
+    it('a caller abort gives an AbortedError', async () => {
+      handler = stalledBody;
+      const controller = new AbortController();
+      const p = createApiClient().get('/slow-body', { signal: controller.signal, dedupe: false });
+      await vi.waitFor(() => expect(calls).toHaveLength(1));
+      controller.abort();
+      await expect(p).rejects.toBeInstanceOf(AbortedError);
+    });
+
+    it('a dropped connection gives a NetworkError; a problem body still parses', async () => {
+      handler = () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.error(new TypeError('network error'));
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      await expect(createApiClient().get('/a', { retry: false })).rejects.toBeInstanceOf(NetworkError);
+      handler = () => problem(404);
+      await expect(createApiClient().get('/a')).rejects.toBeInstanceOf(ProblemError);
+    });
+  });
+
+  describe('without AbortSignal.any (Safari < 17.4)', () => {
+    const any = AbortSignal.any;
+    beforeEach(() => {
+      (AbortSignal as { any?: unknown }).any = undefined;
+    });
+    afterEach(() => {
+      AbortSignal.any = any;
+    });
+
+    it('still succeeds, times out and honours the caller signal', async () => {
+      const api = createApiClient();
+      expect((await api.get('/a', { signal: new AbortController().signal })).data).toEqual({ ok: true });
+
+      handler = (_u, init) => new Promise((_r, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason)));
+      const t = await api.get('/slow', { signal: new AbortController().signal, timeoutMs: 20, retry: false }).catch((x: unknown) => x);
+      expect(t).toBeInstanceOf(TimeoutError);
+
+      const controller = new AbortController();
+      const p = api.get('/slow', { signal: controller.signal, dedupe: false });
+      await vi.waitFor(() => expect(calls).toHaveLength(3));
+      controller.abort();
+      await expect(p).rejects.toBeInstanceOf(AbortedError);
+
+      const done = new AbortController();
+      done.abort();
+      await expect(api.get('/a', { signal: done.signal, dedupe: false })).rejects.toBeInstanceOf(AbortedError);
+    });
   });
 
   it("throws AbortedError when the caller aborts, and doesn't retry", async () => {
@@ -441,6 +527,21 @@ describe('GET deduplication', () => {
     c4.abort();
     await expect(Promise.all([p3, p4])).rejects.toBeInstanceOf(AbortedError);
     expect(fetchSignal.aborted).toBe(true);
+  });
+
+  it('starts afresh when a GET for the same key arrives right after every subscriber aborted', async () => {
+    // StrictMode remounts, reload() while loading, deps A→B→A: the new call must not join the dead one.
+    handler = (_u, init) =>
+      calls.length === 1 ? new Promise((_r, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason))) : json({ ok: 2 });
+    const api = createApiClient();
+    const c1 = new AbortController();
+    const p1 = api.get('/a', { signal: c1.signal });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    c1.abort();
+    const p2 = api.get('/a', { signal: new AbortController().signal });
+    await expect(p1).rejects.toBeInstanceOf(AbortedError);
+    expect((await p2).data).toEqual({ ok: 2 });
+    expect(calls).toHaveLength(2);
   });
 });
 
