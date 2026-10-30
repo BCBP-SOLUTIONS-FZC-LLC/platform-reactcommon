@@ -189,7 +189,7 @@ export function sanitizeFields(f: Record<string, unknown>): Record<string, unkno
 #### `/config`
 
 ```ts
-export const RuntimeConfigSchema: z.ZodType<RuntimeConfig>; // .strict(): unknown keys rejected
+export const RuntimeConfigSchema: z.ZodMiniType<RuntimeConfig>; // zod/mini (≈10 KB gz vs ≈90 KB for classic zod); strict: unknown keys rejected
 export interface RuntimeConfig {
   readonly api: { readonly baseUrl: string /* must be same-origin path, e.g. '/api' */;
                   readonly timeoutMs: number /* default 35000 */;
