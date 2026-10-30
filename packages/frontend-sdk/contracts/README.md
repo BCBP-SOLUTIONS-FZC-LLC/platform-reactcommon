@@ -25,3 +25,5 @@ fails when they differ from what the pinned sources generate.
 Sources are read from checkouts at the paths in `sources.json`: the `platform` group under
 `PLATFORM_ROOT` (default: two levels above this repo, the workspace root), the `iam` group under
 `IAM_REPOS_DIR` (default: `../../../XPertPMS/IAM`).
+
+Two docs pages are generated from these files: `docs/observability/metric-registry.md` and `docs/problem-details/registry.md`. After `pnpm contracts:sync`, run `pnpm docs:sync` as well (CI's `docs:check` fails otherwise).

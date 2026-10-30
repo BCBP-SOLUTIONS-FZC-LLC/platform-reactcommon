@@ -1,0 +1,42 @@
+graph TD
+    subgraph apps["Consumers  —  not in this repo's packages"]
+        shell["Shell (app.bcbpsolutions.com)<br/>bootstrap: core → config → telemetry → auth → context → i18n → manifest<br/>PlatformProvider · RemoteBoundary · its own screens and IAM ports<br/>(examples/shell)"]
+        remote["Remotes (Module Federation)<br/>import SDK subpaths, never bundle them (import: false)<br/>MFEErrorBoundary · useApi · useT · getServiceMeter<br/>(examples/remote-tenders)"]
+    end
+
+    subgraph tooling["Build-time packages"]
+        preset["@platform/webpack-preset<br/>platformShared · sharedFor · containerName<br/>platformWebpackConfig (Trusted Types, no eval, hidden maps)"]
+        eslint["@platform/eslint-plugin<br/>7 rules + configs.recommended"]
+    end
+
+    subgraph sdk["@platform/frontend-sdk  —  17 subpaths, no root barrel ('.' throws)"]
+        L5["L5  /react (hooks, boundaries, PlatformProvider)  ·  /testing (dev only)"]
+        L4["L4  /auth (Keycloak OIDC, PKCE)  ·  /mfe (manifest, loadRemote, app updates)  ·  /nav"]
+        L3["L3  /http (ApiClient)  ·  /flags  ·  /i18n"]
+        L2["L2  /tracing  ·  /logging  ·  /metrics  (the only OpenTelemetry users)"]
+        L1["L1  /config (runtime.json, zod)  ·  /security (DOMPurify, Trusted Types)  ·  /storage"]
+        L0["L0  /core (identity, consent, session id, sanitize)  ·  /problem (RFC 9457)  ·  /authz (pure)"]
+        internal["src/internal  —  PlatformRuntime registry · runtime events · instrument port<br/>batcher · online · redirect · locale · generated contracts (not exported)"]
+    end
+
+    subgraph contracts["Generated contracts  —  packages/frontend-sdk/contracts/"]
+        gen["registry vocabulary · metric registry · problem types · headers · redaction<br/>gateway deny codes · PUB-1 / P-35 cases · shared fixtures<br/>from pinned gincommon, fastapicommon, interop-tests and IAM commits"]
+    end
+
+    shell --> L5
+    remote --> L5
+    remote --> L3
+    shell -. build .-> preset
+    remote -. build .-> preset
+    shell -. lint .-> eslint
+    remote -. lint .-> eslint
+    L5 --> L4 --> L3 --> L2 --> L1 --> L0
+    L0 --> internal
+    L1 --> internal
+    L2 --> internal
+    L3 --> internal
+    L4 --> internal
+    L5 --> internal
+    internal --> gen
+    preset -. generated SDK facts .-> sdk
+    eslint -. generated SDK facts + forbidden headers .-> gen

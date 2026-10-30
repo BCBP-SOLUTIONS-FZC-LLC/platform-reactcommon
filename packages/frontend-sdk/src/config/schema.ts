@@ -76,7 +76,7 @@ export interface RuntimeConfig {
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
-/** An http origin on a local host: accepted only on a local or dev page (checked by setRuntimeConfig and loadRuntimeConfig). */
+/** An http origin on a local host: accepted only on a local, dev or test page (checked by setRuntimeConfig and loadRuntimeConfig). */
 export function isLocalHttpOrigin(origin: string): boolean {
   try {
     const url = new URL(origin);
@@ -99,7 +99,7 @@ const checkedString = (ok: (v: string) => boolean, message: (v: string) => strin
 
 /**
  * An exact origin (scheme://host[:port], nothing else): https, or http on a local host only. The
- * schema cannot know the page's environment: http on a local host is refused outside local and dev
+ * schema cannot know the page's environment: http on a local host is refused outside local, dev and test
  * when the config is loaded or set (runtime-config.ts).
  */
 const exactOrigin = checkedString(

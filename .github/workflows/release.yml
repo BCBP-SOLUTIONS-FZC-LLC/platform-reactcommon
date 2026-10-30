@@ -12,8 +12,9 @@
 #            └─► validate-contracts ──────────────────────────┘
 #
 # One version for the three packages (changesets `fixed` group). To release:
-#   1. a release PR runs `pnpm changeset version` (bumps all three packages, writes each
-#      CHANGELOG.md section, consumes .changeset/*.md) and merges to main;
+#   1. a release PR runs `pnpm run version-packages` (changeset version: bumps all three packages and
+#      consumes .changeset/*.md; exports:sync: the generated SDK version), turns [Unreleased] in
+#      CHANGELOG.md into the version's section, and merges to main;
 #   2. tag the merge commit vX.Y.Z (the version it set) and push the tag.
 #
 # Nothing is published until every gate has passed on the exact tarballs that ship: package packs
@@ -74,8 +75,8 @@ jobs:
       - name: Verify release tag (dispatch ref, checkout, on main, versions)
         run: bash .github/scripts/verify-release-tag.sh
 
-      # Each package's CHANGELOG.md has the tag's section (written by `pnpm changeset version`).
-      - name: Verify CHANGELOG entries exist
+      # CHANGELOG.md has the tag's section (or, for a pre-release tag, its base version's).
+      - name: Verify CHANGELOG entry exists
         run: bash .github/scripts/verify-changelog-entry.sh
 
   # ── same as ci.yml ────────────────────────────────────────────────────────
@@ -263,7 +264,7 @@ jobs:
           persist-credentials: false
           token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
-      - name: Extract release notes from the CHANGELOGs
+      - name: Extract release notes from CHANGELOG.md
         env:
           REPO: ${{ github.repository }}
         run: bash .github/scripts/extract-release-notes.sh

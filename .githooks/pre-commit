@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Local commit gates: lockfile drift, action SHA pins, the generated files (exports map, SDK facts
+# in the tooling packages, docs and the metric-registry inventory), lint, typecheck and the
+# dependency rules. Tests, the build, the API reports and the example checks are slower and run
+# in CI (validate-test.yml, validate-quality.yml) and in `pnpm verify`.
+# Install with `pnpm run install-hooks` (or `pnpm run setup`) (once per clone). Bypass in an emergency with `git commit --no-verify`.
+set -euo pipefail
+
+echo "[pre-commit] checking pnpm-lock.yaml..."
+pnpm install --lockfile-only --silent
+if ! git diff --quiet -- pnpm-lock.yaml; then
+  echo "[pre-commit] pnpm-lock.yaml was stale for package.json — review and stage it, then commit again" >&2
+  exit 1
+fi
+
+echo "[pre-commit] checking action SHA pins..."
+bash .github/scripts/check-action-pins.sh
+
+echo "[pre-commit] checking generated exports and SDK facts..."
+if ! pnpm -s exports:check; then
+  echo "[pre-commit] exports or SDK facts are stale — run 'pnpm exports:sync' and stage them" >&2
+  exit 1
+fi
+
+echo "[pre-commit] checking generated docs and the metric-registry inventory..."
+if ! pnpm -s docs:check; then
+  echo "[pre-commit] generated docs are stale — run 'pnpm docs:sync' and stage them" >&2
+  exit 1
+fi
+
+echo "[pre-commit] running lint..."
+pnpm -s lint
+
+echo "[pre-commit] running typecheck..."
+pnpm -s typecheck
+
+echo "[pre-commit] checking dependency rules..."
+pnpm -s depcruise

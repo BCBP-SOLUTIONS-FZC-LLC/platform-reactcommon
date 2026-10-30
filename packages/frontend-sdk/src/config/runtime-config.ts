@@ -29,12 +29,15 @@ function deepFreeze<T>(value: T): T {
 
 /**
  * http origins on a local host (a dev setup) are accepted only when the page identity's
- * environment is local or dev; anywhere else (or before initializeCore) a leftover dev entry
+ * environment is local, dev or test (CI and integration runs against local servers); anywhere else (or before initializeCore) a leftover dev entry
  * would weaken a deployed config, so it is an issue.
  */
+/** Environments whose pages may talk to http servers on a local host; staging and prod never do. */
+const LOCAL_HTTP_ENVIRONMENTS: ReadonlySet<string> = new Set(['local', 'dev', 'test']);
+
 function environmentIssues(c: RuntimeConfig): { path: string; message: string }[] {
   const env = getIdentity()?.environment;
-  if (env === 'local' || env === 'dev') return [];
+  if (env !== undefined && LOCAL_HTTP_ENVIRONMENTS.has(env)) return [];
   const origins: [string, string][] = [
     ['auth.idpOrigin', c.auth.idpOrigin],
     ...c.api.propagationAllowlist.map((o, i): [string, string] => [`api.propagationAllowlist.${i}`, o]),
@@ -44,7 +47,7 @@ function environmentIssues(c: RuntimeConfig): { path: string; message: string }[
     .filter(([, o]) => isLocalHttpOrigin(o))
     .map(([path, o]) => ({
       path,
-      message: `http origins are allowed only in the local and dev environments (page environment: ${env ?? 'unknown, initializeCore not called'}), got ${JSON.stringify(o)}`,
+      message: `http origins are allowed only in the local, dev and test environments (page environment: ${env ?? 'unknown, initializeCore not called'}), got ${JSON.stringify(o)}`,
     }));
 }
 
@@ -108,7 +111,7 @@ function parseConfig(raw: unknown, source: string): RuntimeConfig {
  * Shell only: fetches and validates the runtime config (no HTTP cache: `cache: 'no-cache'`
  * revalidates with the ETag). Any failure (network, HTTP status, JSON, schema) is a
  * RuntimeConfigError; the shell shows its static "unavailable" page. As for setRuntimeConfig, an
- * http origin on a local host is an error unless initializeCore set the local or dev environment.
+ * http origin on a local host is an error unless initializeCore set the local, dev or test environment.
  */
 export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSignal }): Promise<RuntimeConfig> {
   const url = opts?.url ?? DEFAULT_URL;
@@ -143,7 +146,7 @@ export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSig
 
 /**
  * Shell only: makes `c` the page's config, validated and deep-frozen. Call initializeCore first:
- * http origins on a local host are accepted only when the page environment is local or dev. Set once: setting an equal
+ * http origins on a local host are accepted only when the page environment is local, dev or test. Set once: setting an equal
  * config again is a no-op, a different one throws.
  */
 export function setRuntimeConfig(c: RuntimeConfig): void {

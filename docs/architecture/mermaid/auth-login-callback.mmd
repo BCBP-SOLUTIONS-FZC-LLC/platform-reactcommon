@@ -1,0 +1,31 @@
+sequenceDiagram
+    autonumber
+    participant S as Shell
+    participant P as OIDC provider (/auth)
+    participant SS as sessionStorage
+    participant KC as Keycloak (auth.bcbpsolutions.com)
+    participant R as PlatformRuntime
+
+    S->>P: login({ workspace, returnUrl })
+    P->>P: realm checked (^[a-z0-9][a-z0-9-]{0,62}$)<br/>state, nonce: 128 bit · code_verifier: 32 bytes · challenge S256
+    P->>SS: pending-login record per state:<br/>{ state, codeVerifier, nonce, workspace, returnUrl (safe or '/'), reason, createdAt }
+    P->>S: beforeRedirect listeners (reason: login · switch · step-up · restore)
+    P->>KC: top-level redirect: /realms/{realm}/protocol/openid-connect/auth<br/>response_type=code · client_id · redirect_uri · scope · S256 · prompt? · max_age? · login_hint?
+    KC-->>S: redirect_uri ?code&state&iss (or ?error)
+    S->>P: init() on the callback path
+    P->>SS: take the record for state (deleted before the exchange, 10-minute expiry)
+    alt unknown or expired state
+        P->>S: URL → '/', warn, continue as a normal load (silent restore)
+    else iss ≠ record's issuer (RFC 9207)
+        P-->>S: anonymous 'none' (error log), the code is never exchanged
+    else ?error=login_required | interaction_required | consent_required on a restore
+        P-->>S: anonymous 'login-required' + the record's workspace
+    else ?code
+        P->>KC: POST /token grant_type=authorization_code · code_verifier · redirect_uri · client_id (15 s)
+        KC-->>P: access_token · id_token · refresh_token · expires_in · refresh_expires_in
+        P->>P: ID token: iss · aud ∋ client_id · azp · nonce · exp/iat ±60 s<br/>(no signature check: it came straight from the token endpoint over TLS)
+        P->>R: storageNamespace = realm, or trial:{tenant_id} (trial realm, else 'anon' + error log)
+        P->>SS: clear the loop guard · localStorage: clear the signed-out mark
+        P-->>S: authenticated { user, workspace, expiresAt }, URL → record's returnUrl
+    end
+    Note over P: tokens live only in this closure: never in storage, a global or the BroadcastChannel

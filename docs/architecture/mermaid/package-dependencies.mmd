@@ -1,0 +1,91 @@
+%% Generated from packages/frontend-sdk/subpaths.json by `pnpm docs:sync`. Do not edit.
+graph BT
+    subgraph L0["Layer 0"]
+        sp_core["/core"]
+        sp_problem["/problem"]
+        sp_authz["/authz"]
+    end
+    subgraph L1["Layer 1"]
+        sp_config["/config"]
+        sp_security["/security"]
+        sp_storage["/storage"]
+    end
+    subgraph L2["Layer 2"]
+        sp_tracing["/tracing"]
+        sp_logging["/logging"]
+        sp_metrics["/metrics"]
+    end
+    subgraph L3["Layer 3"]
+        sp_http["/http"]
+        sp_flags["/flags"]
+        sp_i18n["/i18n"]
+    end
+    subgraph L4["Layer 4"]
+        sp_auth["/auth"]
+        sp_mfe["/mfe"]
+        sp_nav["/nav"]
+    end
+    subgraph L5["Layer 5"]
+        sp_react["/react"]
+        sp_testing["/testing"]
+    end
+    internal["src/internal<br/>(runtime registry · events · generated contracts)"]
+    sp_config --> sp_core
+    sp_security --> sp_core
+    sp_storage --> sp_core
+    sp_tracing --> sp_core
+    sp_tracing --> sp_config
+    sp_logging --> sp_core
+    sp_logging --> sp_config
+    sp_metrics --> sp_core
+    sp_metrics --> sp_config
+    sp_http --> sp_core
+    sp_http --> sp_config
+    sp_http --> sp_problem
+    sp_http --> sp_tracing
+    sp_http --> sp_logging
+    sp_flags --> sp_core
+    sp_flags --> sp_config
+    sp_i18n --> sp_core
+    sp_i18n --> sp_problem
+    sp_i18n --> sp_config
+    sp_auth --> sp_core
+    sp_auth --> sp_config
+    sp_auth --> sp_logging
+    sp_auth --> sp_storage
+    sp_mfe --> sp_core
+    sp_mfe --> sp_config
+    sp_mfe --> sp_flags
+    sp_mfe --> sp_tracing
+    sp_mfe --> sp_logging
+    sp_nav --> sp_core
+    sp_nav --> sp_config
+    sp_react --> sp_core
+    sp_react --> sp_config
+    sp_react --> sp_tracing
+    sp_react --> sp_logging
+    sp_react --> sp_metrics
+    sp_react --> sp_problem
+    sp_react --> sp_http
+    sp_react --> sp_flags
+    sp_react --> sp_i18n
+    sp_react --> sp_auth
+    sp_react --> sp_authz
+    sp_react --> sp_mfe
+    sp_react --> sp_nav
+    sp_react --> sp_storage
+    sp_react --> sp_security
+    sp_testing -.->|"any subpath (dev only)"| sp_react
+    pkg_react(["react"])
+    sp_react -.-> pkg_react
+    sp_testing -.-> pkg_react
+    pkg_react_dom(["react-dom"])
+    sp_react -.-> pkg_react_dom
+    sp_testing -.-> pkg_react_dom
+    pkg__opentelemetry_(["@opentelemetry/*"])
+    sp_tracing -.-> pkg__opentelemetry_
+    sp_logging -.-> pkg__opentelemetry_
+    sp_metrics -.-> pkg__opentelemetry_
+    sp_testing -.-> pkg__opentelemetry_
+    classDef pkg fill:#eef,stroke:#88a
+    class pkg_react,pkg_react_dom,pkg__opentelemetry_ pkg

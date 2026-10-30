@@ -287,6 +287,7 @@ describe('export queue', () => {
    */
   function limitedExporter(limit: number) {
     const batches: ReadableSpan[][] = [];
+    const started: ReadableSpan[][] = [];
     let pending = 0;
     let rejected = 0;
     const e: SpanExporter = {
@@ -296,6 +297,7 @@ describe('export queue', () => {
           cb({ code: 1, error: new Error('Concurrent export limit reached') });
           return;
         }
+        started.push(batch);
         pending++;
         setTimeout(() => {
           pending--;
@@ -306,7 +308,7 @@ describe('export queue', () => {
       },
       shutdown: async () => {},
     };
-    return { e, batches, rejected: () => rejected };
+    return { e, batches, started, rejected: () => rejected };
   }
 
   const filler = 'x'.repeat(200);
@@ -318,7 +320,7 @@ describe('export queue', () => {
   it('when the page is hidden, delivers a backed-up queue without exceeding the exporter concurrency limit', async () => {
     const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
     vi.stubGlobal('document', doc);
-    const limited = limitedExporter(2); // the Batcher's in-flight limit: the flush alone never needs more
+    const limited = limitedExporter(3); // the keepalive request plus the Batcher's two
     setTracingInternalsForTests({ exporter: () => limited.e, queue: { maxQueueSize: 2048, maxExportBatchSize: 50, scheduledDelayMillis: 60_000 } });
     start();
     queueBigSpans(300); // about 300 KB: two batches go out, the rest waits behind them
@@ -326,7 +328,26 @@ describe('export queue', () => {
     doc.dispatchEvent(new Event('visibilitychange'));
     await vi.waitFor(() => expect(spans()).toHaveLength(300));
     expect(limited.rejected()).toBe(0);
-    expect(spans().map((x) => x.name)).toEqual(names(0, 300));
+    expect(spans().map((x) => x.name).sort()).toEqual(names(0, 300).sort()); // every span, once
+    expect(tracingStats()).toMatchObject({ exported: 300, exportFailures: 0, droppedOnUnload: 0 });
+  });
+
+  it('when the page is hidden, sends the newest spans first in one keepalive-sized request (a closing tab keeps them)', async () => {
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+    vi.stubGlobal('document', doc);
+    const limited = limitedExporter(EXPORTER_CONCURRENCY);
+    setTracingInternalsForTests({ exporter: () => limited.e, queue: { maxQueueSize: 2048, maxExportBatchSize: 512, scheduledDelayMillis: 60_000 } });
+    start();
+    queueBigSpans(300); // about 300 KB, under the batch size: all still queued
+    expect(limited.started).toHaveLength(0);
+    doc.visibilityState = 'hidden'; // a tab close fires this before pagehide; only keepalive requests outlive it
+    doc.dispatchEvent(new Event('visibilitychange'));
+    const [first] = limited.started as [ReadableSpan[]];
+    expect(JsonTraceSerializer.serializeRequest(first)!.byteLength).toBeLessThanOrEqual(KEEPALIVE_MAX_BYTES);
+    expect(first.length).toBeGreaterThan(10);
+    expect(first.map((x) => x.name)).toEqual(names(300 - first.length, 300));
+    await vi.waitFor(() => expect(spans()).toHaveLength(300)); // the rest still arrives while the page stays
+    expect(limited.rejected()).toBe(0);
     expect(tracingStats()).toMatchObject({ exported: 300, exportFailures: 0, droppedOnUnload: 0 });
   });
 
@@ -334,7 +355,7 @@ describe('export queue', () => {
     const target = new EventTarget();
     vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
     vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
-    const limited = limitedExporter(3);
+    const limited = limitedExporter(EXPORTER_CONCURRENCY);
     setTracingInternalsForTests({ exporter: () => limited.e });
     start();
     const processor = (getRuntime().tracing as { processor: DropOldestBatchSpanProcessor }).processor;
@@ -364,14 +385,14 @@ describe('export queue', () => {
     vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
     vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
     vi.stubGlobal('document', target);
-    expect(EXPORTER_CONCURRENCY).toBe(3); // what the production OTLP exporter is given
-    const limited = limitedExporter(3);
+    expect(EXPORTER_CONCURRENCY).toBe(4); // what the production OTLP exporter is given
+    const limited = limitedExporter(4);
     setTracingInternalsForTests({ exporter: () => limited.e, queue: { maxQueueSize: 2048, maxExportBatchSize: 20, scheduledDelayMillis: 60_000 } });
     start();
     for (let i = 0; i < 19; i++) getTracer('t').startSpan(`a${i}`).end();
     for (let i = 0; i < 19; i++) getTracer('t').startSpan(`b${i}`).end(); // the 20th span sent a full batch; 18 wait
     target.visibilityState = 'hidden';
-    target.dispatchEvent(new Event('visibilitychange')); // both send slots busy now
+    target.dispatchEvent(new Event('visibilitychange')); // the keepalive request and both send slots busy now
     getTracer('t').startSpan('last').end();
     target.dispatchEvent(new Event('pagehide'));
     const stats = tracingStats()!;

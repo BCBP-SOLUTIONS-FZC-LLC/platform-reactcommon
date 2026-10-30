@@ -203,7 +203,7 @@ describe('http origins on a local host', () => {
   };
   const LOCAL_PATHS = ['auth.idpOrigin', 'api.propagationAllowlist.1', 'remotes.allowedOrigins.0'];
 
-  it.each(['prod', 'staging', 'test'] as const)('are refused by setRuntimeConfig in %s', (env) => {
+  it.each(['prod', 'staging'] as const)('are refused by setRuntimeConfig in %s', (env) => {
     identity(env);
     for (const origin of ['http://localhost:8080', 'http://127.0.0.1', 'http://[::1]:3000']) {
       const err = (() => {
@@ -232,13 +232,19 @@ describe('http origins on a local host', () => {
     expect((err as RuntimeConfigError).issues.map((i) => i.path)).toEqual(LOCAL_PATHS);
   });
 
-  it.each(['local', 'dev'] as const)('are accepted in %s', async (env) => {
+  it.each(['local', 'dev', 'test'] as const)('are accepted in %s', async (env) => {
     identity(env);
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify(withLocal('http://localhost:8080')))));
     const loaded = await loadRuntimeConfig();
     setRuntimeConfig(loaded);
     expect(getConfig().auth.idpOrigin).toBe('http://localhost:8080');
     expect(getConfig().remotes.allowedOrigins).toEqual(['http://localhost:8080']);
+  });
+
+  it('are accepted in test as platform-interop-tests pair 4 sets them (ts-probe against local servers)', () => {
+    identity('test');
+    setRuntimeConfig(withPatch('api.propagationAllowlist', ['http://localhost:18082']) as unknown as RuntimeConfig);
+    expect(getConfig().api.propagationAllowlist).toEqual(['http://localhost:18082']);
   });
 
   it('do not affect https origins in prod', () => {

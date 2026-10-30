@@ -1,0 +1,21 @@
+flowchart TD
+    html["index.html (external scripts only)"] --> idx["index.ts: import('./bootstrap')<br/>(the async boundary Module Federation needs)"]
+    idx --> tt["1. installTrustedTypesPolicy()  —  /security"]
+    tt --> core["2. initializeCore({ serviceName, domain: 'portal', environment, buildVersion })<br/>build-time constants, validated against the registry vocabulary"]
+    core -->|throws| fatal["static 'unavailable' page, console only"]
+    core --> cfg["3. loadRuntimeConfig() → GET /config/runtime.json (no-cache) → zod (strict) → freeze<br/>setRuntimeConfig(cfg)"]
+    cfg -->|fails| fatal
+    cfg --> consent["4. setConsentProvider(cmp)  —  before any export"]
+    consent --> tel["5. initializeTracing · initializeLogging · initializeMetrics → /otel<br/>installGlobalErrorHandlers() · startWebVitals()  (never fatal)"]
+    tel --> flags["6. setFlagProvider(runtimeConfigFlagProvider())"]
+    flags --> auth["7. idp = createOidcProvider(cfg.auth, workspaceResolver)<br/>setTokenSource(initializeAuth(idp)) · state = await idp.init()"]
+    auth -->|"no tokens + cached workspace"| restore["one prompt=none redirect per tab<br/>(init never settles; the page unloads)"]
+    auth -->|"anonymous 'signed-out'"| signedout["signed-out screen; login only on click"]
+    auth -->|"anonymous 'login-required'"| login1["idp.login({ workspace: state.workspace })"]
+    auth -->|"anonymous 'none'"| choose["chooseWorkspace() ?? identifier-first screen → idp.login()"]
+    auth -->|"authenticated"| wrong{"isWrongWorkspace?"}
+    wrong -->|yes| wrongscreen["wrong-workspace screen (sign out / switch); stop"]
+    wrong -->|no| ctx["8. sessionContextSource.load()  (IAM P-35; failure → undefined: deny-all, no tenant flags)<br/>setAuthorizer(roleMapAuthorizer) · setAuthzSubject · rememberWorkspace (URL → /t/&lt;slug&gt;/)<br/>setFlagProvider(sessionContextFlagProvider) · await initializeI18n()"]
+    ctx --> manifest["9. loadManifest() → GET /remotes/manifest.json · startVersionPolling()<br/>(failure: every remote slot shows its fallback)"]
+    manifest --> render["10. createRoot().render(&lt;PlatformProvider shell&gt;&lt;App/&gt;)<br/>routes render &lt;RemoteBoundary&gt; lazily"]
+    render --> expired["idp.subscribe: 'expired' → session-ended dialog → signInAgain()"]

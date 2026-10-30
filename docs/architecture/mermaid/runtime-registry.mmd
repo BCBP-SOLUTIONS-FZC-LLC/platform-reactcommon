@@ -1,0 +1,30 @@
+graph LR
+    subgraph rt["PlatformRuntime  —  globalThis[Symbol.for('@platform/frontend-sdk')]"]
+        ident["identity · consent · memorySessionId"]
+        cfg["config (deep-frozen runtime.json)"]
+        tel["tracing · logging · metrics · instruments (port)"]
+        page["pageRoute · routeTemplates"]
+        authf["identityProvider · tokenSource · storageNamespace"]
+        az["authorizer · authzSubject · flagProvider"]
+        mf["manifest · remotes (mfe → ownerDomain) · appUpdate"]
+        ui["i18n · navigator · trustedTypesPolicy · readOnlyDenied"]
+        ev["events: i18n · flags · authz · read-only"]
+    end
+
+    core["/core"] -->|writes| ident
+    config["/config"] -->|writes| cfg
+    tracing["/tracing · /logging · /metrics"] -->|writes| tel
+    logging["/logging setRouteTemplate"] -->|writes| page
+    auth["/auth initializeAuth, login"] -->|writes| authf
+    http["/http"] -->|reads token source| authf
+    http -->|"sets readOnlyDenied, emits read-only"| ui
+    storage["/storage"] -->|reads namespace| authf
+    authz["/authz · /flags"] -->|writes, emits| az
+    mfe["/mfe loadManifest"] -->|writes| mf
+    metrics["/metrics"] -->|reads remotes| mf
+    i18n["/i18n"] -->|writes, emits| ui
+    react["/react hooks"] -->|subscribe| ev
+    react -->|read| az
+    react -->|read| authf
+
+    dup["second SDK copy<br/>(a remote that bundled it)"] -.->|"same major: binds to the existing runtime<br/>other major: own runtime + one error log"| rt

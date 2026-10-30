@@ -111,7 +111,7 @@ describe('storage', () => {
     expect(s.get('b')).toBe(2);
   });
 
-  it('a write that fails when storage is full never leaves the older stored value to shadow it', () => {
+  it('a write that fails when storage is full is read back for the page, and keeps the last saved value for a reload', () => {
     storage('tenders').set('draft', 'v1');
     expect(local.getItem('tenant-acme:tenders:draft')).toBe('"v1"');
     local.failWrites = true; // QuotaExceededError from here on
@@ -119,7 +119,7 @@ describe('storage', () => {
     expect(storage('tenders').get('draft')).toBe('v2');
     // A fresh handle in the same page (what a remount sees) reads the new value too.
     expect(storage('tenders').get('draft')).toBe('v2');
-    expect(local.getItem('tenant-acme:tenders:draft')).toBeNull();
+    expect(local.getItem('tenant-acme:tenders:draft')).toBe('"v1"'); // what a reload gets: never neither value
     // remove() and clear() still drop the page-only value.
     storage('tenders').remove('draft');
     expect(storage('tenders').get('draft')).toBeUndefined();

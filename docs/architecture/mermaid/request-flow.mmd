@@ -1,0 +1,38 @@
+sequenceDiagram
+    autonumber
+    participant C as Caller (useApi / ApiClient)
+    participant D as GET dedupe
+    participant X as execute()
+    participant A as attempt()
+    participant T as TokenSource (/auth)
+    participant F as fetch
+    participant P as parseProblemResponse (/problem)
+    participant O as span + instrument port
+
+    C->>D: get('/tenders/:id', { params })
+    Note over D: key = URL + token + headers,<br/>concurrent identical GETs share one call<br/>(aborts only when every subscriber aborts)
+    D->>X: startCall: URL from baseUrl + template,<br/>x-request-id, Idempotency-Key (POST), span "HTTP GET"
+    X->>T: getAccessToken() — same origin only
+    loop attempts (GET/PUT/DELETE, or retry.unsafe): 1 + 2 retries by default
+        X->>A: attempt(token)
+        Note over A: offline → NetworkError(offline) at once<br/>drop FORBIDDEN identity headers (dev: throw)<br/>x-request-id · x-session-id: same origin or allowlist<br/>traceparent: same origin or allowlist<br/>Authorization: same origin only<br/>deadline 35 s (api.timeoutMs)
+        A->>F: fetch(url, headers, signal = caller ∪ timeout)
+        F-->>A: Response / error
+        A-->>X: Response, or TimeoutError / NetworkError / AbortedError
+        alt 401 and not yet refreshed
+            X->>T: newer token? else refresh() (single-flight per tab)
+            T-->>X: new token → retry once (not counted as a retry)<br/>none → onUnauthorized()
+        else 429 / 502 / 503 / 504 or transient error, retryable
+            X->>X: sleep Retry-After (≤ 30 s) or full-jitter backoff min(5 s, 250 ms·2ⁿ)
+        end
+    end
+    alt 2xx
+        X->>O: record(status) · http.response.status_code
+        X-->>C: { data, status, headers, requestId, traceId (X-Trace-ID) }
+    else non-2xx
+        X->>P: parse RFC 9457 body (≤ 1 MiB) or synthesize from status
+        P-->>X: ProblemError
+        X->>O: record(status) · recordError if 5xx<br/>DENY_TENANT_READ_ONLY → runtime.readOnlyDenied
+        X-->>C: throw ProblemError
+    end
+    Note over O: one platform_web_http_client_* observation per logical call<br/>(through the instrument port, a no-op until Tier 1 is bound)

@@ -216,8 +216,8 @@ export function setRuntimeConfig(c: RuntimeConfig): void;   // shell only, deep-
 ```
 
 Every exact origin (`auth.idpOrigin`, `api.propagationAllowlist`, `remotes.allowedOrigins`) is `https:`. An
-`http:` origin on `localhost`, `127.0.0.1` or `[::1]` is accepted only when the page environment is `local`
-or `dev`, checked by `loadRuntimeConfig` and `setRuntimeConfig`; so `initializeCore` runs first, and a
+`http:` origin on `localhost`, `127.0.0.1` or `[::1]` is accepted only when the page environment is `local`,
+`dev` or `test` (CI and integration runs against local servers), checked by `loadRuntimeConfig` and `setRuntimeConfig`; so `initializeCore` runs first, and a
 leftover dev origin in a production `runtime.json` fails the load. `telemetry.enabled: false` (for a
 Collector incident) makes `initializeTracing`, `initializeLogging` and `initializeMetrics` no-ops, errors
 and essential warnings included (the dev console stays); `setRuntimeConfig` runs before them.
@@ -250,10 +250,12 @@ Resource: `service.name`, `service.version`, `service.namespace=<domain>`,
 `deployment.environment.name=<environment>`. **No** `service.instance.id` per browser: it would
 explode series cardinality. Sampler: `ParentBased(TraceIdRatioBased(ratio))`, with ratio ≤ 0 →
 NeverSample and ≥ 1 → AlwaysSample (same as Go `Sampler()`). Exporter failures are swallowed and counted
-in an internal counter; the batch queue is bounded and drops the oldest entries. When the page is hidden the
-whole queue is flushed, two requests at a time, dropping nothing (the page may come back). On `pagehide`
+in an internal counter; the batch queue is bounded and drops the oldest entries. When the page is hidden (it
+may come back, or be closing: `visibilitychange` fires before `pagehide`) the newest queued spans that
+fit go first in one keepalive request, which outlives a closing tab, and the rest are flushed two
+requests at a time, dropping nothing while the page stays. On `pagehide`
 one keepalive request (the browser's budget is about 64 KiB for the whole page) carries the newest queued
-spans that fit in 60 KiB; the rest are counted as dropped (`droppedOnUnload`). The exporter allows three
+spans that fit in 60 KiB; the rest are counted as dropped (`droppedOnUnload`). The exporter allows four
 requests in flight, so that request is never refused behind a hidden-page flush. Span attribute strings and
 recorded error messages are redacted like log strings: sensitive keys, `sanitizeString`, then JWT- and
 Bearer-shaped values (`scrubSecrets` in `/core`).

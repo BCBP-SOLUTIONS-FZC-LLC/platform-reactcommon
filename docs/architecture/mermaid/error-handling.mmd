@@ -1,0 +1,22 @@
+flowchart TD
+    resp["non-2xx Response"] --> parse{"application/problem+json<br/>and ≤ 1 MiB?"}
+    parse -->|yes| pd["ProblemDetails: type · title · status · detail · instance · traceId ·<br/>errorCode · tenantId · timestamp · validationErrors · extensions<br/>typeId = last two path segments of type"]
+    parse -->|no| syn["synthetic problem from typeForStatus(status)<br/>traceId from X-Trace-ID · synthetic: true · raw body never surfaced"]
+    pd --> pe["ProblemError (requestId attached)"]
+    syn --> pe
+    net["fetch failed"] --> ne["NetworkError { offline, requestId }"]
+    to["deadline"] --> te["TimeoutError { timeoutMs, requestId }"]
+    ab["caller aborted"] --> ae["AbortedError (never reported)"]
+
+    pe --> deny{"gatewayDenyCode(e)"}
+    deny -->|DENY_MFA_STALE| stepup["useStepUp → reauthenticate (prompt=login, max_age)"]
+    deny -->|DENY_TENANT_READ_ONLY| ro["runtime.readOnlyDenied → useReadOnly() = true"]
+    deny -->|DENY_MALFORMED_IDENTITY| again["sign in again"]
+    deny -->|DENY_UNRESOLVABLE_SUBJECT| setup["'workspace being set up' → retry 6 s / 12 s / 24 s, never sign out"]
+    deny -->|none| ui
+
+    pe --> ui["useApi → { error } · e.is(PlatformProblemTypes.X)<br/>toFieldErrorMap(e) · problemMessage(e): platform problem.&lt;typeId&gt;[.&lt;errorCode&gt;], else title"]
+    ne --> ui
+    te --> ui
+    ui -->|"rethrown / render error"| mb["MFEErrorBoundary { mfe }<br/>fallback shows traceId / requestId + Try again<br/>API error → warn log · render bug → error log"]
+    other["uncaught error · unhandled rejection"] --> gh["installGlobalErrorHandlers → error log<br/>chunk-load → reload once"]

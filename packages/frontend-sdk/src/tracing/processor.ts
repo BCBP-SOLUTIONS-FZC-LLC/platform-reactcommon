@@ -36,11 +36,11 @@ export const KEEPALIVE_MAX_BYTES = 60 * 1024;
 export const MAX_IN_FLIGHT = 2;
 
 /**
- * The exporter's concurrencyLimit: the Batcher's sends plus the one unload request, which may
- * start while a page-hidden flush still has both of its sends pending (visibilitychange fires
+ * The exporter's concurrencyLimit: the Batcher's sends, the page-hidden keepalive request and the
+ * unload request, which may start while the hidden flush is still pending (visibilitychange fires
  * before pagehide). The OTLP exporter fails an export at once beyond its limit.
  */
-export const EXPORTER_CONCURRENCY = MAX_IN_FLIGHT + 1;
+export const EXPORTER_CONCURRENCY = MAX_IN_FLIGHT + 2;
 
 export class DropOldestBatchSpanProcessor implements SpanProcessor {
   private readonly batcher: Batcher<ReadableSpan>;
@@ -96,8 +96,16 @@ export class DropOldestBatchSpanProcessor implements SpanProcessor {
     return queue.slice(queue.length - lo);
   }
 
-  /** Page hidden (it may come back): sends the whole queue, MAX_IN_FLIGHT requests at a time. */
+  /**
+   * Page hidden: it may come back, or be closing (visibilitychange fires before pagehide). The
+   * newest spans that fit go first in one keepalive request, which outlives a closing tab; the
+   * rest are flushed MAX_IN_FLIGHT requests at a time, which completes while the page stays.
+   */
   flushOnHidden(): void {
+    const queue = this.batcher.takeAll();
+    const first = this.newestThatFit(queue);
+    this.batcher.requeue(queue.slice(0, queue.length - first.length));
+    this.sendOne(first);
     void this.batcher.flush();
   }
 
@@ -111,6 +119,11 @@ export class DropOldestBatchSpanProcessor implements SpanProcessor {
     const queue = this.batcher.takeAll();
     const batch = this.newestThatFit(queue);
     this.stats.droppedOnUnload += queue.length - batch.length;
+    this.sendOne(batch);
+  }
+
+  /** One export outside the Batcher (a keepalive-sized batch), counted like the Batcher's. */
+  private sendOne(batch: ReadableSpan[]): void {
     if (batch.length === 0) return;
     // A throwing exporter rejects the promise (exportWith calls it inside the executor).
     void exportWith<ReadableSpan>(this.exporter)(batch)

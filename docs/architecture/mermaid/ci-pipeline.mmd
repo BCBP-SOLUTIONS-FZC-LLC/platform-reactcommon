@@ -1,0 +1,27 @@
+graph LR
+    subgraph ci["ci.yml  —  every PR (any base) and push to main"]
+        vt["Validate / Test<br/>all tests · coverage ≥ 98% of packages/*/src"]
+        vq["Validate / Quality<br/>hygiene · action pins · lockfile · exports · lint · types ·<br/>build · API reports · depcruise · examples CSP · docs · audit"]
+        vc["Validate / Contracts<br/>contracts:check · metrics:parity"]
+        pk["Package tarballs<br/>build + pnpm pack ×3"]
+        tv["Trivy scan<br/>fs: deps · secrets · config → SARIF + SBOM"]
+        sm["Smoke tests<br/>tarballs in an empty consumer"]
+        io["Cross-language compatibility<br/>interop.yml (pair 4 at this ref)"]
+        ps["PR summary comment"]
+        vt --> tv
+        pk --> tv
+        vt --> sm
+        pk --> sm
+        vt --> io
+        vt & vq & vc & pk & tv & sm & io --> ps
+    end
+
+    subgraph rel["release.yml  —  tag vX.Y.Z (one version, changesets fixed)"]
+        vf["verify: tag on main · versions = tag · CHANGELOG.md section"]
+        gates["same gates as ci.yml, at the tag"]
+        pub["publish: GitHub Release<br/>tarballs · SBOM · checksums.txt + Cosign bundle"]
+        vf --> gates --> pub
+    end
+
+    cs["changelog-check.yml<br/>published package changed → .changeset/*.md + CHANGELOG.md"]
+    rpr["release PR: pnpm changeset version"] --> tag["tag the merge commit"] --> vf

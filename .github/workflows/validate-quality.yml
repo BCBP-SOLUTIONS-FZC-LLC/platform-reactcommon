@@ -54,6 +54,15 @@ jobs:
       - name: Exports check
         run: pnpm exports:check
 
+      # Generated docs (metric registry, problem registry, subpath graph) and ARCHITECTURE.md's
+      # diagram blocks equal their sources (platform-gincommon's inventory drift gate).
+      - name: Docs check
+        run: |
+          if ! pnpm docs:check; then
+            echo "::error file=ARCHITECTURE.md,title=Docs drift::Generated docs or diagram blocks are stale — run 'pnpm docs:sync' and commit."
+            exit 1
+          fi
+
       - name: Lint (ESLint, dependency boundaries, @platform/eslint-plugin on the examples)
         run: pnpm lint
 

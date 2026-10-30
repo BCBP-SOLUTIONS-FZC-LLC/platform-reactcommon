@@ -74,15 +74,16 @@ export function storage(appId: string, o?: { area?: Area }): AppStorage {
   const ns = () => getRuntime().storageNamespace;
   const fullKey = (key: string) => `${ns()}:${appId}:${key}`;
 
+  // The in-page copy first: it only exists while a write to browser storage failed, and it is
+  // newer than whatever browser storage still holds (which a reload then falls back to).
   const read = (k: string): string | null => {
-    const s = browserStorage(area);
+    const kept = memory[area].get(k);
+    if (kept !== undefined) return kept;
     try {
-      const v = s?.getItem(k);
-      if (v !== null && v !== undefined) return v;
+      return browserStorage(area)?.getItem(k) ?? null;
     } catch {
-      // fall through to the in-page copy
+      return null;
     }
-    return memory[area].get(k) ?? null;
   };
   const remove = (k: string) => {
     memory[area].delete(k);
@@ -127,12 +128,8 @@ export function storage(appId: string, o?: { area?: Area }): AppStorage {
         s.setItem(k, text);
         memory[area].delete(k);
       } catch {
-        // read() prefers browser storage: an older value left there would shadow the new one.
-        try {
-          s?.removeItem(k);
-        } catch {
-          // unavailable: nothing there to shadow it
-        }
+        // Storage full (often briefly) or unavailable: the last saved value stays for a reload,
+        // and read() returns this newer one for the rest of the page.
         memory[area].set(k, text);
         warnOnce(`write:${area}`, `${area}Storage is unavailable or full; values are kept for this page only`);
       }
