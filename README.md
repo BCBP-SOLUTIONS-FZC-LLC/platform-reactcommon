@@ -35,6 +35,20 @@ pnpm contracts:sync  # regenerate packages/frontend-sdk/contracts/ from the back
 - **Public API**: `pnpm api` updates `packages/frontend-sdk/api/<subpath>.api.md`; an API change
   needs a changeset (`pnpm changeset`). Versions are `1.0.0-alpha.N` until the first environment.
 
+## Functional areas
+
+The SDK's 17 subpaths fall into seven areas, each with its own page in [`docs/areas/`](docs/areas/README.md) (recorded as `area` in `packages/frontend-sdk/subpaths.json`):
+
+| Area | Subpaths |
+|---|---|
+| [Foundation](docs/areas/foundation.md) | `/core`, `/config`, `/problem` |
+| [Observability](docs/areas/observability.md) | `/tracing`, `/logging`, `/metrics` |
+| [Data access](docs/areas/data-access.md) | `/http` |
+| [Identity & access](docs/areas/identity-access.md) | `/auth`, `/authz`, `/storage` |
+| [Micro-frontend platform](docs/areas/mfe-platform.md) | `/mfe`, `/flags`, `/nav` (+ `@platform/webpack-preset`) |
+| [UI support](docs/areas/ui-support.md) | `/i18n`, `/security` |
+| [Developer surface](docs/areas/developer-surface.md) | `/react`, `/testing` (+ `@platform/eslint-plugin`) |
+
 ## CI and releases
 
 `.github/` mirrors platform-gincommon's pipeline (same job names and gates; the image jobs map to the

@@ -48,12 +48,55 @@ function environmentIssues(c: RuntimeConfig): { path: string; message: string }[
     }));
 }
 
+/** The fields of a zod issue the messages below read. */
+interface Issue {
+  code: string;
+  message: string;
+  path: PropertyKey[];
+  keys?: string[];
+  expected?: string;
+  minimum?: number | bigint;
+  maximum?: number | bigint;
+  inclusive?: boolean;
+  origin?: string;
+  values?: unknown[];
+}
+
+/**
+ * zod/mini ships no default messages (every built-in issue says "Invalid input"), so the built-in
+ * ones are worded here from the issue's own fields. Messages the schema sets itself are kept.
+ */
+export function describeIssue(i: Issue): string {
+  if (i.message !== 'Invalid input') return i.message;
+  const count = (n: number | bigint | undefined, what: string) => `${n} ${what}${Number(n) === 1 ? '' : 's'}`;
+  switch (i.code) {
+    case 'unrecognized_keys':
+      return `unknown key${(i.keys?.length ?? 0) === 1 ? '' : 's'} ${(i.keys ?? []).map((k) => JSON.stringify(k)).join(', ')}`;
+    case 'invalid_type':
+      return `expected ${i.expected === 'int' ? 'an integer' : `a ${i.expected}`}`;
+    case 'too_small':
+      if (i.origin === 'array') return `must have at least ${count(i.minimum, 'item')}`;
+      if (i.origin === 'string') return `must have at least ${count(i.minimum, 'character')}`;
+      return `must be ${i.inclusive === false ? '>' : '≥'} ${i.minimum}`;
+    case 'too_big':
+      if (i.origin === 'array') return `must have at most ${count(i.maximum, 'item')}`;
+      if (i.origin === 'string') return `must have at most ${count(i.maximum, 'character')}`;
+      return `must be ${i.inclusive === false ? '<' : '≤'} ${i.maximum}`;
+    case 'invalid_value':
+      return `must be one of ${(i.values ?? []).map((v) => JSON.stringify(v)).join(', ')}`;
+    case 'invalid_union':
+      return 'must be a boolean, a string or a finite number';
+    default:
+      return i.message;
+  }
+}
+
 /** Validates `raw` against the schema and the page's environment; issues name every offending key path. */
 function parseConfig(raw: unknown, source: string): RuntimeConfig {
   const result = RuntimeConfigSchema.safeParse(raw);
   const issues = result.success
     ? environmentIssues(result.data)
-    : result.error.issues.map((i) => ({ path: i.path.map(String).join('.'), message: i.message }));
+    : result.error.issues.map((i) => ({ path: i.path.map(String).join('.'), message: describeIssue(i as Issue) }));
   if (result.success && issues.length === 0) return result.data;
   throw new RuntimeConfigError(
     `${source} is invalid: ${issues.map((i) => `${i.path || '(root)'}: ${i.message}`).join('; ')}`,
