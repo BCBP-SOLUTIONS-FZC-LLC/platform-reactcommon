@@ -1,0 +1,41 @@
+{
+  "name": "platform-reactcommon",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r typecheck",
+    "lint": "eslint .",
+    "depcruise": "depcruise packages/frontend-sdk/src --config .dependency-cruiser.cjs",
+    "api": "pnpm -r api",
+    "exports:sync": "tsx scripts/sync-exports.ts",
+    "exports:check": "tsx scripts/sync-exports.ts --check",
+    "contracts:sync": "tsx scripts/sync-contracts.ts",
+    "contracts:check": "tsx scripts/sync-contracts.ts --check",
+    "changeset": "changeset",
+    "verify": "pnpm exports:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm api:check && pnpm depcruise",
+    "api:check": "pnpm -r api:check"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3",
+    "@eslint/js": "^10.0.1",
+    "@microsoft/api-extractor": "^7.60.0",
+    "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "^5.0.5",
+    "dependency-cruiser": "^18.7.0",
+    "eslint": "^10.13.0",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-boundaries": "^7.4.0",
+    "tsup": "^9.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.0.5"
+  }
+}

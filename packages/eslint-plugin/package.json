@@ -1,0 +1,7 @@
+{
+  "name": "@platform/eslint-plugin",
+  "version": "1.0.0-alpha.0",
+  "description": "Placeholder: implemented in SDK step 13 (design doc §C3).",
+  "type": "module",
+  "private": true
+}
