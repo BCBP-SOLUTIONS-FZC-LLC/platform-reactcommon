@@ -614,13 +614,13 @@ graph LR
     end
 
     subgraph rel["release.yml  —  tag vX.Y.Z (one version, changesets fixed)"]
-        vf["verify: tag on main · versions = tag · CHANGELOG sections"]
+        vf["verify: tag on main · versions = tag · CHANGELOG.md section"]
         gates["same gates as ci.yml, at the tag"]
         pub["publish: GitHub Release<br/>tarballs · SBOM · checksums.txt + Cosign bundle"]
         vf --> gates --> pub
     end
 
-    cs["changeset-check.yml<br/>published package changed → .changeset/*.md"]
+    cs["changelog-check.yml<br/>published package changed → .changeset/*.md + CHANGELOG.md"]
     rpr["release PR: pnpm changeset version"] --> tag["tag the merge commit"] --> vf
 ```
 
@@ -753,7 +753,7 @@ graph LR
         pd["docs/problem-details/<br/>RFC 9457 in the SDK · registry.md (generated)"]
         readme["README.md · package READMEs · contracts/README.md"]
         api["packages/frontend-sdk/api/*.api.md<br/>(api-extractor, per subpath)"]
-        cs["CHANGELOG.md per package (changesets)"]
+        cs["CHANGELOG.md (one history, Keep a Changelog)"]
     end
 
     subgraph checks["Kept in sync by"]

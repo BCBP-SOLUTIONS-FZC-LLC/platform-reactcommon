@@ -119,7 +119,7 @@ platform-reactcommon/
   scripts/                    sync-contracts, sync-exports, sync-docs, api-report, metrics-parity,
                               check-examples (pure logic in scripts/lib, unit-tested)
   docs/                       design/, architecture/, lld/, observability/, problem-details/
-  .github/                    ci.yml, release.yml, validate-*.yml, changeset-check.yml
+  .github/                    ci.yml, release.yml, validate-*.yml, changelog-check.yml
 ```
 
 ### 3.1 Library dependencies (direct, `@platform/frontend-sdk`)
@@ -237,7 +237,7 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 ### 5.1 Conventions
 
 - Subpath imports only; `import '@platform/frontend-sdk'` throws.
-- Every public symbol is in `api/<subpath>.api.md`. A change is a reviewed diff plus a changeset.
+- Every public symbol is in `api/<subpath>.api.md`. A change is a reviewed diff plus a changeset and a `CHANGELOG.md` entry.
 - "Shell only" functions (`initialize*`, `set*Provider`, `loadManifest`, `startVersionPolling`, `PlatformProvider`, `installGlobalErrorHandlers`, `initializeAuth`) are called once, by the shell. A second `initialize*` call is a no-op, except `initializeCore` with a different identity.
 - Functions that need an earlier step throw `NotInitializedError` (for example `initializeTracing` before `initializeCore`). Read paths degrade instead: no-op spans, a console logger, `denyAll`, platform flags.
 - Errors are typed classes (`InvalidIdentityError`, `RuntimeConfigError`, `InvalidMetricError`, `ForbiddenStorageKeyError`, `RemoteDisabledError`, `RemoteLoadError`, `ProblemError` …), never strings.
@@ -684,9 +684,9 @@ The SDK subpaths and share range come from `src/generated/sdk.ts`, which `pnpm e
 
 ### 14.1 Release
 The packages are released together with one version (changesets `fixed`):
-1. A release PR runs `pnpm changeset version`.
+1. A release PR runs `pnpm changeset version` (the bump) and turns `[Unreleased]` in the root `CHANGELOG.md` into the version's section.
 2. The merge commit is tagged `vX.Y.Z`.
-3. `release.yml` verifies the tag (on `main`, versions equal to the tag, CHANGELOG sections present) and reruns every CI gate at the tag.
+3. `release.yml` verifies the tag (on `main`, versions equal to the tag, the `CHANGELOG.md` section present) and reruns every CI gate at the tag.
 4. It publishes a GitHub Release with the three tarballs, a CycloneDX SBOM, and `checksums.txt` with a Cosign keyless signature bundle.
 
 There's no npm registry yet. Pre-release tags (`v1.0.0-alpha.N`) are marked as pre-releases.

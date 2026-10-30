@@ -1,0 +1,56 @@
+# Pre-merge CHANGELOG check (platform-gincommon's changelog-check, plus the changeset).
+# A PR that changes what a package ships must:
+#   - add an entry under ## [Unreleased] in CHANGELOG.md (the repository's single history), and
+#   - add a .changeset/*.md (its bump type: patch, minor or major), which `pnpm changeset version`
+#     turns into the shared version of the three packages.
+# So release.yml's CHANGELOG gate never surprises anyone at tag time. A release PR (it consumes
+# the changesets: `pnpm changeset version`) must update CHANGELOG.md too, renaming [Unreleased].
+name: Changelog check
+
+"on":
+  pull_request:
+    paths:
+      - 'packages/*/src/**'
+      - 'packages/*/package.json'
+      - 'packages/frontend-sdk/contracts/**'
+      - 'packages/frontend-sdk/subpaths.json'
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  changelog:
+    name: changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: CHANGELOG and changeset updated in this PR
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Three dots: only this PR's changes since the merge base, not CHANGELOG edits that
+          # landed on main after the branch point.
+          changed=$(git diff --name-status "$BASE...$HEAD")
+          status=0
+          if ! grep -qE '^M\s+CHANGELOG\.md$' <<<"$changed"; then
+            echo "::error file=CHANGELOG.md,title=CHANGELOG not updated::This PR changes a published package but does not update CHANGELOG.md. Add an entry under the Unreleased section before merging."
+            status=1
+          fi
+          if grep -qE '^D\s+\.changeset/[^/]+\.md$' <<<"$changed"; then
+            echo "Release PR (changesets consumed by pnpm changeset version)."
+          elif ! grep -E '^A\s+\.changeset/[^/]+\.md$' <<<"$changed" | grep -qv 'README\.md$'; then
+            echo "::error title=Changeset missing::This PR changes a published package but adds no .changeset/*.md. Run 'pnpm changeset' to record its bump (patch, minor or major)."
+            status=1
+          fi
+          [ "$status" -eq 0 ] && echo "CHANGELOG.md and the changeset are in order."
+          exit "$status"

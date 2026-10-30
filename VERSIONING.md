@@ -5,7 +5,7 @@ This repository publishes three **npm packages** consumed by the platform's web 
 - `@platform/webpack-preset`;
 - `@platform/eslint-plugin`.
 
-They always share **one version** (changesets `fixed` group). They're released with a **Git tag** `vX.Y.Z` and a GitHub Release carrying the package tarballs, and described in each package's `CHANGELOG.md`, which `pnpm changeset version` writes.
+They always share **one version** (changesets `fixed` group). They're released with a **Git tag** `vX.Y.Z` and a GitHub Release carrying the package tarballs, and described in the root [CHANGELOG.md](CHANGELOG.md), one history for all three ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)). Changesets decide the version bump only; they don't write changelogs.
 
 ## Semantic versioning (SemVer)
 
@@ -41,17 +41,17 @@ The shell provides the SDK to every remote as a **strict singleton** shared unde
 ### Guarantees
 
 - **Pre-release `1.0.0-alpha.N` (current).** The repository is in changesets pre mode (`alpha`), so every release is `1.0.0-alpha.N`, whatever the bump:
-  - a breaking change bumps `N` and is listed in the CHANGELOGs;
+  - a breaking change bumps `N` and is listed in the CHANGELOG;
   - nothing is deployed, and the shell and remotes upgrade together;
   - remotes share the SDK under `^1.0.0-0`, which accepts every alpha and every later `1.x`.
-- **MAJOR `1` (from `1.0.0`, cut with the first end-to-end environment):** we avoid breaking changes within `1.x`. When one is required, we release `2.0.0` and document the migration in the CHANGELOGs.
+- **MAJOR `1` (from `1.0.0`, cut with the first end-to-end environment):** we avoid breaking changes within `1.x`. When one is required, we release `2.0.0` and document the migration in the CHANGELOG.
 - **MINOR:** safe to upgrade without code changes unless you opt into new features (shell first, see above).
 - **PATCH:** drop-in replacement; upgrade recommended for security fixes.
 - **No `0.x`:** the packages start at `1.0.0-alpha.0`, never `0.y.z`. A caret range on `0.x` pins the minor, which under `strictVersion` would break every remote on each minor release (design doc §C3 "Versioning").
 
 ### Recorded exceptions
 
-None. During the alpha, breaking changes are expected and recorded in the CHANGELOGs. For example, `RuntimeConfigSchema`'s type became `z.ZodMiniType` in the change that moved the config schema to `zod/mini`. Exceptions start being recorded here from `1.0.0`.
+None. During the alpha, breaking changes are expected and recorded in the CHANGELOG. For example, `RuntimeConfigSchema`'s type became `z.ZodMiniType` in the change that moved the config schema to `zod/mini`. Exceptions start being recorded here from `1.0.0`.
 
 ## Supported releases
 
@@ -85,11 +85,12 @@ When a registry is chosen, this table gains the usual `^X.Y.Z` ranges. Release p
 
 The release workflow (`.github/workflows/release.yml`) automates verification, every CI gate at the tag, signing and the GitHub Release. Your job is to prepare the version commit and push the tag.
 
-1. **Merge** all changes for the release to `main`. Each change to a published package carries a `.changeset/*.md` (the *Changeset check* workflow enforces it).
+1. **Merge** all changes for the release to `main`. Each change to a published package carries a `.changeset/*.md` and a `CHANGELOG.md` entry under `[Unreleased]` (the *Changelog check* workflow enforces both).
 
 2. **Open a release PR** that runs `pnpm changeset version`:
    ```bash
-   pnpm changeset version   # bumps all three packages, writes each CHANGELOG.md, consumes the changesets
+   pnpm changeset version   # bumps all three packages, consumes the changesets
+   # CHANGELOG.md: rename [Unreleased] to [X.Y.Z] - YYYY-MM-DD, add an empty [Unreleased] and the compare links
    pnpm install             # if the lockfile changed
    pnpm verify
    ```
@@ -105,15 +106,15 @@ The release workflow (`.github/workflows/release.yml`) automates verification, e
    - **Verify:**
      - the tag is reachable from `origin/main` (a manual dispatch must start from `main` or the tag);
      - all three package versions equal the tag;
-     - each `CHANGELOG.md` has the tag's section.
+     - `CHANGELOG.md` has the tag's section (`## [1.0.0-alpha.1]`, or the base `## [1.0.0]` for a pre-release tag).
    - **Re-run every CI gate at the tag:** tests with the coverage gate, quality, contracts, package, Trivy, smoke, interop.
-   - **Publish:** sign `checksums.txt` (tarballs + SBOM) with Cosign, then create the **[GitHub Release](https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/releases)** with the CHANGELOG sections as release notes. A tag with a pre-release part is marked as a pre-release.
+   - **Publish:** sign `checksums.txt` (tarballs + SBOM) with Cosign, then create the **[GitHub Release](https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/releases)** with that CHANGELOG section as the release notes. A tag with a pre-release part is marked as a pre-release.
 
 5. **Notify consumers** (the shell and remote teams) with upgrade notes. For a MINOR or MAJOR, say which order to upgrade in (shell first).
 
 **Leaving the alpha (`1.0.0`):**
 1. `pnpm changeset pre exit`.
-2. `pnpm changeset version`, which writes `1.0.0`.
+2. `pnpm changeset version`, which sets `1.0.0`, and the `## [1.0.0]` CHANGELOG section.
 3. The release PR and the tag `v1.0.0`, as above.
 
 From then on, releases follow plain SemVer.
@@ -149,7 +150,7 @@ A backend change that alters a contract (a new problem type, deny code, registry
 
 | File | Purpose |
 |------|---------|
-| `packages/*/CHANGELOG.md` | User-facing history per version (written by `pnpm changeset version`; created by the first release) |
+| [CHANGELOG.md](CHANGELOG.md) | User-facing history per version, for all three packages |
 | [`.changeset/`](.changeset/) | Pending changes (`*.md`), `config.json` (the `fixed` group), `pre.json` (alpha pre mode) |
 | [README.md](README.md#releases) | Release artefacts, cutting and verifying a release |
 | [SECURITY.md](SECURITY.md) | Supported versions for security fixes |

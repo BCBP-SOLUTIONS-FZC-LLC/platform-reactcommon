@@ -74,8 +74,8 @@ jobs:
       - name: Verify release tag (dispatch ref, checkout, on main, versions)
         run: bash .github/scripts/verify-release-tag.sh
 
-      # Each package's CHANGELOG.md has the tag's section (written by `pnpm changeset version`).
-      - name: Verify CHANGELOG entries exist
+      # CHANGELOG.md has the tag's section (or, for a pre-release tag, its base version's).
+      - name: Verify CHANGELOG entry exists
         run: bash .github/scripts/verify-changelog-entry.sh
 
   # ── same as ci.yml ────────────────────────────────────────────────────────
@@ -263,7 +263,7 @@ jobs:
           persist-credentials: false
           token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
-      - name: Extract release notes from the CHANGELOGs
+      - name: Extract release notes from CHANGELOG.md
         env:
           REPO: ${{ github.repository }}
         run: bash .github/scripts/extract-release-notes.sh

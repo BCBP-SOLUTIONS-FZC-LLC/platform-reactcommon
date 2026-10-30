@@ -325,7 +325,7 @@ expect(p.logs.filter((l) => l.level === 'error')).toEqual([]);
 
 ### 11. Upgrading between alpha versions
 
-During `1.0.0-alpha.N`, a breaking change bumps `N`. Each one is listed in the package `CHANGELOG.md` files that `pnpm changeset version` writes. Upgrade the shell and every remote together: they share the SDK as a strict singleton under `^1.0.0-0`. `1.0.0` is cut with the first environment, and SemVer is strict from then on.
+During `1.0.0-alpha.N`, a breaking change bumps `N`. Each one is listed in [CHANGELOG.md](CHANGELOG.md). Upgrade the shell and every remote together: they share the SDK as a strict singleton under `^1.0.0-0`. `1.0.0` is cut with the first environment, and SemVer is strict from then on.
 
 ---
 
@@ -522,7 +522,7 @@ This repository publishes npm packages; the shell and remotes that use them are 
 
 ### Versioning
 
-SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as public API, guarantees, how versions interact with Module Federation, compatibility matrix). All three packages share one version (changesets `fixed`). Changes are recorded as `.changeset/*.md` entries and written to each package's `CHANGELOG.md` by `pnpm changeset version`.
+SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as public API, guarantees, how versions interact with Module Federation, compatibility matrix). All three packages share one version (changesets `fixed`). Every change to a published package adds a `.changeset/*.md` (the bump) and an entry under `[Unreleased]` in the root [CHANGELOG.md](CHANGELOG.md) (the history, [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), as platform-gincommon).
 
 | Version | Status | Notes |
 |---|---|---|
@@ -531,11 +531,11 @@ SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as publi
 
 ### Cutting a release
 
-1. Open a release PR that runs `pnpm changeset version`, which bumps all three packages, writes each `CHANGELOG.md` and consumes the changesets. Commit the result, run `pnpm install` if the lockfile changes, and merge.
+1. Open a release PR: `pnpm changeset version` bumps all three packages and consumes the changesets; rename `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) to `## [X.Y.Z] - YYYY-MM-DD` (the version it set) and add a new empty `[Unreleased]`. Commit the result, run `pnpm install` if the lockfile changes, and merge.
 2. Tag the merge commit `vX.Y.Z` (the version it set) and push the tag. `release.yml` does the rest:
-   1. **Verify.** The tag must be reachable from `origin/main` (and a manual dispatch must start from `main` or the tag), all package versions must equal the tag, and each `CHANGELOG.md` must have its section.
+   1. **Verify.** The tag must be reachable from `origin/main` (and a manual dispatch must start from `main` or the tag), all package versions must equal the tag, and `CHANGELOG.md` must have its section (`## [X.Y.Z]`; a pre-release tag may use its base version's section).
    2. **Gates.** The same gates as `ci.yml`, at the tag: tests, quality, contracts, package, Trivy, smoke, interop.
-   3. **Publish.** Checksums over the tarballs and SBOM, a Cosign keyless `sign-blob` with verification, and the GitHub Release with notes from the CHANGELOGs. A tag with a pre-release part is marked as a pre-release.
+   3. **Publish.** Checksums over the tarballs and SBOM, a Cosign keyless `sign-blob` with verification, and the GitHub Release with that CHANGELOG section as its notes. A tag with a pre-release part is marked as a pre-release.
 
 **Verifying a release** (needs [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) ≥ 2.4):
 
@@ -570,7 +570,7 @@ Six workflow files and one shared setup action. Shell logic lives in `.github/sc
   4. API reports, dependency-cruiser, example CSP checks;
   5. `pnpm audit --prod`.
 - **`validate-contracts.yml`** (reusable): checks out the seven backend repos at their pins, then runs `contracts:check` and `metrics:parity`.
-- **`changeset-check.yml`:** a PR that changes a published package must add a `.changeset/*.md`. A release PR passes.
+- **`changelog-check.yml`:** a PR that changes a published package must add a `.changeset/*.md` and update `CHANGELOG.md`. A release PR (which consumes changesets) passes with the `CHANGELOG.md` change alone.
 - **`release.yml`** (`v*` tags or manual): `verify`, then the `ci.yml` gates at the tag, then `publish`.
 
 **Secrets:** the org secrets `CI_REPO_READ_TOKEN` (sibling checkouts; `PLATFORM_REPOS_TOKEN` overrides it for contracts if set) and `GO_PRIVATE_TOKEN` (interop), as platform-gincommon uses them.
@@ -658,7 +658,7 @@ Keeping scope to **identity, data access, errors, observability and the micro-fr
 - follows the design doc (update it in the same PR if behaviour changes);
 - keeps `pnpm verify` green;
 - updates the API reports (`pnpm api`) when the public API changes;
-- adds a changeset (`pnpm changeset`).
+- adds a changeset (`pnpm changeset`) and a `CHANGELOG.md` entry under `[Unreleased]`.
 
 **Contracts:**
 - never edit them by hand;

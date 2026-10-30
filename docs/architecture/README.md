@@ -15,7 +15,7 @@ Standalone Mermaid source files. [`ARCHITECTURE.md`](../../ARCHITECTURE.md) embe
 | [`error-handling.mmd`](mermaid/error-handling.mmd) | Response → `ProblemError` / synthetic problem → gateway deny codes → UI and error boundaries | § Error handling (RFC 9457) |
 | [`telemetry-pipeline.mmd`](mermaid/telemetry-pipeline.mmd) | Logs, spans and metrics → redaction, sampling, registration checks → consent → bounded queues → `/otel` | § Telemetry pipeline |
 | [`contracts-drift.mmd`](mermaid/contracts-drift.mmd) | Pinned backend commits → `sync-contracts` → generated files → CI drift gates | § Contracts and drift control |
-| [`ci-pipeline.mmd`](mermaid/ci-pipeline.mmd) | `ci.yml` job graph, `release.yml` (verify → gates → GitHub Release), changeset check | § CI and release |
+| [`ci-pipeline.mmd`](mermaid/ci-pipeline.mmd) | `ci.yml` job graph, `release.yml` (verify → gates → GitHub Release), changelog check | § CI and release |
 | [`documentation-assets.mmd`](mermaid/documentation-assets.mmd) | Documentation sources, what keeps each in sync, where they are rendered | § Documentation assets |
 
 To render locally, open any `.mmd` file in a Mermaid-aware IDE (VS Code + Mermaid Preview, IntelliJ + Mermaid plugin) or paste it into [mermaid.live](https://mermaid.live).
