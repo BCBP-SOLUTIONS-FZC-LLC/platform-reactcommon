@@ -2,6 +2,7 @@
 // contract-compatible with platform-gincommon (headers, request ids, problems, timeouts).
 import { getIdentity, getSessionId, newRequestId } from '../core/index.ts';
 import { tryGetConfig } from '../config/index.ts';
+import { emitRuntime } from '../internal/events.ts';
 import { FORBIDDEN_REQUEST_HEADERS } from '../internal/generated/forbidden-headers.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { getLogger } from '../logging/index.ts';
@@ -10,6 +11,7 @@ import {
   NetworkError,
   ProblemError,
   TimeoutError,
+  gatewayDenyCode,
   parseProblemResponse,
 } from '../problem/index.ts';
 import { getTracer, injectTraceHeaders, type Span } from '../tracing/index.ts';
@@ -318,6 +320,10 @@ async function execute<T>(call: Call): Promise<ApiResponse<T>> {
       record(call, started, e.status);
       call.span.setAttribute('http.response.status_code', e.status);
       if (e.status >= 500) call.span.recordError(e);
+      if (gatewayDenyCode(e) === 'DENY_TENANT_READ_ONLY' && !getRuntime().readOnlyDenied) {
+        getRuntime().readOnlyDenied = true; // the tenant is read-only now, whatever the session context said (useReadOnly)
+        emitRuntime('read-only');
+      }
     } else if (e instanceof AbortedError) {
       record(call, started, undefined, 'aborted');
     } else if (e instanceof TimeoutError) {

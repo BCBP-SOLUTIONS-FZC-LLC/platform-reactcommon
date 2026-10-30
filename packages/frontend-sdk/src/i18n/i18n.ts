@@ -2,6 +2,8 @@
 // namespaces loaded on demand, ICU-lite messages, Intl formatting and problem messages.
 import { getIdentity } from '../core/index.ts';
 import { tryGetConfig } from '../config/index.ts';
+import { emitRuntime, subscribeRuntime } from '../internal/events.ts';
+import { directionOf, runtimeLocale } from '../internal/locale.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import type { ProblemError } from '../problem/index.ts';
 import { formatMessage, type FormatContext, type MessageVars } from './messages.ts';
@@ -18,16 +20,12 @@ interface I18nState {
   catalogs: Map<string, Map<string, Catalog>>;
   /** `${namespace}|${locale}` → the load in flight, so concurrent callers share it */
   loading: Map<string, Promise<void>>;
-  listeners: Set<() => void>;
   generation: number;
 }
 
 const NAMESPACE = /^[a-z][a-z0-9_-]{0,62}$/;
 /** Namespace holding the shell's shared messages, including problem.* keys. */
 export const PLATFORM_NAMESPACE = 'platform';
-// Scripts written right to left. 'ar*' is the platform's case (design doc §C1); the others keep
-// dir correct for any other RTL locale a deployment adds.
-const RTL_LANGUAGES = new Set(['ar', 'he', 'fa', 'ur', 'ps', 'dv', 'ckb', 'yi', 'sd', 'ug']);
 
 function warn(message: string): void {
   const env = getIdentity()?.environment;
@@ -45,7 +43,6 @@ function state(): I18nState {
       loaders: new Map(),
       catalogs: new Map(),
       loading: new Map(),
-      listeners: new Set(),
       generation: 0,
     } satisfies I18nState;
   }
@@ -72,36 +69,19 @@ function negotiate(requested: string | undefined, supported: readonly string[]):
   return supported.find((s) => new Intl.Locale(s).language === language);
 }
 
-/** 'rtl' for right-to-left scripts. */
-export function directionOf(locale: string): 'ltr' | 'rtl' {
-  try {
-    return RTL_LANGUAGES.has(new Intl.Locale(locale).language) ? 'rtl' : 'ltr';
-  } catch {
-    return 'ltr';
-  }
-}
-
-/** Internal (for /react): called after every locale change or catalog load. */
+/** Called after every locale change or catalog load (/react listens through the runtime 'i18n' topic). */
 export function subscribeI18n(l: () => void): () => void {
-  const s = state();
-  s.listeners.add(l);
-  return () => s.listeners.delete(l);
+  return subscribeRuntime('i18n', l);
 }
 
-/** Internal (for /react): the current locale and direction. */
+/** The current locale and direction. */
 export function currentLocale(): { locale: string; dir: 'ltr' | 'rtl' } {
-  const locale = state().locale;
-  return { locale, dir: directionOf(locale) };
+  state();
+  return runtimeLocale();
 }
 
 function notify(): void {
-  for (const l of [...state().listeners]) {
-    try {
-      l();
-    } catch {
-      // a listener's failure never stops the others
-    }
-  }
+  emitRuntime('i18n');
 }
 
 async function loadCatalog(ns: string, locale: string): Promise<void> {

@@ -92,6 +92,7 @@ export default tseslint.config(
   // no-restricted-imports replaces an earlier one's for the same files).
   ...names.map((name) => ({
     files: [`${SDK_SRC}/${name}/**/*.{ts,tsx}`],
-    rules: { 'no-restricted-imports': ['error', { patterns: [indexOnly, ...packagePatternsFor(name)] }] },
+    // /testing (dev only, "testing ─► anything") may reach other subpaths' test seams, so it is not index-only.
+    rules: { 'no-restricted-imports': ['error', { patterns: [...(name === 'testing' ? [] : [indexOnly]), ...packagePatternsFor(name)] }] },
   })),
 );

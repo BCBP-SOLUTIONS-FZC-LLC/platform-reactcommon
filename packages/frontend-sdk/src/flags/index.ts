@@ -6,6 +6,7 @@
  * @packageDocumentation
  */
 import { tryGetConfig } from '../config/index.ts';
+import { emitRuntime } from '../internal/events.ts';
 import { getRuntime } from '../internal/runtime.ts';
 
 export type FlagValue = boolean | string | number;
@@ -49,9 +50,16 @@ export function sessionContextFlagProvider(ctx: { featureFlags: readonly string[
   });
 }
 
+let stopWatching: (() => void) | undefined;
+
 /** Shell only: the provider every getFlag call uses (e.g. sessionContextFlagProvider once the context loads). */
 export function setFlagProvider(p: FlagProvider): void {
+  stopWatching?.();
+  stopWatching = undefined;
   getRuntime().flagProvider = p ?? undefined;
+  // /react re-renders flag readers on the runtime 'flags' topic: the provider changed, or its values did.
+  if (p && typeof p.subscribe === 'function') stopWatching = p.subscribe(() => emitRuntime('flags'));
+  emitRuntime('flags');
 }
 
 function provider(): FlagProvider {
