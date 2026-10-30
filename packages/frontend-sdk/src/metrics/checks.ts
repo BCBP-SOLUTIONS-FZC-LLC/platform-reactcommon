@@ -57,10 +57,6 @@ const LABEL_RE = new Map<string, RegExp>(
 export const CONST_LABELS: readonly string[] = REG.constLabels;
 export const DOMAINS: readonly string[] = (LABELS.domain?.values ?? []) as readonly string[];
 
-export function lookupMetric(name: string): RegistryMetric | undefined {
-  return BY_NAME.get(name);
-}
-
 export function labelDefinition(name: string): RegistryLabel | undefined {
   return LABELS[name];
 }
@@ -95,6 +91,12 @@ function isExempt(name: string): boolean {
  * with the service prefix; its labels must be snake_case, not prohibited and not centrally injected.
  */
 export function checkServiceMetric(type: MetricType, name: string, labelNames: readonly string[], domain: string, service: string): void {
+  checkServiceMetricShape(type, name, labelNames);
+  checkServicePrefix(name, domain, service);
+}
+
+/** checkServiceMetric's rules that need no scope identity: everything but the service prefix. */
+export function checkServiceMetricShape(type: MetricType, name: string, labelNames: readonly string[]): void {
   if (typeof name !== 'string' || !NAME_RE.test(name)) throw new InvalidMetricError('namespace', `metric ${JSON.stringify(name)}: name must be snake_case [a-z0-9_]`);
   if (LEGACY.has(name)) throw new InvalidMetricError('registry', `metric "${name}" is a legacy name; emit its replacement instead`);
   const entry = BY_NAME.get(name);
@@ -109,6 +111,10 @@ export function checkServiceMetric(type: MetricType, name: string, labelNames: r
     if (CONST_LABELS.includes(l)) throw new InvalidMetricError('required_labels', `metric "${name}": label "${l}" is injected centrally and must not be declared`);
   }
   if (new Set(labelNames).size !== labelNames.length) throw new InvalidMetricError('label_vocabulary', `metric "${name}": duplicate label names`);
+}
+
+/** checkServiceMetric's last rule: the name starts with the scope's service prefix. */
+export function checkServicePrefix(name: string, domain: string, service: string): void {
   const prefix = servicePrefix(domain, service);
   if (!name.startsWith(prefix)) {
     throw new InvalidMetricError('namespace', `metric "${name}": service-specific metrics must be named ${prefix}<metric>; domain-shared ${domain}_* metrics must be ratified in the registry`);
@@ -117,10 +123,21 @@ export function checkServiceMetric(type: MetricType, name: string, labelNames: r
 
 /** gincommon SharedMetric for a domain (Tier 2) metric: it must be the scope domain's registry entry, of this type. */
 export function checkDomainMetric(type: MetricType, name: string, domain: string): RegistryMetric {
+  return checkDomainMetricOwner(checkDomainMetricEntry(type, name), domain);
+}
+
+/** checkDomainMetric's rules that need no scope identity: a domain registry entry of this type. */
+export function checkDomainMetricEntry(type: MetricType, name: string): RegistryMetric {
   const entry = BY_NAME.get(name);
   if (!entry) throw new InvalidMetricError('registry', `metric "${name}" is not in the Platform Observability Registry`);
   if (entry.tier !== 'domain') throw new InvalidMetricError('registry', `metric "${name}" is a ${entry.tier} metric, not a domain one`);
   if (entry.type !== type) throw new InvalidMetricError('registry', `metric "${name}" is a ${entry.type}, not a ${type}`);
+  return entry;
+}
+
+/** checkDomainMetric's last rule: the entry belongs to the scope's domain. */
+export function checkDomainMetricOwner(entry: RegistryMetric, domain: string): RegistryMetric {
+  const name = entry.name;
   if (entry.domain !== domain) throw new InvalidMetricError('namespace', `metric "${name}" belongs to domain "${entry.domain}"; this scope is in domain "${domain}"`);
   return entry;
 }

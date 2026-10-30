@@ -13,7 +13,7 @@ import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { StackContextManager, TracerProvider, type SpanExporter } from '@opentelemetry/sdk-trace';
-import { NotInitializedError, getIdentity, isSensitiveKey, sanitizeString } from '../core/index.ts';
+import { NotInitializedError, getIdentity, isSensitiveKey, sanitizeString, scrubSecrets } from '../core/index.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { collectorUrl, isExactOrigin } from '../internal/urls.ts';
 import { DEFAULT_QUEUE, DropOldestBatchSpanProcessor, type QueueOptions, type TracingStats } from './processor.ts';
@@ -59,8 +59,10 @@ const propagator = new W3CTraceContextPropagator();
 const headerSetter: TextMapSetter<Headers> = { set: (carrier, key, value) => carrier.set(key, value) };
 
 // Test seam: tests replace the exporter and queue sizes; the shell never touches these.
+// The Batcher keeps at most two exports in flight; the higher limit lets drainOnHide send all its
+// keepalive-sized requests at once (Chrome allows nine keepalive requests per page).
 let exporterFactory: (url: string) => SpanExporter = (url) =>
-  new OTLPTraceExporter({ url, timeoutMillis: 10_000, concurrencyLimit: 2 });
+  new OTLPTraceExporter({ url, timeoutMillis: 10_000, concurrencyLimit: 9 });
 let queueOptions: QueueOptions = DEFAULT_QUEUE;
 export function setTracingInternalsForTests(o: { exporter?: (url: string) => SpanExporter; queue?: QueueOptions }): void {
   if (o.exporter) exporterFactory = o.exporter;
@@ -106,8 +108,9 @@ export function initializeTracing(o: TracingOptions): void {
   otelContext.setGlobalContextManager(contextManager);
   trace.setGlobalTracerProvider(provider);
 
-  // Flush when the page is hidden or unloaded: the exporter's fetch uses keepalive.
-  const flush = () => void processor.forceFlush();
+  // Send the queue when the page is hidden or unloaded, in requests small enough for the exporter's
+  // keepalive fetch (which survives the unload); a larger body would go by plain fetch and be cancelled.
+  const flush = () => processor.drainOnHide();
   const onVisibility = () => {
     if (globalThis.document?.visibilityState === 'hidden') flush();
   };
@@ -137,9 +140,14 @@ export function tracingStats(): Readonly<TracingStats> | undefined {
   return state()?.stats;
 }
 
+/** As a logged string: control characters removed, 256 bytes, JWT and Bearer credentials scrubbed. */
+function cleanString(s: string): string {
+  return scrubSecrets(sanitizeString(s));
+}
+
 function safeAttribute(k: string, v: string | number | boolean): string | number | boolean {
   if (isSensitiveKey(k)) return '[REDACTED]';
-  return typeof v === 'string' ? sanitizeString(v) : v;
+  return typeof v === 'string' ? cleanString(v) : v;
 }
 
 function safeAttributes(attrs?: Record<string, string | number | boolean>): Record<string, string | number | boolean> {
@@ -157,7 +165,7 @@ class SdkSpan implements Span {
 
   recordError(e: unknown): void {
     const name = e instanceof Error ? e.name : typeof e;
-    const message = sanitizeString(e instanceof Error ? e.message : String(e));
+    const message = cleanString(e instanceof Error ? e.message : String(e));
     this.inner.recordException({ name, message });
     this.inner.setStatus({ code: SpanStatusCode.ERROR, message });
   }

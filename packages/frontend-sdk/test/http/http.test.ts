@@ -480,9 +480,29 @@ describe('GET deduplication', () => {
     const api = createApiClient();
     const [a, b] = await Promise.all([api.get('/a', { query: { x: 1 } }), api.get('/a', { query: { x: 1 } })]);
     expect(calls).toHaveLength(1);
-    expect(a).toBe(b);
+    expect(a).toEqual(b);
     await api.get('/a', { query: { x: 1 } });
     expect(calls).toHaveLength(2); // not cached once settled
+  });
+
+  it("gives each subscriber its own data, so one caller's mutation never reaches another", async () => {
+    handler = () => json({ items: [3, 1, 2] });
+    const api = createApiClient();
+    for (const fallback of [false, true]) {
+      if (fallback) vi.stubGlobal('structuredClone', undefined); // JSON round-trip instead
+      const [a, b, c] = await Promise.all([
+        api.get<{ items: number[] }>('/a'),
+        api.get<{ items: number[] }>('/a', { signal: new AbortController().signal }),
+        api.get<{ items: number[] }>('/a'),
+      ]);
+      a.data.items.sort();
+      expect(a.data.items).toEqual([1, 2, 3]);
+      expect(b.data.items).toEqual([3, 1, 2]);
+      expect(c.data.items).toEqual([3, 1, 2]);
+      expect(b.headers).toBe(a.headers); // only the data is copied
+      expect(b.status).toBe(200);
+    }
+    expect(calls).toHaveLength(2);
   });
 
   it('does not share across users, URLs, or with dedupe: false', async () => {

@@ -6,6 +6,7 @@
  * @packageDocumentation
  */
 import type { RuntimeConfig } from '../config/index.ts';
+import { emitRuntime } from '../internal/events.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import type { IdentityProvider, SessionState, Workspace, WorkspaceResolver } from './types.ts';
 import { chooseWorkspace } from './workspace.ts';
@@ -46,6 +47,7 @@ export function initializeAuth(p: IdentityProvider): TokenSource {
   const rt = getRuntime();
   rt.identityProvider = p;
   rt.tokenSource = source;
+  emitRuntime('session'); // hooks rendered before this move from `loading` to the provider's state
   return source;
 }
 

@@ -197,6 +197,31 @@ describe('redaction (sanitizeFields, then strings, then JWT/Bearer, then the mes
     expect(a.node).toEqual({ name: 'n', next: '[Circular]' });
   });
 
+  it('logs a Map as an object of its entries and a Set as an array, redacted and with cycles replaced', async () => {
+    start();
+    const map = new Map<unknown, unknown>([
+      ['user', 'u'],
+      ['password', 'hunter2'],
+      [42, { access_token: 'tok', note: `see ${JWT}` }],
+      [{ id: 1 }, 'object key'],
+    ]);
+    map.set('self', map);
+    const set = new Set<unknown>(['a', 1, new Map([['api_key', 'k']])]);
+    set.add(set);
+    getLogger().info('x', { map, set, nested: { inner: new Map([['n', new Set([1, 2])]]) } });
+    const a = attrsOf((await sent())[0]!);
+    expect(a.map).toEqual({
+      user: 'u',
+      password: '[REDACTED]',
+      42: { access_token: '[REDACTED]', note: 'see [REDACTED]' },
+      '[object Object]': 'object key',
+      self: '[Circular]',
+    });
+    expect(a.set).toEqual(['a', 1, { api_key: '[REDACTED]' }, '[Circular]']);
+    expect(a.nested).toEqual({ inner: { n: [1, 2] } });
+    expect(JSON.stringify(a)).not.toMatch(/hunter2|tok"|"k"/);
+  });
+
   it('replaces cycles', async () => {
     start();
     const a: Record<string, unknown> = { n: 1 };

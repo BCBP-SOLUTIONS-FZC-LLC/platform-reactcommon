@@ -239,7 +239,10 @@ Resource: `service.name`, `service.version`, `service.namespace=<domain>`,
 `deployment.environment.name=<environment>`. **No** `service.instance.id` per browser: it would
 explode series cardinality. Sampler: `ParentBased(TraceIdRatioBased(ratio))`, with ratio ≤ 0 →
 NeverSample and ≥ 1 → AlwaysSample (same as Go `Sampler()`). Exporter failures are swallowed and counted
-in an internal counter; the batch queue is bounded and drops the oldest entries.
+in an internal counter; the batch queue is bounded and drops the oldest entries. On page hide the queue
+is sent in requests of at most 60 KiB, so each fits the keepalive budget. Span attribute strings and
+recorded error messages are redacted like log strings: sensitive keys, `sanitizeString`, then JWT- and
+Bearer-shaped values (`scrubSecrets` in `/core`).
 
 #### `/logging`
 
@@ -339,7 +342,11 @@ every data point from `CoreIdentity` or the scope. A caller that passes any of t
 attributes, not only OTLP resource attributes, so they reach Mimir as ordinary labels however the
 Collector translates resources.
 
-**Registration checks** (the same rules as `metricslint`, run at registration time and in CI):
+**Registration checks** (the same rules as `metricslint`, run at registration time and in CI). An
+instrument created before `initializeCore` (module scope in shell code) still checks its name, suffix,
+labels and registry entry at creation; the checks that need the page identity (service prefix, owner
+domain) run when its first point is recorded after `initializeCore`, and a point that fails them is
+dropped and counted, never thrown:
 - Namespace: `platform_*` comes from the registry only; `<domain>_*` must be a registry domain entry;
   anything else must start with the scope's service prefix. Unclassified names throw.
 - Suffix: counters `_total`; histograms `_seconds`, or `_bytes` with `unit: bytes`; gauges never
@@ -611,7 +618,8 @@ export interface IdentityProvider {
    *  (the promise never settles, the page unloads); otherwise anonymous. See "Restoring a session". Resolves only to
    *  `authenticated` or `anonymous`. */
   init(): Promise<Extract<SessionState, { status: 'authenticated' | 'anonymous' }>>;
-  /** `prompt: 'login'` forces credentials even when Keycloak's SSO session is alive (used after the idle timeout). */
+  /** `prompt: 'login'` forces credentials even when Keycloak's SSO session is alive (used after the idle timeout).
+   *  Without an explicit `prompt`, it is sent while the signed-out mark is set (see "Logout"). */
   login(o: { workspace: Workspace; returnUrl?: string; loginHint?: string; prompt?: 'login' }): Promise<void>;
   /** Local: drop tokens, clear storage, set the signed-out mark. Global: also ends the Keycloak SSO session
    *  (see "Logout"). */
@@ -761,7 +769,14 @@ Loop guard: one `prompt=none` attempt per tab, marked in `sessionStorage` before
 cleared only when `init()` ends `authenticated`. A load that finds the mark and no callback skips step 2.
 Explicit logout sets an SDK-reserved signed-out mark (localStorage, shared by tabs) that also skips
 step 2 until the next interactive login; without it, a local (non-`global`) logout would be undone by
-the next reload, because the Keycloak SSO session outlives it.
+the next reload, because the Keycloak SSO session outlives it. For the same reason, while the mark is
+set `login()` sends `prompt=login` unless the caller gave a `prompt`: on a shared device the next user's
+**Sign in** would otherwise be signed straight back in as the previous user.
+
+Shared device, user swap. Storage namespaces are per tenant, not per user, so a different user of the same
+realm can sign in after the idle timeout, a step-up or `signInAgain` without a logout. Every sign-in
+compares SHA-256(realm + `sub`) of its ID token with the SDK-reserved last-user key (localStorage, hex;
+never the raw `sub` or a token) and, when it differs, runs `clearAllAppStorage()` before `authenticated`.
 
 Cost: one Keycloak round trip (two redirects plus the token `fetch`) on every full page load or new tab,
 roughly the latency of a normal login with an SSO cookie. It does not count against the PUB-1 rate
@@ -978,7 +993,7 @@ export interface AppStorage { get<T>(key: string): T | undefined; set(key: strin
   remove(key: string): void; clear(): void }
 export function storage(appId: string, o?: { area?: 'local' | 'session' }): AppStorage; // key = `${ns}:${appId}:${key}`
 export class ForbiddenStorageKeyError extends Error {}   // isSensitiveKey(key) → throws
-export function clearAllAppStorage(): void;              // called on logout and workspace switch
+export function clearAllAppStorage(): void;              // called on logout, workspace switch and a user swap
 /** Namespace for a workspace; /auth sets it on the PlatformRuntime at login, /storage only reads it. */
 export function workspaceNamespace(w: { realm: string; trial: boolean }, trialTenantId?: string): string;
 ```

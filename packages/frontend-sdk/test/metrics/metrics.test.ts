@@ -2,7 +2,8 @@ import { AggregationTemporality, InMemoryMetricExporter, type PushMetricExporter
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeCore, setConsentProvider, type ConsentCategory } from '../../src/core/index.ts';
 import { getRuntime, resetRuntimeForTests } from '../../src/internal/runtime.ts';
-import { lookupMetric, servicePrefix, suffixProblem } from '../../src/metrics/checks.ts';
+import { METRIC_REGISTRY } from '../../src/internal/generated/metric-registry.ts';
+import { servicePrefix, suffixProblem } from '../../src/metrics/checks.ts';
 import { InvalidMetricError, getDomainMeter, getServiceMeter, initializeMetrics, startWebVitals } from '../../src/metrics/index.ts';
 import { renderMetricInventory } from '../../src/metrics/inventory.ts';
 import { metricsState, metricsStats, setMetricsInternalsForTests, shutdownMetrics } from '../../src/metrics/metrics.ts';
@@ -73,11 +74,6 @@ describe('rules', () => {
     expect(suffixProblem('histogram', 'x_bytes', 'bytes')).toBeUndefined();
     expect(suffixProblem('histogram', 'x_seconds', 'seconds')).toBeUndefined();
     expect(suffixProblem('histogram', 'x_ms', 'milliseconds')).toContain('not supported');
-  });
-
-  it('looks registry metrics up by name', () => {
-    expect(lookupMetric('iam_tenant_resolution_total')).toMatchObject({ tier: 'domain', domain: 'iam', type: 'counter', labels: ['strategy', 'outcome'] });
-    expect(lookupMetric('tender_management_web_app_saves_total')).toBeUndefined();
   });
 });
 
@@ -247,7 +243,7 @@ describe('meters', () => {
       .getMetrics()
       .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
       .filter((x) => x.descriptor.name === 'iam_lifecycle_event_lag_seconds');
-    expect(m!.descriptor.description).toBe(lookupMetric('iam_lifecycle_event_lag_seconds')!.help);
+    expect(m!.descriptor.description).toBe(METRIC_REGISTRY.metrics.find((x) => x.name === 'iam_lifecycle_event_lag_seconds')!.help);
     expect(m!.descriptor.unit).toBe('s');
     expect(m!.dataPoints).toHaveLength(1);
     const p = m!.dataPoints[0]!;
@@ -273,11 +269,54 @@ describe('meters', () => {
     expect(() => getServiceMeter({ mfe: 'unknown-remote' }).counter('x_total', 'X.', [])).toThrow('remote manifest');
   });
 
-  it('are no-ops without a page identity (a remote run standalone)', () => {
+  it('are no-ops without a page identity (a remote run standalone), but still check what they can', () => {
     resetRuntimeForTests();
-    expect(() => getServiceMeter().counter('anything', '', []).add(1)).not.toThrow();
-    expect(() => getDomainMeter().histogram('anything').record(1)).not.toThrow();
+    expect(() => getServiceMeter().counter('iam_admin_x_total', 'X.', []).add(1)).not.toThrow();
+    expect(() => getDomainMeter().histogram('iam_lifecycle_event_lag_seconds').record(1, { event_type: 'tenant.created' })).not.toThrow();
     expect(renderMetricInventory()).toBe('');
+    expect(metricsStats().droppedInvalid).toBe(0);
+    // Rules that need no scope identity throw at creation all the same.
+    expect(ruleOf(() => getServiceMeter().counter('anything', 'X.', []))).toBe('suffix');
+    expect(ruleOf(() => getServiceMeter().counter('anything_total', ' ', []))).toBe('registry');
+    expect(ruleOf(() => getServiceMeter().counter('anything_total', 'X.', ['user_id']))).toBe('prohibited_label');
+    expect(ruleOf(() => getServiceMeter().histogram('anything_seconds', 'X.', [], [2, 1]))).toBe('registry');
+    expect(ruleOf(() => getDomainMeter().histogram('anything'))).toBe('registry');
+    expect(ruleOf(() => getDomainMeter().counter('iam_lifecycle_event_lag_seconds'))).toBe('registry');
+  });
+
+  it('created before initializeCore (module scope in shell code) record once it runs', async () => {
+    resetRuntimeForTests();
+    const early = getServiceMeter().counter('iam_web_app_boot_total', 'Boot.', ['kind']);
+    const lag = getDomainMeter().histogram('iam_lifecycle_event_lag_seconds');
+    early.add(7, { kind: 'before' }); // no identity yet: a no-op
+    lag.record(7, { event_type: 'tenant.created' });
+    core('iam');
+    consent(['telemetry']);
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    early.add(2, { kind: 'after' });
+    lag.record(3, { event_type: 'tenant.created' });
+    const identity = { domain: 'iam', service: 'web-app', environment: 'dev' };
+    expect((await points('iam_web_app_boot_total')).map((p) => [p.value, p.attributes])).toEqual([[2, { kind: 'after', ...identity }]]);
+    expect((await points('iam_lifecycle_event_lag_seconds')).map((p) => [(p.value as { sum: number }).sum, p.attributes])).toEqual([
+      [3, { event_type: 'tenant.created', ...identity }],
+    ]);
+    expect(metricsStats().droppedInvalid).toBe(0);
+  });
+
+  it('created before initializeCore drop their points (counted, never thrown) when the identity does not fit them', () => {
+    resetRuntimeForTests();
+    const wrongPrefix = getServiceMeter().counter('iam_admin_x_total', 'X.', []);
+    const wrongDomain = getDomainMeter().counter('iam_tenant_resolution_total');
+    const remote = getServiceMeter({ mfe: 'iam-admin' }).counter('iam_admin_y_total', 'Y.', []);
+    core();
+    expect(() => wrongPrefix.add(1)).not.toThrow();
+    expect(() => wrongDomain.add(1, { strategy: 'slug', outcome: 'success' })).not.toThrow();
+    remote.add(1); // the manifest has not loaded yet
+    expect(metricsStats().droppedInvalid).toBe(3);
+    getRuntime().remotes = { 'iam-admin': 'iam' };
+    remote.add(1); // retried: the remote now has its owning domain
+    expect(metricsStats().droppedInvalid).toBe(3);
+    expect(renderMetricInventory()).toMatch(/^iam_admin_y_total\{domain="iam",environment="dev",service="iam-admin"\} /m);
   });
 });
 

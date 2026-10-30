@@ -87,6 +87,20 @@ describe('setLocale and directions', () => {
     expect(currentLocale().locale).toBe('en');
   });
 
+  it('loads a namespace registered during a locale change for the new locale too', async () => {
+    await initializeI18n({ defaultLocale: 'en', supported: ['en', 'ar'], detect: () => 'en' });
+    let release!: () => void;
+    registerNamespace('slow', (locale) => (locale === 'ar' ? new Promise((r) => (release = () => r({})) as never) : Promise.resolve({})));
+    const changing = setLocale('ar');
+    const l = loader('tenders');
+    registerNamespace('tenders', l); // loads for the old locale (en) only
+    release();
+    await changing;
+    expect(currentLocale().locale).toBe('ar');
+    expect(l.mock.calls.map((c) => c[0]).sort()).toEqual(['ar', 'en']);
+    expect(t('tenders', 'title')).toBe('المناقصات');
+  });
+
   it('notifies subscribers on locale changes and catalog loads', async () => {
     const l = vi.fn();
     const off = subscribeI18n(l);

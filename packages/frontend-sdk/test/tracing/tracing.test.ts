@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT_CONTEXT } from '@opentelemetry/api';
+import { JsonTraceSerializer } from '@opentelemetry/otlp-transformer';
 import { SamplingDecision, type ReadableSpan, type SpanExporter } from '@opentelemetry/sdk-trace';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NotInitializedError, initializeCore, setConsentProvider, type ConsentCategory } from '../../src/core/index.ts';
 import { resetRuntimeForTests } from '../../src/internal/runtime.ts';
-import { DEFAULT_QUEUE, DropOldestBatchSpanProcessor, type TracingStats } from '../../src/tracing/processor.ts';
-import { GoTraceIdRatioSampler, platformSampler, rootSampler } from '../../src/tracing/sampler.ts';
+import { DEFAULT_QUEUE, DropOldestBatchSpanProcessor, KEEPALIVE_MAX_BYTES, type TracingStats } from '../../src/tracing/processor.ts';
+import { GoTraceIdRatioSampler, goFormatG, platformSampler, rootSampler } from '../../src/tracing/sampler.ts';
 import {
   currentTraceId,
   getTracer,
@@ -79,12 +80,16 @@ describe('sampler (gincommon semantics)', () => {
   });
 
   it("describes itself as Go's TraceIDRatioBased{<fraction>} and is the root sampler for 0 < ratio < 1", () => {
-    // Go: fmt.Sprintf("TraceIDRatioBased{%g}", fraction); %g and JS agree for these ratios.
+    // Go: fmt.Sprintf("TraceIDRatioBased{%g}", fraction); below 1e-4 %g switches to 1e-05 form.
     for (const [ratio, text] of [
       [0.1, 'TraceIDRatioBased{0.1}'],
       [0.25, 'TraceIDRatioBased{0.25}'],
       [0.5, 'TraceIDRatioBased{0.5}'],
       [0.001, 'TraceIDRatioBased{0.001}'],
+      [0.0001, 'TraceIDRatioBased{0.0001}'],
+      [0.00001, 'TraceIDRatioBased{1e-05}'],
+      [1.5e-7, 'TraceIDRatioBased{1.5e-07}'],
+      [1e-7, 'TraceIDRatioBased{1e-07}'],
     ] as const) {
       const root = rootSampler(ratio);
       expect(root).toBeInstanceOf(GoTraceIdRatioSampler);
@@ -93,6 +98,31 @@ describe('sampler (gincommon semantics)', () => {
     }
     expect(rootSampler(1).toString()).toBe('AlwaysOnSampler');
     expect(rootSampler(0).toString()).toBe('AlwaysOffSampler');
+  });
+
+  it("formats numbers like Go's %g", () => {
+    // Go: fmt.Sprintf("%g", f) for each input.
+    for (const [f, text] of [
+      [1, '1'],
+      [0.1, '0.1'],
+      [0.25, '0.25'],
+      [0.001, '0.001'],
+      [0.0001, '0.0001'],
+      [0.00001, '1e-05'],
+      [1e-7, '1e-07'],
+      [1.25e-10, '1.25e-10'],
+      [123456, '123456'],
+      [1234567, '1.234567e+06'],
+      [1e21, '1e+21'],
+      [2.5e100, '2.5e+100'],
+      [-0.00001, '-1e-05'],
+      [0, '0'],
+      [Number.NaN, 'NaN'],
+      [Number.POSITIVE_INFINITY, '+Inf'],
+    ] as const) {
+      expect(goFormatG(f), String(f)).toBe(text);
+    }
+    expect(new GoTraceIdRatioSampler(1).toString()).toBe('TraceIDRatioBased{1}');
   });
 
   it('never samples a malformed trace id', () => {
@@ -188,15 +218,6 @@ describe('export queue', () => {
     vi.stubGlobal('removeEventListener', win.removeEventListener.bind(win));
     const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
     vi.stubGlobal('document', doc);
-    let flushes = 0;
-    setTracingInternalsForTests({
-      exporter: () => ({
-        ...exporter,
-        forceFlush: async () => {
-          flushes++;
-        },
-      }),
-    });
     start();
     getTracer('t').startSpan('queued').end();
     doc.dispatchEvent(new Event('visibilitychange'));
@@ -205,13 +226,46 @@ describe('export queue', () => {
     doc.visibilityState = 'hidden';
     doc.dispatchEvent(new Event('visibilitychange'));
     await vi.waitFor(() => expect(spans().map((s) => s.name)).toEqual(['queued']));
-    await vi.waitFor(() => expect(flushes).toBe(1));
+    const stats = tracingStats()!;
+    await vi.waitFor(() => expect(stats.exported).toBe(1));
     await shutdownTracing();
-    const afterShutdown = flushes;
+    getTracer('t').startSpan('after').end(); // a no-op span: nothing is queued anywhere
     doc.dispatchEvent(new Event('visibilitychange'));
     win.dispatchEvent(new Event('pagehide'));
     await Promise.resolve();
-    expect(flushes).toBe(afterShutdown);
+    expect(spans().map((s) => s.name)).toEqual(['queued']);
+  });
+
+  it('on page hide sends the queue in several requests that each fit the keepalive budget', async () => {
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+    vi.stubGlobal('document', doc);
+    const batches: ReadableSpan[][] = [];
+    setTracingInternalsForTests({ exporter: () => ({ ...exporter, export: (b, cb) => (batches.push(b), exporter.export(b, cb)) }) });
+    start();
+    const filler = 'x'.repeat(200);
+    for (let i = 0; i < 300; i++) getTracer('t').startSpan(`s${i}`, { a: filler, b: filler, c: filler, d: filler }).end();
+    expect(batches).toHaveLength(0); // under the 512-span batch size: waiting for the timer
+    doc.visibilityState = 'hidden';
+    doc.dispatchEvent(new Event('visibilitychange'));
+    await vi.waitFor(() => expect(spans()).toHaveLength(300));
+    expect(batches.length).toBeGreaterThan(1);
+    for (const b of batches) expect(JsonTraceSerializer.serializeRequest(b)!.byteLength).toBeLessThanOrEqual(KEEPALIVE_MAX_BYTES);
+    expect(spans().map((s) => s.name)).toEqual(Array.from({ length: 300 }, (_, i) => `s${i}`));
+    await vi.waitFor(() => expect(tracingStats()).toMatchObject({ exported: 300, exportFailures: 0 }));
+  });
+
+  it('on page hide counts a refused or throwing export as a failure', () => {
+    const stats: TracingStats = { exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, exportFailures: 0 };
+    const sampled = { name: 's', spanContext: () => ({ traceId: '4bf92f3577b34da6a3ce929d0e0e4736', spanId: '00f067aa0ba902b7', traceFlags: 1 }) };
+    for (const e of [
+      { export: (_b: unknown, cb: (r: { code: number }) => void) => cb({ code: 1 }), shutdown: async () => {} },
+      { export: () => { throw new Error('boom'); }, shutdown: async () => {} },
+    ]) {
+      const processor = new DropOldestBatchSpanProcessor(e as SpanExporter, stats, { maxQueueSize: 10, maxExportBatchSize: 10, scheduledDelayMillis: 60_000 });
+      processor.onEnd(sampled as unknown as ReadableSpan);
+      processor.drainOnHide();
+    }
+    return vi.waitFor(() => expect(stats).toMatchObject({ exported: 0, exportFailures: 2 }));
   });
 
   it('never rejects on shutdown when the exporter fails to flush or shut down', async () => {
@@ -342,6 +396,20 @@ describe('spans', () => {
       expect.objectContaining({ 'exception.type': 'TypeError', 'exception.message': 'badinput' }),
       expect.objectContaining({ 'exception.type': 'string', 'exception.message': 'plain string' }),
     ]);
+  });
+
+  it('scrub JWT and Bearer credentials from attribute values and error messages, as logs do', async () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.c2lnbmF0dXJl';
+    start();
+    const s = getTracer('t').startSpan('op', { note: `got ${jwt}` });
+    s.setAttribute('header', 'Bearer abc.def-ghi');
+    s.recordError(new Error(`token ${jwt} rejected`));
+    s.end();
+    await shutdownTracing();
+    const span = spans()[0]!;
+    expect(span.attributes).toEqual({ note: 'got [REDACTED]', header: 'Bearer [REDACTED]' });
+    expect(span.status).toEqual({ code: 2, message: 'token [REDACTED] rejected' });
+    expect(span.events[0]!.attributes).toMatchObject({ 'exception.message': 'token [REDACTED] rejected' });
   });
 });
 

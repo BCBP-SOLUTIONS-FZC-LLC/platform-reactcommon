@@ -619,6 +619,49 @@ describe('without an identity provider', () => {
     const r = await render(<View />);
     expect(r.container.textContent).toBe('loading');
   });
+
+  // Regression: the hook subscribed to a no-op before initializeAuth and stayed `loading` until
+  // something else re-rendered it.
+  it('useSession follows a provider that initializeAuth installs after the first render', async () => {
+    getRuntime().identityProvider = undefined;
+    function View() {
+      return <p>{useSession().status}</p>;
+    }
+    const r = await render(<View />);
+    expect(r.container.textContent).toBe('loading');
+    const c = controllableIdp({ status: 'anonymous', reason: 'none' });
+    const subscribe = vi.spyOn(c.idp, 'subscribe');
+    await settle(() => initializeAuth(c.idp));
+    expect(r.container.textContent).toBe('anonymous');
+    await settle(() => c.set({ status: 'authenticated', user: { sub: 'u' }, workspace: ACME, expiresAt: 0 }));
+    expect(r.container.textContent).toBe('authenticated');
+    expect(subscribe).toHaveBeenCalledOnce();
+  });
+});
+
+describe('subscriptions', () => {
+  // Regression: inline subscribe functions made useSyncExternalStore unsubscribe and resubscribe on every render.
+  it('re-rendering keeps the same subscriptions', async () => {
+    const c = controllableIdp({ status: 'loading' });
+    const subscribe = vi.spyOn(c.idp, 'subscribe');
+    initializeAuth(c.idp);
+    function View({ n }: { n: number }) {
+      useSession();
+      useReadOnly();
+      useLocale();
+      useFeatureFlag('ai.drafting', false);
+      useHasPermission('read', 'tender');
+      return <p>{n}</p>;
+    }
+    const r = await render(<View n={0} />);
+    expect(subscribe).toHaveBeenCalledOnce();
+    const topics = [...getRuntime().events.values()].map((set) => vi.spyOn(set, 'add'));
+    expect(topics.length).toBeGreaterThanOrEqual(5);
+    for (let n = 1; n <= 3; n++) await r.rerender(<View n={n} />);
+    expect(r.container.textContent).toBe('3');
+    expect(subscribe).toHaveBeenCalledOnce();
+    for (const add of topics) expect(add).not.toHaveBeenCalled();
+  });
 });
 
 describe('hooks: edge cases', () => {

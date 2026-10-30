@@ -16,11 +16,32 @@ import { isOnline, subscribeOnline } from '../internal/online.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { MfeContext, ShellContext, type ShellContextValue } from './context.ts';
 
-const noop = () => {};
-
 function identityProvider(): IdentityProvider | undefined {
   return getRuntime().identityProvider as IdentityProvider | undefined;
 }
+
+// Subscribe functions live at module scope: useSyncExternalStore resubscribes whenever their identity
+// changes, so an inline arrow would unsubscribe and subscribe again on every render.
+
+/** The current provider's changes, and a switch to the new provider when initializeAuth runs (later). */
+function subscribeSession(l: () => void): () => void {
+  let stopIdp = identityProvider()?.subscribe(l);
+  const stopRuntime = subscribeRuntime('session', () => {
+    stopIdp?.();
+    stopIdp = identityProvider()?.subscribe(l);
+    l();
+  });
+  return () => {
+    stopRuntime();
+    stopIdp?.();
+  };
+}
+const subscribeReadOnly = (l: () => void) => subscribeRuntime('read-only', l);
+const subscribeI18n = (l: () => void) => subscribeRuntime('i18n', l);
+const subscribeFlags = (l: () => void) => subscribeRuntime('flags', l);
+const subscribeAuthz = (l: () => void) => subscribeRuntime('authz', l);
+const readOnlyDenied = () => getRuntime().readOnlyDenied;
+const currentLocale = () => runtimeLocale().locale;
 
 function useShell(): ShellContextValue | undefined {
   return useContext(ShellContext);
@@ -28,11 +49,7 @@ function useShell(): ShellContextValue | undefined {
 
 /** The session as /auth reports it; `loading` until the shell has run initializeAuth. */
 export function useSession(): SessionState {
-  return useSyncExternalStore(
-    (l) => identityProvider()?.subscribe(l) ?? noop,
-    getSession,
-    getSession,
-  );
+  return useSyncExternalStore(subscribeSession, getSession, getSession);
 }
 
 export function useCurrentUser(): SessionUser | undefined {
@@ -65,11 +82,7 @@ export function useBeforeAuthRedirect(save: () => void): void {
 /** SessionContext.readOnly, or a DENY_TENANT_READ_ONLY answer seen on this page. */
 export function useReadOnly(): boolean {
   const ctx = useSessionContext();
-  const denied = useSyncExternalStore(
-    (l) => subscribeRuntime('read-only', l),
-    () => getRuntime().readOnlyDenied,
-    () => getRuntime().readOnlyDenied,
-  );
+  const denied = useSyncExternalStore(subscribeReadOnly, readOnlyDenied, readOnlyDenied);
   return ctx?.readOnly === true || denied;
 }
 
@@ -93,11 +106,7 @@ export function useStepUp(): { needed: boolean; reauthenticate(): Promise<void> 
 
 /** The page locale and its direction; re-renders on setLocale. */
 export function useLocale(): { locale: string; dir: 'ltr' | 'rtl' } {
-  const locale = useSyncExternalStore(
-    (l) => subscribeRuntime('i18n', l),
-    () => runtimeLocale().locale,
-    () => runtimeLocale().locale,
-  );
+  const locale = useSyncExternalStore(subscribeI18n, currentLocale, currentLocale);
   return useMemo(() => ({ locale, dir: directionOf(locale) }), [locale]);
 }
 
@@ -114,7 +123,7 @@ export function useSwitchWorkspace(): (identifierOrSlug: string) => Promise<void
 
 export function useFeatureFlag<T extends FlagValue>(key: string, fallback: T): T {
   return useSyncExternalStore(
-    (l) => subscribeRuntime('flags', l),
+    subscribeFlags,
     () => getFlag(key, fallback),
     () => getFlag(key, fallback),
   );
@@ -123,7 +132,7 @@ export function useFeatureFlag<T extends FlagValue>(key: string, fallback: T): T
 /** A UI hint (hide or disable); the backend authorises the request itself. */
 export function useHasPermission(action: string, resource: string): boolean {
   return useSyncExternalStore(
-    (l) => subscribeRuntime('authz', l),
+    subscribeAuthz,
     () => hasPermission(action, resource),
     () => hasPermission(action, resource),
   );

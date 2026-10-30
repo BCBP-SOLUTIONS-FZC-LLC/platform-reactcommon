@@ -15,8 +15,10 @@ import {
   InvalidMetricError,
   allowsValue,
   bucketPreset,
-  checkDomainMetric,
-  checkServiceMetric,
+  checkDomainMetricEntry,
+  checkDomainMetricOwner,
+  checkServiceMetricShape,
+  checkServicePrefix,
   labelDefinition,
   type MetricType,
   type RegistryMetric,
@@ -107,7 +109,7 @@ function warnOnce(key: string, message: string): void {
 
 function resolveScope(scope?: Partial<MfeScope>): ScopeIdentity | undefined {
   const identity = getIdentity();
-  if (!identity) return undefined; // standalone remote: no-op instruments
+  if (!identity) return undefined; // before initializeCore, or a standalone remote
   const mfe = scope?.mfe;
   if (!mfe || mfe === SHELL) return { domain: identity.domain, service: identity.serviceName, environment: identity.environment };
   const ownerDomain = getRuntime().remotes[mfe];
@@ -222,39 +224,56 @@ function record(rec: InstrumentRecord, value: number, labels: Record<string, str
   else (inst as OtelHistogram).record(value, attrs);
 }
 
-const NOOP_COUNTER: Counter = Object.freeze({ add: () => {} });
-const NOOP_HISTOGRAM: Histogram = Object.freeze({ record: () => {} });
+/**
+ * Binds an instrument to its scope identity and returns its recording function. With a page
+ * identity, `define` (the scope-dependent checks and registration) runs now, so its errors throw at
+ * creation. Without one (a meter created at module scope before bootstrap's initializeCore, or a
+ * remote run standalone) it runs on the first data point after initializeCore; until then points
+ * are no-ops, and a definition that fails then drops its points (counted, warned) instead of throwing.
+ */
+function bind(scope: Partial<MfeScope> | undefined, name: string, define: (id: ScopeIdentity) => InstrumentRecord) {
+  let rec = getIdentity() ? define(resolveScope(scope)!) : undefined;
+  return (value: number, labels?: Record<string, string>): void => {
+    if (!rec) {
+      if (!getIdentity()) return; // still no page identity
+      try {
+        rec = define(resolveScope(scope)!); // retried on the next point, e.g. once the manifest loads
+      } catch (e) {
+        metricsState().stats.droppedInvalid++;
+        warnOnce(`${name}:define`, `dropped a ${name} data point: ${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
+    }
+    record(rec, value, labels);
+  };
+}
 
 /**
  * Tier 2: domain-shared metrics. Only names the registry lists as `tier: "domain"` for the scope's
  * domain, with exactly that entry's labels; help and buckets come from the entry. A remote's
- * scope uses its manifest ownerDomain. Without a page identity (a remote run standalone) the
- * instruments are no-ops.
+ * scope uses its manifest ownerDomain. Without a page identity (a remote run standalone, or shell
+ * code before initializeCore) the name is checked now and the domain once the identity exists;
+ * until then the instruments are no-ops.
  */
 export function getDomainMeter(scope?: Partial<MfeScope>): { counter(name: string): Counter; histogram(name: string): Histogram } {
   const make = (type: MetricType, name: string) => {
-    const id = resolveScope(scope);
-    if (!id) return undefined;
-    const entry = checkDomainMetric(type, name, id.domain);
-    return register({
-      name,
-      type,
-      help: entry.help,
-      labelNames: [...entry.labels],
-      buckets: type === 'histogram' ? (bucketPreset(entry.buckets ?? '') ?? defaultBuckets(name)) : undefined,
-      entry,
-      identity: id,
+    const entry = checkDomainMetricEntry(type, name);
+    return bind(scope, name, (id) => {
+      checkDomainMetricOwner(entry, id.domain);
+      return register({
+        name,
+        type,
+        help: entry.help,
+        labelNames: [...entry.labels],
+        buckets: type === 'histogram' ? (bucketPreset(entry.buckets ?? '') ?? defaultBuckets(name)) : undefined,
+        entry,
+        identity: id,
+      });
     });
   };
   return {
-    counter: (name) => {
-      const rec = make('counter', name);
-      return rec ? { add: (v, labels) => record(rec, v, labels) } : NOOP_COUNTER;
-    },
-    histogram: (name) => {
-      const rec = make('histogram', name);
-      return rec ? { record: (v, labels) => record(rec, v, labels) } : NOOP_HISTOGRAM;
-    },
+    counter: (name) => ({ add: make('counter', name) }),
+    histogram: (name) => ({ record: make('histogram', name) }),
   };
 }
 
@@ -263,35 +282,25 @@ export function getDomainMeter(scope?: Partial<MfeScope>): { counter(name: strin
  * Counters end in _total; histograms in _seconds (`_bytes` is only for registry metrics with
  * `unit: bytes`, as in gincommon's CheckCustom). Labels are snake_case, not prohibited and not
  * domain/service/environment, which the SDK injects. Default buckets: the request_duration preset.
+ * Before initializeCore, every rule but the service prefix is checked at creation (see getDomainMeter).
  */
 export function getServiceMeter(scope?: Partial<MfeScope>): {
   counter(name: string, help: string, labels: readonly string[]): Counter;
   histogram(name: string, help: string, labels: readonly string[], buckets?: readonly number[]): Histogram;
 } {
   const make = (type: MetricType, name: string, help: string, labels: readonly string[], buckets?: readonly number[]) => {
-    const id = resolveScope(scope);
-    if (!id) return undefined;
-    checkServiceMetric(type, name, labels, id.domain, id.service);
+    checkServiceMetricShape(type, name, labels);
     if (typeof help !== 'string' || help.trim() === '') throw new InvalidMetricError('registry', `metric "${name}": help text is required`);
-    return register({
-      name,
-      type,
-      help,
-      labelNames: [...labels],
-      buckets: type === 'histogram' ? (buckets ? checkBuckets(name, buckets) : defaultBuckets(name)) : undefined,
-      entry: undefined,
-      identity: id,
+    const bounds = type === 'histogram' ? (buckets ? checkBuckets(name, buckets) : defaultBuckets(name)) : undefined;
+    const labelNames = [...labels];
+    return bind(scope, name, (id) => {
+      checkServicePrefix(name, id.domain, id.service);
+      return register({ name, type, help, labelNames, buckets: bounds, entry: undefined, identity: id });
     });
   };
   return {
-    counter: (name, help, labels) => {
-      const rec = make('counter', name, help, labels);
-      return rec ? { add: (v, l) => record(rec, v, l) } : NOOP_COUNTER;
-    },
-    histogram: (name, help, labels, buckets) => {
-      const rec = make('histogram', name, help, labels, buckets);
-      return rec ? { record: (v, l) => record(rec, v, l) } : NOOP_HISTOGRAM;
-    },
+    counter: (name, help, labels) => ({ add: make('counter', name, help, labels) }),
+    histogram: (name, help, labels, buckets) => ({ record: make('histogram', name, help, labels, buckets) }),
   };
 }
 

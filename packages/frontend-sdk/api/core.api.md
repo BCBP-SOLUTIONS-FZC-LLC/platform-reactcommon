@@ -105,6 +105,9 @@ export function sanitizeFields(f: Record<string, unknown>): Record<string, unkno
 export function sanitizeString(s: string): string;
 
 // @public
+export function scrubSecrets(s: string): string;
+
+// @public
 export type ServiceName = string & {
     readonly __brand: 'ServiceName';
 };

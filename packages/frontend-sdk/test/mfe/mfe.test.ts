@@ -12,6 +12,7 @@ import {
   startVersionPolling,
   subscribeAppUpdate,
 } from '../../src/mfe/index.ts';
+import { currentManifest } from '../../src/mfe/manifest.ts';
 import { containerGlobal, resetContainersForTests, setMfeInternalsForTests } from '../../src/mfe/remote.ts';
 import { FakeStorage } from '../core/helpers.ts';
 
@@ -177,6 +178,21 @@ describe('loadRemote', () => {
   it('fails a remote that is not in the manifest', async () => {
     install('nope', {});
     await expect(loadRemote('nope', './X', { retries: 0 })).rejects.toBeInstanceOf(RemoteLoadError);
+  });
+
+  it('never resolves a remote name from Object.prototype', async () => {
+    const inject = vi.fn(async () => {});
+    setMfeInternalsForTests({ injectScript: inject });
+    const published = { ...currentManifest() }; // a plain object, as a test or older shell may publish
+    for (const manifest of [currentManifest(), published]) {
+      getRuntime().manifest = manifest;
+      for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+        const e = await loadRemote(name, './X', { retries: 0 }).catch((x: unknown) => x);
+        expect(e).toBeInstanceOf(RemoteLoadError);
+        expect((e as Error).message).toContain('not in the remote manifest');
+      }
+    }
+    expect(inject).not.toHaveBeenCalled();
   });
 
   it('retries a failing entry with backoff, then succeeds', async () => {

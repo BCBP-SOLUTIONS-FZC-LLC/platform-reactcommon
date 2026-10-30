@@ -387,10 +387,21 @@ interface Shared {
 
 const inFlightGets = new Map<string, Shared>();
 
-/** A subscriber's view of a shared GET: rejects with AbortedError when its own signal aborts. */
+/** A deep copy of a response's data (parsed JSON, text or undefined); status, headers etc. are kept. */
+function copyData(r: ApiResponse<unknown>): ApiResponse<unknown> {
+  const d = r.data;
+  if (typeof d !== 'object' || d === null) return r;
+  return { ...r, data: typeof structuredClone === 'function' ? structuredClone(d) : (JSON.parse(JSON.stringify(d)) as unknown) };
+}
+
+/**
+ * A subscriber's view of a shared GET: rejects with AbortedError when its own signal aborts. The
+ * first subscriber gets the response itself, later ones a copy of its data, so one caller
+ * mutating it (e.g. sorting in place) never changes what the others see.
+ */
 function subscribe<T>(shared: Shared, signal?: AbortSignal): Promise<ApiResponse<T>> {
-  shared.subscribers++;
-  if (!signal) return shared.promise as Promise<ApiResponse<T>>;
+  const own = shared.subscribers++ === 0 ? (r: ApiResponse<unknown>) => r : copyData;
+  if (!signal) return shared.promise.then(own) as Promise<ApiResponse<T>>;
   return new Promise((resolve, reject) => {
     const onAbort = () => {
       shared.aborted++;
@@ -406,7 +417,7 @@ function subscribe<T>(shared: Shared, signal?: AbortSignal): Promise<ApiResponse
     shared.promise.then(
       (r) => {
         signal.removeEventListener('abort', onAbort);
-        resolve(r as ApiResponse<T>);
+        resolve(own(r) as ApiResponse<T>);
       },
       (e: unknown) => {
         signal.removeEventListener('abort', onAbort);

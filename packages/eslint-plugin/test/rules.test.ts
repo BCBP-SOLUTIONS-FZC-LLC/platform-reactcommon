@@ -14,12 +14,18 @@ const tester = new RuleTester({
 });
 
 tester.run('no-sdk-root-import', rules['no-sdk-root-import']!, {
-  valid: ["import { getLogger } from '@platform/frontend-sdk/logging';", "import x from '@platform/frontend-sdk-extra';"],
+  valid: [
+    "import { getLogger } from '@platform/frontend-sdk/logging';",
+    "import x from '@platform/frontend-sdk-extra';",
+    'const m = require(`@platform/frontend-sdk${suffix}`);', // a built specifier is not static: not checked
+  ],
   invalid: [
     { code: "import { getLogger } from '@platform/frontend-sdk';", errors: [{ messageId: 'root' }] },
     { code: "export * from '@platform/frontend-sdk';", errors: [{ messageId: 'root' }] },
     { code: "const m = await import('@platform/frontend-sdk');", errors: [{ messageId: 'root' }] },
     { code: "const m = require('@platform/frontend-sdk');", errors: [{ messageId: 'root' }] },
+    { code: 'const m = require(`@platform/frontend-sdk`);', errors: [{ messageId: 'root' }] },
+    { code: 'const m = await import(`@platform/frontend-sdk`);', errors: [{ messageId: 'root' }] },
   ],
 });
 
@@ -28,12 +34,15 @@ tester.run('no-sdk-deep-import', rules['no-sdk-deep-import']!, {
     "import { createApiClient } from '@platform/frontend-sdk/http';",
     "import { createTestPlatform } from '@platform/frontend-sdk/testing';",
     "import pkg from '@platform/frontend-sdk/package.json';",
+    'const m = await import(`@platform/frontend-sdk/${name}`);', // a built specifier is not static: not checked
   ],
   invalid: [
     { code: "import { x } from '@platform/frontend-sdk/http/client';", errors: [{ messageId: 'deep' }] },
     { code: "import { x } from '@platform/frontend-sdk/dist/http/index.js';", errors: [{ messageId: 'deep' }] },
     { code: "import { x } from '@platform/frontend-sdk/internal';", errors: [{ messageId: 'deep' }] },
     { code: "export { x } from '@platform/frontend-sdk/src/core/index.ts';", errors: [{ messageId: 'deep' }] },
+    { code: 'const m = await import(`@platform/frontend-sdk/http/client`);', errors: [{ messageId: 'deep' }] },
+    { code: 'const m = require(`@platform/frontend-sdk/internal`);', errors: [{ messageId: 'deep' }] },
   ],
 });
 
@@ -45,7 +54,7 @@ tester.run('no-identity-headers', rules['no-identity-headers']!, {
     "const o = { 'x-user-id': 1 };", // not a headers object
     'fetch(u, { headers: h });', // not an object literal: nothing to inspect
     "fetch(u, { headers: { [name]: v, 1: 'one', ...base } });", // computed, numeric and spread keys are not names
-    "fetch(u, { ['headers']: { 'x-user-id': u } });", // a computed `headers` key is not recognised
+    "fetch(u, { [`headers${n}`]: { 'x-user-id': u } });", // a built key is not known to be headers
     'new Headers(init);',
     'new Headers();',
     "new Map({ 'x-user-id': u });",
@@ -62,6 +71,8 @@ tester.run('no-identity-headers', rules['no-identity-headers']!, {
     { code: "fetch(u, { headers: { ['x-departments']: d } });", errors: 1 },
     { code: "fetch(u, { headers: { ...base, 'x-user-id': u } });", errors: [{ messageId: 'header', data: { name: 'x-user-id' } }] },
     { code: "headers['set']('x-plan', p);", errors: [{ messageId: 'header', data: { name: 'x-plan' } }] },
+    { code: "fetch(u, { ['headers']: { 'x-user-id': id } });", errors: [{ messageId: 'header', data: { name: 'x-user-id' } }] },
+    { code: "fetch(u, { [`headers`]: { [`x-plan`]: p } });", errors: [{ messageId: 'header', data: { name: 'x-plan' } }] },
   ],
 });
 
@@ -130,6 +141,7 @@ tester.run('no-runtime-css-in-js', rules['no-runtime-css-in-js']!, {
     { code: "const m = await import('goober');", errors: 1 },
     { code: "export { styled } from '@stitches/react';", errors: 1 },
     { code: "const s = require('styled-jsx/style');", errors: 1 },
+    { code: 'const s = require(`styled-components`);', errors: [{ messageId: 'css', data: { source: 'styled-components' } }] },
   ],
 });
 

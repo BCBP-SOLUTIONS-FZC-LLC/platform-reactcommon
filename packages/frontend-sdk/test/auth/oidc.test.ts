@@ -10,7 +10,7 @@ import {
   type Workspace,
   type WorkspaceResolver,
 } from '../../src/auth/index.ts';
-import { ACTIVITY_KEY, PENDING_PREFIX, RESTORE_MARK_KEY, SIGNED_OUT_KEY } from '../../src/auth/oidc.ts';
+import { ACTIVITY_KEY, LAST_USER_KEY, PENDING_PREFIX, RESTORE_MARK_KEY, SIGNED_OUT_KEY } from '../../src/auth/oidc.ts';
 import { WORKSPACE_CACHE_KEY } from '../../src/auth/workspace.ts';
 import { RuntimeConfigSchema, setRuntimeConfig, type RuntimeConfig } from '../../src/config/index.ts';
 import { initializeCore } from '../../src/core/index.ts';
@@ -540,6 +540,47 @@ describe('logout', () => {
     await idp.switchWorkspace(GLOBEX);
     await idp.logout();
     expect(JSON.stringify(FakeBroadcastChannel.sent)).not.toMatch(/at-|eyJ/);
+  });
+});
+
+describe('shared device', () => {
+  it('after a local logout, Sign in asks for credentials (prompt=login) until a sign-in succeeds', async () => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page);
+    await idp.logout();
+    page.install();
+    await provider().login({ workspace: ACME });
+    expect(authorizeParams(page).get('prompt')).toBe('login');
+    // An explicit prompt from the caller wins.
+    await provider().login({ workspace: ACME, prompt: 'login' });
+    expect(authorizeParams(page).get('prompt')).toBe('login');
+
+    // The sign-in clears the mark; the next login uses the SSO session as usual.
+    page.url = new URL(kc.approve(page.assigned.at(-1)!));
+    expect((await provider().init()).status).toBe('authenticated');
+    expect(page.local.getItem(SIGNED_OUT_KEY)).toBeNull();
+    await provider().login({ workspace: ACME });
+    expect(authorizeParams(page).get('prompt')).toBeNull();
+  });
+
+  it('a different user signing in to the same workspace never sees the previous user\'s app storage', async () => {
+    const shared = new FakePage('/').local;
+    await signIn(new FakePage('/', shared));
+    storage('tenders').set('filter', 'mine');
+    expect(shared.getItem(LAST_USER_KEY)).toMatch(/^[0-9a-f]{64}$/);
+
+    // The same user again (e.g. after step-up) keeps it.
+    await signIn(new FakePage('/', shared));
+    expect(storage('tenders').get('filter')).toBe('mine');
+
+    // Idle expiry, then someone else signs in with prompt=login in the same realm.
+    const { state } = await signIn(new FakePage('/', shared), ACME, { claims: { sub: 'user-2', name: 'Bob' } });
+    expect(state).toMatchObject({ status: 'authenticated', user: { sub: 'user-2' } });
+    expect(shared.getItem('tenant-acme:tenders:filter')).toBeNull();
+    expect(storage('tenders').get('filter')).toBeUndefined();
+    // Only a hash is kept, never the sub.
+    expect(shared.getItem(LAST_USER_KEY)).toMatch(/^[0-9a-f]{64}$/);
+    expect(new FakePage('/', shared).storedValues()).not.toMatch(/user-1|user-2/);
   });
 });
 
