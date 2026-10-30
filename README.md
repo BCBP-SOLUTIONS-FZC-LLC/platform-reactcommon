@@ -34,3 +34,33 @@ pnpm contracts:sync  # regenerate packages/frontend-sdk/contracts/ from the back
   commits pinned in `contracts/sources.json`. Needs `go` on PATH. Never edit them by hand.
 - **Public API**: `pnpm api` updates `packages/frontend-sdk/api/<subpath>.api.md`; an API change
   needs a changeset (`pnpm changeset`). Versions are `1.0.0-alpha.N` until the first environment.
+
+## CI and releases
+
+`.github/` mirrors platform-gincommon's pipeline (same job names and gates; the image jobs map to the
+three npm packages).
+
+- **CI** (`ci.yml`, every PR and every push to `main`):
+  - `Validate / Test`: every test, with a coverage gate of ≥ 94 % statements of `packages/*/src`.
+  - `Validate / Quality`: workflow hygiene, actions pinned by SHA, lockfile, exports, lint, typecheck,
+    build, API reports, dependency rules, the example CSP checks and `pnpm audit --prod`.
+  - `Validate / Contracts`: generated `contracts/` against the pinned backend commits, and metrics parity.
+  - `Package tarballs`: the three `.tgz` files a release ships.
+  - `Trivy scan`: dependencies, secrets and config; SARIF goes to the Security tab, plus a CycloneDX SBOM.
+  - `Smoke tests`: the packed tarballs, installed into an empty project.
+  - `Cross-language compatibility`: platform-interop-tests, including pair 4 with this ref.
+  - `PR summary`: one comment on the PR with every result.
+- **Changeset check**: a PR that changes a published package adds a `.changeset/*.md` entry.
+- **Release** (`release.yml`): the three packages share one version (changesets `fixed`).
+  1. In a release PR, run `pnpm changeset version`. It bumps all three packages, writes each
+     `CHANGELOG.md` and consumes the changesets. Commit with `pnpm install` if the lockfile changes,
+     then merge.
+  2. Tag the merge commit `vX.Y.Z` (the version it set; `v1.0.0-alpha.N` during the alpha) and push
+     the tag.
+  3. `release.yml` verifies the tag (on `main`, all package versions equal to the tag, CHANGELOG
+     sections present). It then runs every CI gate at the tag and publishes a **GitHub Release**:
+     the tarballs, the SBOM, and `checksums.txt` with its Cosign Sigstore bundle. A tag with a
+     pre-release part is marked as a pre-release. There is no npm registry yet.
+
+Secrets: the org secrets `CI_REPO_READ_TOKEN` (sibling checkouts; `PLATFORM_REPOS_TOKEN` overrides it
+for the contracts job if set) and `GO_PRIVATE_TOKEN` (interop), as in platform-gincommon.

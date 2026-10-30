@@ -1,88 +1,241 @@
-name: ci
+# CI for https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
+#
+# Mirrors platform-gincommon's ci.yml (same job names and gates where they apply). This repo ships
+# three npm packages, not an image, so gincommon's image jobs map to the packages:
+#
+#   build-image → package  (build, then pack the three tarballs a release would publish)
+#   trivy       → trivy    (filesystem scan: runtime dependencies in pnpm-lock.yaml, secrets,
+#                           misconfiguration; SARIF to the Security tab; CycloneDX SBOM)
+#   smoke       → smoke    (install the packed tarballs into an empty project: every subpath
+#                           imports, the preset and eslint-plugin load, the published types check)
+#   push        → (none: merges to main publish nothing; releases publish on a vX.Y.Z tag)
+#
+# Parallel flow:
+#
+#   validate-test ──────┬──► interop
+#   package ────────────┼──► trivy ──────┐
+#                       └──► smoke ──────┤──► pr-summary (PR events only)
+#   validate-quality ────────────────────┤
+#   validate-contracts ──────────────────┘
+#
+# validate-test runs every test with coverage and the coverage gate, and gates trivy, smoke and
+# interop. validate-quality (hygiene, action pins, lint, types, build, API reports, dependency
+# rules, example CSP checks, audit) and validate-contracts (generated contracts vs the pinned
+# backend commits, metrics parity) gate merges and releases.
+#
+# pull_request runs for every base branch (the SDK is reviewed as stacked PRs), push for main.
+# paths-ignore skips the pipeline for commits that only touch Markdown.
+name: CI
 
-on:
-  pull_request:
+"on":
   push:
     branches: [main]
+    paths-ignore: ['**.md']
+  pull_request:
+    paths-ignore: ['**.md']
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
-  verify:
+  # ── runs in parallel with every other validate-* job and package ─────────
+  validate-test:
+    name: Validate / Test
+    uses: ./.github/workflows/validate-test.yml
+    secrets: inherit
+
+  validate-quality:
+    name: Validate / Quality
+    uses: ./.github/workflows/validate-quality.yml
+    secrets: inherit
+
+  validate-contracts:
+    name: Validate / Contracts
+    uses: ./.github/workflows/validate-contracts.yml
+    secrets: inherit
+
+  # ── the artefact: the three tarballs a release publishes ─────────────────
+  package:
+    name: Package tarballs
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Build packages
+        run: pnpm --filter "./packages/*" build
+
+      - name: Pack
+        run: bash .github/scripts/pack-packages.sh
+
+      - name: Upload tarballs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: packages-${{ github.sha }}
+          path: dist-packages/
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── gates on validate-test + package, runs in parallel with smoke ────────
+  trivy:
+    name: Trivy scan
+    runs-on: ubuntu-latest
+    needs: [validate-test, package]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Cache Trivy DB
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: /tmp/trivy-cache
+          key: trivy-db-${{ runner.os }}
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
+
+      # Table format: human-readable in CI logs; fails on CRITICAL/HIGH/UNKNOWN. Runtime
+      # dependencies only (Trivy leaves pnpm dev dependencies out by default).
+      - name: Trivy scan — CRITICAL / HIGH / UNKNOWN
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH,UNKNOWN
+          ignore-unfixed: true
+          cache-dir: /tmp/trivy-cache
+
+      # SARIF format: uploads to GitHub Security tab.
+      - name: Trivy scan — SARIF upload
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: '0'
+          ignore-unfixed: true
+          cache-dir: /tmp/trivy-cache
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        continue-on-error: true
+        with:
+          sarif_file: trivy-results.sarif
+
+      # CycloneDX SBOM — full component inventory for compliance / audit.
+      - name: Trivy SBOM — CycloneDX
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: cyclonedx
+          output: sbom.cyclonedx.json
+          exit-code: '0'
+          cache-dir: /tmp/trivy-cache
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.cyclonedx.json
+          retention-days: 90
+
+  # ── gates on validate-test + package, runs in parallel with trivy ────────
+  smoke:
+    name: Smoke tests
+    runs-on: ubuntu-latest
+    needs: [validate-test, package]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exports:check
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test:coverage
-      - run: pnpm build
-      - run: pnpm api:check
-      - run: pnpm depcruise
 
-  # design doc §C5 "How drift is caught", item 1: contracts/ must equal what the pinned backend
-  # sources generate. The sources are checked out next to this repo in the same layout as the
-  # local workspace (PLATFORM_ROOT = the workspace root).
-  contracts:
+      - name: Download tarballs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: packages-${{ github.sha }}
+          path: dist-packages
+
+      # Every SDK subpath imports and the root throws, the preset and eslint-plugin load, and a
+      # consumer typechecks against the published .d.ts files.
+      - name: Smoke tests
+        run: bash .github/scripts/smoke-tests.sh
+
+  # ── cross-language compatibility (platform-interop-tests) ─────────────────
+  interop:
+    name: Cross-language compatibility
+    needs: validate-test
+    uses: BCBP-SOLUTIONS-FZC-LLC/platform-interop-tests/.github/workflows/interop.yml@93e348183692fc684c6fbe719679d79ac28e291a # main 2026-10-30 (platform-interop-tests#9: pair 4, the frontend SDK)
+    with:
+      # This repo's own PR/branch ref; the other libraries default to their main branch.
+      platform_reactcommon_ref: ${{ github.head_ref || github.ref_name }}
+    secrets:
+      # Read access across the libraries and this repo (the org's GO_PRIVATE_TOKEN, as
+      # platform-gincommon passes it); interop.yml's input is named gh_private_token.
+      gh_private_token: ${{ secrets.GO_PRIVATE_TOKEN }}
+
+  # ── posts or updates a single comment on every PR push ───────────────────
+  pr-summary:
+    name: PR summary
     runs-on: ubuntu-latest
+    needs: [validate-test, validate-quality, validate-contracts, package, trivy, smoke, interop]
+    # always(): post the result on failure too, so an earlier "ready to merge" comment is
+    # replaced instead of left standing after a failing push.
+    if: always() && github.event_name == 'pull_request'
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          path: react/platform-reactcommon
-      - id: pins
-        working-directory: react/platform-reactcommon
-        run: |
-          for name in platform-gincommon platform-events platform-pgcommon platform-fastapicommon platform-interop-tests; do
-            echo "${name}=$(jq -r --arg n "$name" '.platform[$n].sha' packages/frontend-sdk/contracts/sources.json)" >> "$GITHUB_OUTPUT"
-          done
-          for name in iam-authz-enrichment iam-org-membership; do
-            echo "${name}=$(jq -r --arg n "$name" '.iam[$n].sha' packages/frontend-sdk/contracts/sources.json)" >> "$GITHUB_OUTPUT"
-          done
-      # Private sibling repos: PLATFORM_REPOS_TOKEN is a read-only token for the organisation.
-      - uses: actions/checkout@v5
-        with: { repository: BCBP-SOLUTIONS-FZC-LLC/platform-gincommon, ref: "${{ steps.pins.outputs.platform-gincommon }}", path: go/platform-gincommon, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
-      - uses: actions/checkout@v5
-        with: { repository: BCBP-SOLUTIONS-FZC-LLC/platform-events, ref: "${{ steps.pins.outputs.platform-events }}", path: go/platform-events, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
-      - uses: actions/checkout@v5
-        with: { repository: BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon, ref: "${{ steps.pins.outputs.platform-pgcommon }}", path: go/platform-pgcommon, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
-      - uses: actions/checkout@v5
-        with: { repository: BCBP-SOLUTIONS-FZC-LLC/platform-fastapicommon, ref: "${{ steps.pins.outputs.platform-fastapicommon }}", path: python/platform-fastapicommon, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
-      - uses: actions/checkout@v5
-        with: { repository: BCBP-SOLUTIONS-FZC-LLC/platform-interop-tests, ref: "${{ steps.pins.outputs.platform-interop-tests }}", path: platform-interop-tests, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
-      # IAM sources (gateway deny codes, the PUB-1/P-35 swagger) live in another org tree; IAM_REPOS_DIR points at them.
-      - uses: actions/checkout@v5
-        with: { repository: BCBP-SOLUTIONS-FZC-LLC/iam-authz-enrichment, ref: "${{ steps.pins.outputs.iam-authz-enrichment }}", path: iam/iam-authz-enrichment, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
-      - uses: actions/checkout@v5
-        with: { repository: BCBP-SOLUTIONS-FZC-LLC/iam-org-membership, ref: "${{ steps.pins.outputs.iam-org-membership }}", path: iam/iam-org-membership, token: "${{ secrets.PLATFORM_REPOS_TOKEN }}" }
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: platform-interop-tests/go-probe/go.mod
-          cache: false
-      - uses: pnpm/action-setup@v4
-        with:
-          package_json_file: react/platform-reactcommon/package.json
-      - uses: actions/setup-node@v5
-        with:
-          node-version-file: react/platform-reactcommon/.nvmrc
-          cache: pnpm
-          cache-dependency-path: react/platform-reactcommon/pnpm-lock.yaml
-      - working-directory: react/platform-reactcommon
-        run: pnpm install --frozen-lockfile
-      - working-directory: react/platform-reactcommon
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Post or update summary comment
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         env:
-          PLATFORM_ROOT: ${{ github.workspace }}
-          IAM_REPOS_DIR: ${{ github.workspace }}/iam
-        run: pnpm contracts:check
-      # design doc §C5 drift item 4: the SDK's metric rules agree with gincommon's metricslint,
-      # and its rendered inventory passes metricslint -strict.
-      - working-directory: react/platform-reactcommon
-        env:
-          PLATFORM_ROOT: ${{ github.workspace }}
-        run: pnpm metrics:parity
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const fs = require('fs')
+            const code = fs.readFileSync('.github/scripts/pr-summary.js', 'utf8')
+            const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+            const run = new AsyncFunction('github', 'context', 'core', 'require', 'process', code)
+            await run(github, context, core, require, process)

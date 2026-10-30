@@ -5,3 +5,4 @@ coverage/
 temp/
 *.tsbuildinfo
 .DS_Store
+dist-packages/
