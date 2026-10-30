@@ -24,7 +24,8 @@
     "metrics:parity": "tsx scripts/metrics-parity.ts",
     "examples:check": "tsx scripts/check-examples.ts",
     "docs:sync": "tsx scripts/sync-docs.ts",
-    "docs:check": "tsx scripts/sync-docs.ts --check"
+    "docs:check": "tsx scripts/sync-docs.ts --check",
+    "hooks:install": "hooks=$(git rev-parse --git-path hooks 2>/dev/null) || { echo 'Not a git checkout; skipping hooks'; exit 0; }; mkdir -p \"$hooks\" && cp .githooks/pre-commit \"$hooks/pre-commit\" && chmod +x \"$hooks/pre-commit\" && echo \"Installed git hooks ($hooks/pre-commit)\""
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",

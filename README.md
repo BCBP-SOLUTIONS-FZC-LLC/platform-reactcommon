@@ -165,6 +165,7 @@ packages/
   eslint-plugin/       consumer lint rules
 examples/              shell, remote-tenders, cloudfront (built and checked in CI)
 scripts/               contracts, exports, docs, API reports, metrics parity, example checks
+.githooks/pre-commit   local commit gates (pnpm hooks:install)
 docs/                  design · architecture · lld · areas · observability · problem-details
 ```
 
@@ -339,6 +340,7 @@ Node 22 (`.nvmrc`) and pnpm via corepack (`corepack enable`; the version comes f
 
 ```bash
 pnpm install
+pnpm hooks:install   # once per clone: .githooks/pre-commit
 pnpm verify
 ```
 
@@ -356,6 +358,7 @@ pnpm verify
 | `pnpm metrics:parity` | The SDK's metric checks vs gincommon's `metricslint` |
 | `pnpm examples:check` | CSP and sharing checks on the example builds (after `pnpm build`) |
 | `pnpm changeset` | Record a change to a published package |
+| `pnpm hooks:install` | Install `.githooks/pre-commit` into the repository's hooks |
 
 ### Running a single test
 
@@ -378,6 +381,7 @@ The example shell can't run end to end on its own: it needs Keycloak, the IAM AP
 
 | Tool | Use |
 |---|---|
+| `.githooks/pre-commit` | Before each commit, in about 10 s: lockfile drift, action SHA pins, `exports:check`, `docs:check`, lint, typecheck, dependency rules. Tests, the build and the API reports stay in `pnpm verify` and CI |
 | `actionlint`, `shellcheck -x` | Workflows and `.github/scripts` (both clean; CI runs the pin and hygiene checks) |
 | api-extractor reports | Review public API changes in `packages/frontend-sdk/api/` |
 | [mermaid.live](https://mermaid.live) or an IDE preview | Architecture diagrams in `docs/architecture/mermaid/` |

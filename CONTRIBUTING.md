@@ -15,11 +15,12 @@ This is an internal shared library for BCBP Solutions platform web apps: the Rea
 git clone https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
 cd platform-reactcommon
 corepack enable
-pnpm install   # frozen in CI: commit pnpm-lock.yaml changes
+pnpm install         # frozen in CI: commit pnpm-lock.yaml changes
+pnpm hooks:install   # copies .githooks/pre-commit into the repository's hooks
 pnpm verify    # exports + docs checks, lint, typecheck, tests, build, example checks, API reports, dependency rules
 ```
 
-`pnpm verify` runs the same checks as CI's quality and test gates. The other commands are listed in the [README](README.md#common-commands).
+The pre-commit hook runs the fast gates (lockfile drift, action SHA pins, generated exports and docs, lint, typecheck, dependency rules) in about 10 s. `pnpm verify` runs the same checks as CI's quality and test gates. The other commands are listed in the [README](README.md#common-commands).
 
 ## Project layout
 
@@ -37,6 +38,7 @@ packages/
   eslint-plugin/            ← Consumer lint rules (src/rules.ts, test/rules.test.ts)
 examples/                   ← shell, remote-tenders, cloudfront (built and checked in CI; not deployed)
 scripts/                    ← exports, contracts, docs, API reports, metrics parity, example checks
+.githooks/pre-commit        ← Local commit gates (`pnpm hooks:install`)
 docs/                       ← design · architecture · lld · areas · observability · problem-details
 ```
 

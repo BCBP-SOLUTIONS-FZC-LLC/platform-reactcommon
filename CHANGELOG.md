@@ -123,6 +123,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI and release modelled on platform-gincommon:**
   - tests with a coverage gate, quality, contracts, package tarballs, Trivy, smoke tests, interop, a PR summary;
   - a tag-triggered release to a GitHub Release with an SBOM and Cosign-signed checksums.
-- **Docs:** `ARCHITECTURE.md`, the LLD, functional areas, observability, problem details, `README.md`, `SECURITY.md`, `VERSIONING.md`, `CONTRIBUTING.md` and this changelog.
+- **Docs:** `ARCHITECTURE.md`, the LLD, functional areas, observability, problem details, `README.md`, `SECURITY.md`, `VERSIONING.md`, `CONTRIBUTING.md` and this changelog; a `.githooks/pre-commit` with the fast gates.
 
 [Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/commits/main
