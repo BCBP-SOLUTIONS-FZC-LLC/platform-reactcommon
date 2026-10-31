@@ -687,6 +687,7 @@ During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `
 |---|---|
 | Unit | Vitest per subpath (`test/unit/<subpath>`). Node by default; `happy-dom` for React; `jsdom` for DOMPurify. Coverage gate ≥ 98 % statements of `packages/*/src` |
 | Integration / E2E | `test/integration`: subpaths wired together; `test/e2e`: the reference shell and remote booted end to end (both in-process, jsdom) |
+| Browser | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP: keepalive and tab close, page-lifecycle event order, `AbortSignal.any` native and absent, Trusted Types (CI job `browser`) |
 | Smoke | `test/smoke`: the example builds served with the CloudFront headers and rewrite, or a deployed shell (`SMOKE_BASE_URL`) |
 | Contract | Shared fixtures from platform-interop-tests (headers, identity, redaction, problem bodies) and the PUB-1 / P-35 cases, run by the SDK and by the example shell's ports |
 | Fake backends | A Keycloak fake at the HTTP level (PKCE, rotation, reuse revokes the session); `mockApi` / `mockProblem` |

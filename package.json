@@ -40,6 +40,8 @@
     "test-e2e": "vitest run test/e2e",
     "test-examples": "vitest run examples",
     "test-smoke": "vitest run --config vitest.smoke.config.ts",
+    "test-browser": "playwright test",
+    "test-browser-install": "playwright install chromium firefox webkit",
     "test-smoke-package": "pnpm build && bash .github/scripts/pack-packages.sh && bash .github/scripts/smoke-tests.sh",
     "cover": "vitest run --coverage && echo 'Coverage report: coverage/index.html'",
     "cover-func": "vitest run --coverage --coverage.reporter=text",
@@ -47,7 +49,7 @@
     "ci": "pnpm mod-verify && pnpm exports:check && pnpm docs:check && pnpm lint && pnpm vet && pnpm cover-check && pnpm build && pnpm examples:check && pnpm api:check && pnpm vuln-check",
     "metrics-lint": "pnpm metrics:parity && pnpm docs:check",
     "metrics-inventory": "pnpm docs:sync",
-    "clean": "rm -rf coverage dist-packages packages/*/dist packages/frontend-sdk/temp examples/*/dist"
+    "clean": "rm -rf coverage dist-packages packages/*/dist packages/frontend-sdk/temp examples/*/dist playwright-report test-results test/browser/.build"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
@@ -58,12 +60,14 @@
     "@opentelemetry/sdk-logs": "^3.0.0",
     "@opentelemetry/sdk-metrics": "^3.0.0",
     "@opentelemetry/sdk-trace": "^3.0.0",
+    "@playwright/test": "1.64.1",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitest/coverage-v8": "^5.0.5",
     "dependency-cruiser": "^18.7.0",
+    "esbuild": "0.28.2",
     "eslint": "^10.13.0",
     "eslint-import-resolver-typescript": "^4.4.5",
     "eslint-plugin-boundaries": "^7.4.0",

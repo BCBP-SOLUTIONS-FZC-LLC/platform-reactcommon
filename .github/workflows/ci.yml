@@ -12,7 +12,7 @@
 #
 # Parallel flow:
 #
-#   validate-test ──────┬──► interop
+#   validate-test ──────┬──► interop, browser (Playwright: Chromium, Firefox, WebKit)
 #   package ────────────┼──► trivy ──────┐
 #                       └──► smoke ──────┤──► pr-summary (PR events only)
 #   validate-quality ────────────────────┤
@@ -196,6 +196,40 @@ jobs:
       - name: Smoke tests
         run: bash .github/scripts/smoke-tests.sh
 
+  # ── real browsers: Chromium, Firefox, WebKit (Playwright, test/browser) ──
+  # Keepalive budget and tab close, page-lifecycle event order, AbortSignal.any (native and absent),
+  # Trusted Types and the production CSP: what jsdom cannot model. Known SDK bugs are test.fail
+  # (test/browser/known-bugs.ts), so they pass until fixed and fail once a fix lands.
+  browser:
+    name: Browser tests
+    runs-on: ubuntu-latest
+    needs: validate-test
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # The browser builds match the pinned @playwright/test; --with-deps adds their system libraries.
+      - name: Install browsers
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
+
+      - name: Browser tests (Chromium, Firefox, WebKit)
+        run: pnpm run test-browser
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report-${{ github.sha }}
+          path: playwright-report/
+          retention-days: 14
+
   # ── cross-language compatibility (platform-interop-tests) ─────────────────
   interop:
     name: Cross-language compatibility
@@ -213,7 +247,7 @@ jobs:
   pr-summary:
     name: PR summary
     runs-on: ubuntu-latest
-    needs: [validate-test, validate-quality, validate-contracts, package, trivy, smoke, interop]
+    needs: [validate-test, validate-quality, validate-contracts, package, trivy, smoke, browser, interop]
     # always(): post the result on failure too, so an earlier "ready to merge" comment is
     # replaced instead of left standing after a failing push.
     if: always() && github.event_name == 'pull_request'

@@ -39,6 +39,7 @@ test/                       ← All tests, not beside production code (as platfo
   integration/              ← Several subpaths wired together, in-process
   e2e/                      ← The reference shell and remote booted end to end, in-process
   smoke/                    ← The served example builds, or a deployed shell (SMOKE_BASE_URL)
+  browser/                  ← Playwright: Chromium, Firefox, WebKit under the production CSP
   fixtures/                 ← Shared fakes and helpers
   testenv/                  ← Loads .env; sets OBSERVABILITY_DOMAIN, ENVIRONMENT defaults
 examples/                   ← shell, remote-tenders, cloudfront (built and checked in CI; not deployed)
@@ -103,6 +104,7 @@ Review the diff: a contract change that alters public behaviour (a new problem t
 | Contract | `test/unit/` (fixtures from `contracts/`) | Identity, redaction and problem fixtures shared with Go and Python |
 | Build | `test/unit/webpack-preset/`, `pnpm examples:check` | Real webpack builds: container globals, no SDK in remotes, no `eval` |
 | Examples | `examples/*/test/` | The shell's IAM ports against the contract cases; the CloudFront CSP and Lambda |
+| Browser | `test/browser/` | Playwright in Chromium, Firefox and WebKit (`pnpm run test-browser`): keepalive and tab close, page-lifecycle order, `AbortSignal.any`, Trusted Types, the production CSP. Known SDK bugs are `test.fail` in `known-bugs.ts` |
 | Interop | CI `interop` job | platform-interop-tests pair 4 at a pinned SHA |
 
 - Statement coverage of `packages/*/src` must stay **≥ 98%** (`pnpm test:coverage`, gated in CI). Don't lower the threshold.

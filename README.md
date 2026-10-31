@@ -383,6 +383,7 @@ The same task names as platform-gincommon's Makefile, as `package.json` scripts.
 | `test-examples` | (none) | The examples' own tests: the shell's IAM ports, CloudFront CSP and Lambda |
 | `test-cover` | `make test-cover` | Tests with coverage (`coverage/`) |
 | `test-smoke` | `make test-smoke` | `test/smoke`: the example builds served as CloudFront serves them (after `pnpm build`), or a deployed shell with `SMOKE_BASE_URL` |
+| `test-browser` | (none) | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP (`test-browser-install` installs the browsers once) |
 | `test-smoke-package` | `make test-smoke-image` | Build, pack the tarballs and run CI's tarball smoke tests against them (needs npm registry access) |
 | `build` | `make build` | Packages, then the example builds |
 | `cover` / `cover-func` | `make cover` / `make cover-func` | Coverage HTML report (`coverage/index.html`) / per-file table |
@@ -464,11 +465,12 @@ test/
   integration/           several subpaths wired together in-process (bootstrap, auth + http + telemetry, consent, MFE)
   e2e/                   the reference shell and remote booted end to end in-process (sign-in, remote, logout)
   smoke/                 the example builds served as CloudFront serves them, or a deployed shell (SMOKE_BASE_URL)
+  browser/               Playwright: the SDK in Chromium, Firefox and WebKit under the production CSP (test/browser/README.md)
   fixtures/              shared fakes and helpers (Keycloak, render, parity cases, the boundaries tree)
   testenv/               loads .env and sets defaults (OBSERVABILITY_DOMAIN, ENVIRONMENT, SMOKE_BASE_URL)
 ```
 
-`pnpm test` runs unit, integration and e2e (and the examples' and scripts' own tests); smoke is left out, as in gincommon, and runs with `pnpm run test-smoke`. Coverage is measured on `packages/*/src`.
+`pnpm test` runs unit, integration and e2e (and the examples' and scripts' own tests); smoke is left out, as in gincommon, and runs with `pnpm run test-smoke`. The real-browser suite runs with `pnpm run test-browser` (`--project=chromium|firefox|webkit` for one engine; `pnpm run test-browser-install` installs the browsers once). Coverage is measured on `packages/*/src`.
 
 ### Canonical tests (do not break)
 
