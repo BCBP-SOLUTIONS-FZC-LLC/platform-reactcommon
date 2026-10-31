@@ -118,6 +118,9 @@ function buildUrl(baseUrl: string, template: string, params?: RequestOptions['pa
   const path = template.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, (_, name: string) => {
     const v = params?.[name];
     if (v === undefined || v === null || v === '') throw new TypeError(`route template ${template} needs param :${name}`);
+    // encodeURIComponent keeps '.' and '..', which URL parsing would resolve as path steps (a value of
+    // '..' would send the call, with the token, to another endpoint).
+    if (String(v) === '.' || String(v) === '..') throw new TypeError(`param :${name} of ${template} must not be '.' or '..'`);
     used.add(name);
     return encodeURIComponent(String(v));
   });
@@ -169,6 +172,33 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/** AbortSignal.any where the browser has it (Safari < 17.4 doesn't); otherwise the same by hand. */
+function anySignal(a: AbortSignal, b: AbortSignal): AbortSignal {
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([a, b]);
+  const c = new AbortController();
+  const stop = (s: AbortSignal) => () => {
+    a.removeEventListener('abort', onA);
+    b.removeEventListener('abort', onB);
+    c.abort(s.reason);
+  };
+  const onA = stop(a);
+  const onB = stop(b);
+  if (a.aborted) onA();
+  else if (b.aborted) onB();
+  else {
+    a.addEventListener('abort', onA, { once: true });
+    b.addEventListener('abort', onB, { once: true });
+  }
+  return c.signal;
+}
+
+/** A failure while the request or its body was in flight, as the SDK's error type. */
+function transportError(call: Call, e: unknown): AbortedError | TimeoutError | NetworkError {
+  if (call.o.signal?.aborted) return new AbortedError();
+  if (call.deadline?.signal.aborted) return new TimeoutError(call.deadline.ms, call.requestId);
+  return new NetworkError(!isOnline(), call.requestId, { cause: e });
+}
+
 async function readData<T>(res: Response): Promise<T> {
   if (res.status === 204 || res.status === 205) return undefined as T;
   const text = await res.text();
@@ -187,6 +217,8 @@ interface Call {
   idempotencyKey: string | undefined;
   mfe: string;
   span: Span;
+  /** The current attempt's deadline: it still applies while the body is read. */
+  deadline?: { signal: AbortSignal; ms: number };
 }
 
 const STANDARD_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'CONNECT', 'TRACE']);
@@ -247,13 +279,12 @@ async function attempt(call: Call, token: string | undefined): Promise<Response>
 
   const timeoutMs = o.timeoutMs ?? tryGetConfig()?.api.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeout = AbortSignal.timeout(timeoutMs);
-  const signal = o.signal ? AbortSignal.any([o.signal, timeout]) : timeout;
+  call.deadline = { signal: timeout, ms: timeoutMs };
+  const signal = o.signal ? anySignal(o.signal, timeout) : timeout;
   try {
     return await fetch(url, { method, headers, signal, ...(body === undefined ? {} : { body }) });
   } catch (e) {
-    if (o.signal?.aborted) throw new AbortedError();
-    if (timeout.aborted) throw new TimeoutError(timeoutMs, call.requestId);
-    throw new NetworkError(!isOnline(), call.requestId, { cause: e });
+    throw transportError(call, e);
   }
 }
 
@@ -308,8 +339,15 @@ async function execute<T>(call: Call): Promise<ApiResponse<T>> {
         continue;
       }
 
-      if (!res.ok) throw await parseProblemResponse(res, { requestId: call.requestId });
-      const data = await readData<T>(res);
+      // The body is read under the same deadline and signal as the fetch: its failures get the same types.
+      let data: T;
+      try {
+        if (!res.ok) throw await parseProblemResponse(res, { requestId: call.requestId });
+        data = await readData<T>(res);
+      } catch (e) {
+        if (e instanceof ProblemError || e instanceof SyntaxError) throw e;
+        throw transportError(call, e);
+      }
       record(call, started, res.status);
       call.span.setAttribute('http.response.status_code', res.status);
       const traceId = res.headers.get('x-trace-id') ?? undefined;
@@ -340,6 +378,7 @@ async function execute<T>(call: Call): Promise<ApiResponse<T>> {
 }
 
 interface Shared {
+  key: string;
   promise: Promise<ApiResponse<unknown>>;
   controller: AbortController;
   subscribers: number;
@@ -348,14 +387,29 @@ interface Shared {
 
 const inFlightGets = new Map<string, Shared>();
 
-/** A subscriber's view of a shared GET: rejects with AbortedError when its own signal aborts. */
+/** A deep copy of a response's data (parsed JSON, text or undefined); status, headers etc. are kept. */
+function copyData(r: ApiResponse<unknown>): ApiResponse<unknown> {
+  const d = r.data;
+  if (typeof d !== 'object' || d === null) return r;
+  return { ...r, data: typeof structuredClone === 'function' ? structuredClone(d) : (JSON.parse(JSON.stringify(d)) as unknown) };
+}
+
+/**
+ * A subscriber's view of a shared GET: rejects with AbortedError when its own signal aborts. The
+ * first subscriber gets the response itself, later ones a copy of its data, so one caller
+ * mutating it (e.g. sorting in place) never changes what the others see.
+ */
 function subscribe<T>(shared: Shared, signal?: AbortSignal): Promise<ApiResponse<T>> {
-  shared.subscribers++;
-  if (!signal) return shared.promise as Promise<ApiResponse<T>>;
+  const own = shared.subscribers++ === 0 ? (r: ApiResponse<unknown>) => r : copyData;
+  if (!signal) return shared.promise.then(own) as Promise<ApiResponse<T>>;
   return new Promise((resolve, reject) => {
     const onAbort = () => {
       shared.aborted++;
-      if (shared.aborted === shared.subscribers) shared.controller.abort();
+      if (shared.aborted === shared.subscribers) {
+        // Nobody wants it any more: a new GET for the same key must start afresh, not join a dead request.
+        if (inFlightGets.get(shared.key) === shared) inFlightGets.delete(shared.key);
+        shared.controller.abort();
+      }
       reject(new AbortedError());
     };
     if (signal.aborted) return onAbort();
@@ -363,7 +417,7 @@ function subscribe<T>(shared: Shared, signal?: AbortSignal): Promise<ApiResponse
     shared.promise.then(
       (r) => {
         signal.removeEventListener('abort', onAbort);
-        resolve(r as ApiResponse<T>);
+        resolve(own(r) as ApiResponse<T>);
       },
       (e: unknown) => {
         signal.removeEventListener('abort', onAbort);
@@ -412,9 +466,12 @@ export function createApiClient(opts?: { baseUrl?: string; mfe?: string }): ApiC
         const controller = new AbortController();
         const call = startCall(method, template, { ...o, signal: controller.signal }, opts?.baseUrl, mfe);
         const promise = execute<unknown>(call);
-        shared = { promise, controller, subscribers: 0, aborted: 0 };
-        inFlightGets.set(key, shared);
-        const done = () => inFlightGets.delete(key);
+        const entry: Shared = { key, promise, controller, subscribers: 0, aborted: 0 };
+        shared = entry;
+        inFlightGets.set(key, entry);
+        const done = () => {
+          if (inFlightGets.get(key) === entry) inFlightGets.delete(key);
+        };
         promise.then(done, done);
       }
       return subscribe<T>(shared, o.signal);

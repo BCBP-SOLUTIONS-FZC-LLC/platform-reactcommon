@@ -1,6 +1,6 @@
 graph LR
     subgraph ci["ci.yml  —  every PR (any base) and push to main"]
-        vt["Validate / Test<br/>all tests · coverage ≥ 94% of packages/*/src"]
+        vt["Validate / Test<br/>all tests · coverage ≥ 98% of packages/*/src"]
         vq["Validate / Quality<br/>hygiene · action pins · lockfile · exports · lint · types ·<br/>build · API reports · depcruise · examples CSP · docs · audit"]
         vc["Validate / Contracts<br/>contracts:check · metrics:parity"]
         pk["Package tarballs<br/>build + pnpm pack ×3"]

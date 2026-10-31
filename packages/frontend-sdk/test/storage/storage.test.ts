@@ -111,6 +111,29 @@ describe('storage', () => {
     expect(s.get('b')).toBe(2);
   });
 
+  it('a write that fails when storage is full is read back for the page, and keeps the last saved value for a reload', () => {
+    storage('tenders').set('draft', 'v1');
+    expect(local.getItem('tenant-acme:tenders:draft')).toBe('"v1"');
+    local.failWrites = true; // QuotaExceededError from here on
+    storage('tenders').set('draft', 'v2');
+    expect(storage('tenders').get('draft')).toBe('v2');
+    // A fresh handle in the same page (what a remount sees) reads the new value too.
+    expect(storage('tenders').get('draft')).toBe('v2');
+    expect(local.getItem('tenant-acme:tenders:draft')).toBe('"v1"'); // what a reload gets: never neither value
+    // remove() and clear() still drop the page-only value.
+    storage('tenders').remove('draft');
+    expect(storage('tenders').get('draft')).toBeUndefined();
+    storage('tenders').set('draft', 'v3');
+    storage('tenders').clear();
+    expect(storage('tenders').get('draft')).toBeUndefined();
+    // Storage that also refuses removeItem: the value is still kept for the page.
+    local.removeItem = () => {
+      throw new DOMException('denied', 'SecurityError');
+    };
+    expect(() => storage('tenders').set('draft', 'v4')).not.toThrow();
+    expect(storage('tenders').get('draft')).toBe('v4');
+  });
+
   it('clear() removes only this app in this workspace and area', () => {
     storage('tenders').set('a', 1);
     storage('tenders').set('b', 2);
@@ -146,5 +169,45 @@ describe('clearAllAppStorage', () => {
     storage('tenders').set('a', 1);
     clearAllAppStorage();
     expect(storage('tenders').get('a')).toBeUndefined();
+  });
+});
+
+describe('storage without browser storage', () => {
+  it('falls back to the page when reading localStorage itself throws (blocked site data)', () => {
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('denied', 'SecurityError');
+      },
+    });
+    const s = storage('tenders');
+    s.set('a', { v: 1 });
+    expect(s.get('a')).toEqual({ v: 1 });
+    expect(local.length).toBe(0); // kept for this page only
+    s.remove('a');
+    expect(s.get('a')).toBeUndefined();
+  });
+
+  it('clear() drops only this app and workspace from the page fallback when storage is unavailable', () => {
+    vi.stubGlobal('localStorage', undefined);
+    storage('tenders').set('a', 1);
+    storage('iam-admin').set('a', 2);
+    getRuntime().storageNamespace = 'tenant-globex';
+    storage('tenders').set('a', 3);
+    getRuntime().storageNamespace = 'tenant-acme';
+    storage('tenders').clear();
+    expect(storage('tenders').get('a')).toBeUndefined();
+    expect(storage('iam-admin').get('a')).toBe(2);
+    getRuntime().storageNamespace = 'tenant-globex';
+    expect(storage('tenders').get('a')).toBe(3);
+  });
+
+  it('clearAllAppStorage() clears the page fallback and the other area when one area is unavailable', () => {
+    vi.stubGlobal('localStorage', undefined);
+    storage('tenders').set('a', 1);
+    storage('tenders', { area: 'session' }).set('b', 2);
+    clearAllAppStorage();
+    expect(storage('tenders').get('a')).toBeUndefined();
+    expect(session.length).toBe(0);
   });
 });

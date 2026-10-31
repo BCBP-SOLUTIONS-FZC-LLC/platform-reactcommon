@@ -47,10 +47,10 @@ jobs:
         run: pnpm test:coverage
 
       # Do not lower this threshold (statements of packages/*/src; 94.8% when it was set).
-      - name: Coverage threshold gate (≥ 94%)
+      - name: Coverage threshold gate (≥ 98%)
         id: gate
         env:
-          COVERAGE_THRESHOLD: '94'
+          COVERAGE_THRESHOLD: '98'
         run: bash .github/scripts/coverage-gate.sh
 
       - name: Upload coverage report

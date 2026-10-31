@@ -30,8 +30,28 @@ export class GoTraceIdRatioSampler implements Sampler {
   }
 
   toString(): string {
-    return `TraceIDRatioBased{${this.fraction}}`;
+    return `TraceIDRatioBased{${goFormatG(this.fraction)}}`;
   }
+}
+
+/**
+ * Go's %g (strconv.FormatFloat(f, 'g', -1, 64)): the shortest digits that round-trip, in exponent
+ * form when the exponent is < -4 or >= 6 (mantissa as short as possible, exponent signed and at
+ * least two digits: 1e-05), otherwise fixed. JS's own String() switches only below 1e-6 or at 1e21.
+ */
+export function goFormatG(f: number): string {
+  if (Number.isNaN(f)) return 'NaN';
+  if (!Number.isFinite(f)) return f > 0 ? '+Inf' : '-Inf';
+  if (f === 0) return Object.is(f, -0) ? '-0' : '0';
+  const sign = f < 0 ? '-' : '';
+  const [mantissa, e] = Math.abs(f).toExponential().split('e') as [string, string]; // shortest round-trip digits
+  const exp = Number(e);
+  if (exp < -4 || exp >= 6) return `${sign}${mantissa}e${exp < 0 ? '-' : '+'}${String(Math.abs(exp)).padStart(2, '0')}`;
+  const digits = mantissa.replace('.', '');
+  const point = exp + 1; // digits before the decimal point
+  if (point <= 0) return `${sign}0.${'0'.repeat(-point)}${digits}`;
+  if (point >= digits.length) return `${sign}${digits}${'0'.repeat(point - digits.length)}`;
+  return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
 }
 
 /** The root sampler for `ratio`, exactly as Go chooses it. */

@@ -684,7 +684,7 @@ The SDK subpaths and share range come from `src/generated/sdk.ts`, which `pnpm e
 
 ### 14.1 Release
 The packages are released together with one version (changesets `fixed`):
-1. A release PR runs `pnpm changeset version` (the bump) and turns `[Unreleased]` in the root `CHANGELOG.md` into the version's section.
+1. A release PR runs `pnpm run version-packages` (`changeset version`, the bump, then `exports:sync`, the generated SDK version) and turns `[Unreleased]` in the root `CHANGELOG.md` into the version's section.
 2. The merge commit is tagged `vX.Y.Z`.
 3. `release.yml` verifies the tag (on `main`, versions equal to the tag, the `CHANGELOG.md` section present) and reruns every CI gate at the tag.
 4. It publishes a GitHub Release with the three tarballs, a CycloneDX SBOM, and `checksums.txt` with a Cosign keyless signature bundle.
@@ -692,7 +692,7 @@ The packages are released together with one version (changesets `fixed`):
 There's no npm registry yet. Pre-release tags (`v1.0.0-alpha.N`) are marked as pre-releases.
 
 ### 14.2 Compatibility
-- **During the alpha:** breaking changes bump `N` and are listed in the CHANGELOG. Remotes share the SDK under `^1.0.0-0`.
+- **During the alpha:** breaking changes bump `N` and are listed in the CHANGELOG. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`.
 - **From `1.0.0`:** SemVer is strict. A remote built for another major fails share negotiation, and that failure stays inside its boundary.
 
 ### 14.3 Testing

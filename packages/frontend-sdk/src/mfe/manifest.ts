@@ -63,7 +63,8 @@ export async function loadManifest(url: string = DEFAULT_URL): Promise<RemoteMan
   if (!res.ok) throw new Error(`${url} answered HTTP ${res.status}`);
   const raw = (await res.json()) as unknown;
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new TypeError(`${url} is not a JSON object of remotes`);
-  const manifest: Record<string, RemoteManifestEntry> = {};
+  // Null prototype: a lookup by remote name never reaches Object.prototype ('constructor', …).
+  const manifest: Record<string, RemoteManifestEntry> = Object.create(null) as Record<string, RemoteManifestEntry>;
   for (const [name, entry] of Object.entries(raw)) {
     const problem = problemWith(name, entry);
     if (problem) {
@@ -75,7 +76,9 @@ export async function loadManifest(url: string = DEFAULT_URL): Promise<RemoteMan
   const frozen = Object.freeze(manifest);
   const rt = getRuntime();
   rt.manifest = frozen;
-  rt.remotes = Object.freeze(Object.fromEntries(Object.entries(frozen).map(([n, e]) => [n, e.ownerDomain])));
+  const remotes: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (const [n, e] of Object.entries(frozen)) remotes[n] = e.ownerDomain;
+  rt.remotes = Object.freeze(remotes);
   return frozen;
 }
 

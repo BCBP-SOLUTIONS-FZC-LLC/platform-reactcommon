@@ -6,7 +6,9 @@ import { setFlagProvider } from '../../src/flags/index.ts';
 import { initializeI18n, registerNamespace, setLocale } from '../../src/i18n/index.ts';
 import { getRuntime } from '../../src/internal/runtime.ts';
 import { resetContainersForTests } from '../../src/mfe/remote.ts';
-import { NetworkError, PlatformProblemTypes, type ApiError } from '../../src/problem/index.ts';
+import { AbortedError, NetworkError, PlatformProblemTypes, type ApiError } from '../../src/problem/index.ts';
+import { StrictMode } from 'react';
+import { renderToString } from 'react-dom/server';
 import {
   Can,
   MFEErrorBoundary,
@@ -316,6 +318,23 @@ describe('read-only, flags, permissions, locale', () => {
 });
 
 describe('useApi and useApiClient', () => {
+  it('loads under StrictMode, whose remount aborts the first request and asks again at once', async () => {
+    mockApi({ 'GET /tenders/:id': (req) => Response.json({ id: req.url.split('/').pop() }) });
+    function View() {
+      const r = useApi((c, signal) => c.get<{ id: string }>('/tenders/:id', { params: { id: '7' }, signal }).then((x) => x.data), []);
+      return <p>{r.loading ? 'loading' : (r.data?.id ?? 'none')}</p>;
+    }
+    const r = await render(
+      <StrictMode>
+        <MFEErrorBoundary mfe="tenders">
+          <View />
+        </MFEErrorBoundary>
+      </StrictMode>,
+    );
+    await settle();
+    expect(r.container.textContent).toBe('7');
+  });
+
   it('loads, reloads, aborts on deps change, and records the MFE scope', async () => {
     let calls = 0;
     mockApi({ 'GET /tenders/:id': (req) => Response.json({ id: req.url.split('/').pop(), n: ++calls }) });
@@ -446,6 +465,35 @@ describe('MFEErrorBoundary', () => {
     expect(r.container.textContent).toContain('req-2');
   });
 
+  it('uses the shell\'s platform catalog, and shows no reference for a problem without ids', async () => {
+    registerNamespace('platform', async () => ({ 'error.unexpected': 'Unerwarteter Fehler', 'error.retry': 'Nochmal' }));
+    await initializeI18n({ defaultLocale: 'de', supported: ['de'], detect: () => 'de' });
+    const { parseProblemResponse } = await import('../../src/problem/index.ts');
+    const problem = await parseProblemResponse(mockProblem(PlatformProblemTypes.Conflict, {}));
+    expect([problem.traceId, problem.requestId]).toEqual([undefined, undefined]);
+    function Bug(): never {
+      throw new Error('boom');
+    }
+    function Answer(): never {
+      throw problem;
+    }
+    const r = await render(
+      <>
+        <MFEErrorBoundary mfe="tenders">
+          <Bug />
+        </MFEErrorBoundary>
+        <MFEErrorBoundary mfe="bids">
+          <Answer />
+        </MFEErrorBoundary>
+      </>,
+    );
+    await settle();
+    const [bug, answer] = [...r.container.querySelectorAll('[role=alert]')];
+    expect(bug!.querySelector('p')!.textContent).toBe('Unerwarteter Fehler');
+    expect(bug!.querySelector('button')!.textContent).toBe('Nochmal');
+    expect(answer!.querySelector('code')).toBeNull();
+  });
+
   it('a chunk-load error reloads the page once', async () => {
     const reload = vi.fn();
     vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
@@ -529,5 +577,276 @@ describe('installGlobalErrorHandlers', () => {
       { source: 'unhandled_error', mfe: 'shell' },
       { source: 'unhandled_rejection', mfe: 'shell' },
     ]);
+  });
+});
+
+describe('without an identity provider', () => {
+  it('useBeforeAuthRedirect is a no-op', async () => {
+    getRuntime().identityProvider = undefined;
+    const save = vi.fn();
+    function Form() {
+      useBeforeAuthRedirect(save);
+      return <p>form</p>;
+    }
+    const r = await render(<Form />);
+    expect(r.container.textContent).toBe('form');
+    await r.unmount();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('useStepUp.reauthenticate rejects when the identity provider is gone', async () => {
+    let stepUp: ReturnType<typeof useStepUp> | undefined;
+    function View() {
+      stepUp = useStepUp();
+      return null;
+    }
+    await render(
+      <platform.Wrapper>
+        <View />
+      </platform.Wrapper>,
+    );
+    getRuntime().identityProvider = undefined;
+    await expect(stepUp!.reauthenticate()).rejects.toThrow('no identity provider (initializeAuth has not run)');
+  });
+
+  // Regression: getSession() must return one stable `loading` object, or useSyncExternalStore sees a
+  // new snapshot on every read and React aborts with "Maximum update depth exceeded".
+  it('useSession renders "loading" before initializeAuth', async () => {
+    getRuntime().identityProvider = undefined;
+    function View() {
+      return <p>{useSession().status}</p>;
+    }
+    const r = await render(<View />);
+    expect(r.container.textContent).toBe('loading');
+  });
+
+  // Regression: the hook subscribed to a no-op before initializeAuth and stayed `loading` until
+  // something else re-rendered it.
+  it('useSession follows a provider that initializeAuth installs after the first render', async () => {
+    getRuntime().identityProvider = undefined;
+    function View() {
+      return <p>{useSession().status}</p>;
+    }
+    const r = await render(<View />);
+    expect(r.container.textContent).toBe('loading');
+    const c = controllableIdp({ status: 'anonymous', reason: 'none' });
+    const subscribe = vi.spyOn(c.idp, 'subscribe');
+    await settle(() => initializeAuth(c.idp));
+    expect(r.container.textContent).toBe('anonymous');
+    await settle(() => c.set({ status: 'authenticated', user: { sub: 'u' }, workspace: ACME, expiresAt: 0 }));
+    expect(r.container.textContent).toBe('authenticated');
+    expect(subscribe).toHaveBeenCalledOnce();
+  });
+});
+
+describe('subscriptions', () => {
+  // Regression: inline subscribe functions made useSyncExternalStore unsubscribe and resubscribe on every render.
+  it('re-rendering keeps the same subscriptions', async () => {
+    const c = controllableIdp({ status: 'loading' });
+    const subscribe = vi.spyOn(c.idp, 'subscribe');
+    initializeAuth(c.idp);
+    function View({ n }: { n: number }) {
+      useSession();
+      useReadOnly();
+      useLocale();
+      useFeatureFlag('ai.drafting', false);
+      useHasPermission('read', 'tender');
+      return <p>{n}</p>;
+    }
+    const r = await render(<View n={0} />);
+    expect(subscribe).toHaveBeenCalledOnce();
+    const topics = [...getRuntime().events.values()].map((set) => vi.spyOn(set, 'add'));
+    expect(topics.length).toBeGreaterThanOrEqual(5);
+    for (let n = 1; n <= 3; n++) await r.rerender(<View n={n} />);
+    expect(r.container.textContent).toBe('3');
+    expect(subscribe).toHaveBeenCalledOnce();
+    for (const add of topics) expect(add).not.toHaveBeenCalled();
+  });
+});
+
+describe('hooks: edge cases', () => {
+  it('useStepUp returns to "/" when there is no location', async () => {
+    const c = controllableIdp({ status: 'authenticated', user: { sub: 'u' }, workspace: ACME, expiresAt: 0 });
+    initializeAuth(c.idp);
+    let stepUp: ReturnType<typeof useStepUp> | undefined;
+    function View() {
+      stepUp = useStepUp();
+      return null;
+    }
+    await render(<View />);
+    vi.spyOn(window, 'location', 'get').mockReturnValue(undefined as never);
+    await stepUp!.reauthenticate();
+    expect(c.idp.reauthenticate).toHaveBeenCalledWith({ maxAgeSeconds: 0, returnUrl: '/' });
+  });
+
+  it('server rendering reads the runtime snapshots and assumes online', () => {
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    getRuntime().readOnlyDenied = true;
+    setAuthorizer(roleMapAuthorizer({ 'test-role': ['update:tender'] }));
+    function View() {
+      const { locale, dir } = useLocale();
+      return <p>{[useReadOnly(), locale, dir, useFeatureFlag('ai.drafting', false), useHasPermission('update', 'tender'), useOnlineStatus()].join('|')}</p>;
+    }
+    expect(renderToString(<View />)).toBe('<p>true|en|ltr|true|true|true</p>');
+  });
+
+  it('useApi ends the load quietly on an AbortedError it did not cause (never stuck loading)', async () => {
+    let state: { loading: boolean; error?: ApiError; data?: unknown } | undefined;
+    function View() {
+      state = useApi(async () => {
+        throw new AbortedError();
+      }, []);
+      return null;
+    }
+    await render(
+      <MFEErrorBoundary mfe="tenders">
+        <View />
+      </MFEErrorBoundary>,
+    );
+    await settle();
+    expect(state).toMatchObject({ loading: false });
+    expect(state!.error).toBeUndefined();
+    expect(platform.logs.filter((l) => l.level === 'error')).toEqual([]);
+  });
+
+  it('useApi drops a result that arrives after its deps changed', async () => {
+    const pending: Record<string, (v: string) => void> = {};
+    function View({ id }: { id: string }) {
+      const r = useApi(() => new Promise<string>((resolve) => (pending[id] = resolve)), [id]);
+      return <p>{r.loading ? `loading:${r.data ?? '-'}` : r.data}</p>;
+    }
+    const r = await render(<View id="1" />);
+    await r.rerender(<View id="2" />);
+    await settle(() => pending['2']!('second'));
+    expect(r.container.textContent).toBe('second');
+    await settle(() => pending['1']!('stale'));
+    expect(r.container.textContent).toBe('second');
+  });
+
+  it('useApi keeps the previous data while reloading', async () => {
+    let n = 0;
+    let resolveNext: ((v: number) => void) | undefined;
+    let reload: () => void = () => {};
+    function View() {
+      const r = useApi(() => (++n === 1 ? Promise.resolve(n) : new Promise<number>((res) => (resolveNext = res))), []);
+      reload = r.reload;
+      return <p>{`${r.loading}:${r.data}`}</p>;
+    }
+    const r = await render(<View />);
+    await settle();
+    expect(r.container.textContent).toBe('false:1');
+    await settle(() => reload());
+    expect(r.container.textContent).toBe('true:1');
+    await settle(() => resolveNext!(2));
+    expect(r.container.textContent).toBe('false:2');
+  });
+
+  it('useAppUpdate.reload reloads the page', async () => {
+    const reloadPage = vi.fn();
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload: reloadPage } as Location);
+    let update: ReturnType<typeof useAppUpdate> | undefined;
+    function View() {
+      update = useAppUpdate();
+      return null;
+    }
+    await render(<View />);
+    update!.reload();
+    expect(reloadPage).toHaveBeenCalledOnce();
+  });
+});
+
+describe('RemoteBoundary: module shapes', () => {
+  function installRemote(factory: () => unknown) {
+    getRuntime().manifest = { tenders: { entry: '/remotes/tenders/1.0.0/remoteEntry.js', version: '1.0.0', ownerDomain: 'tender_management' } };
+    (globalThis as Record<string, unknown>).tenders = { init: async () => {}, get: async () => factory };
+  }
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).tenders;
+  });
+
+  it('renders a module that is itself the component', async () => {
+    installRemote(() => ({ id }: { id: string }) => <p>{`bare ${id}`}</p>);
+    const r = await render(<RemoteBoundary remote="tenders" module="./EditTender" props={{ id: '7' }} />);
+    await settle();
+    expect(r.container.textContent).toBe('bare 7');
+  });
+
+  it.each([
+    ['a number', { default: 42 }],
+    ['null', null],
+    ['a string', 'EditTender'],
+  ])('refuses %s as the component and isolates the failure', async (_label, mod) => {
+    installRemote(() => mod);
+    const r = await render(<RemoteBoundary remote="tenders" module="./EditTender" />);
+    await settle();
+    expect(r.container.querySelector('[role=alert]')).not.toBeNull();
+    expect(JSON.stringify(platform.logs)).toContain('module ./EditTender is not a component');
+  });
+});
+
+describe('installGlobalErrorHandlers: edge cases', () => {
+  function cspEvent(fields: Record<string, unknown>): Event {
+    return Object.assign(new Event('securitypolicyviolation'), fields);
+  }
+
+  beforeEach(() => sessionStorage.clear());
+
+  it('an error event without an error object logs its message and only the origin of the script', async () => {
+    const off = installGlobalErrorHandlers();
+    window.dispatchEvent(new ErrorEvent('error', { message: 'Script error.', filename: 'https://cdn.example/app.js?sig=secret#x' }));
+    off();
+    await settle();
+    expect(platform.logs.map((l) => l.body)).toEqual(['uncaught error']);
+    expect(platform.logs[0]!.attributes.source).toBe('https://cdn.example');
+    expect(JSON.stringify(platform.logs)).not.toContain('secret');
+  });
+
+  it('a chunk-load error or rejection reloads once instead of logging', async () => {
+    const reload = vi.fn();
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
+    const chunkError = () => Object.assign(new Error('Loading chunk 7 failed'), { name: 'ChunkLoadError' });
+    const off = installGlobalErrorHandlers();
+    window.dispatchEvent(new ErrorEvent('error', { error: chunkError() }));
+    expect(reload).toHaveBeenCalledOnce();
+    sessionStorage.clear();
+    window.dispatchEvent(Object.assign(new Event('unhandledrejection'), { reason: chunkError() }));
+    expect(reload).toHaveBeenCalledTimes(2);
+    off();
+    await settle();
+    expect(platform.logs.filter((l) => l.level === 'error')).toEqual([]);
+    expect(webErrors).toEqual([
+      { source: 'chunk_load', mfe: 'shell' },
+      { source: 'chunk_load', mfe: 'shell' },
+    ]);
+  });
+
+  it('redacts CSP reports to a keyword, scheme or origin, and keeps report-only disposition', async () => {
+    const off = installGlobalErrorHandlers();
+    window.dispatchEvent(cspEvent({ effectiveDirective: 'script-src', blockedURI: 'inline', disposition: 'report' }));
+    window.dispatchEvent(cspEvent({ violatedDirective: 'img-src', blockedURI: 'data:image/png;base64,c2VjcmV0' }));
+    window.dispatchEvent(cspEvent({ violatedDirective: 'connect-src', blockedURI: 'not a url /with?token=secret' }));
+    window.dispatchEvent(cspEvent({}));
+    off();
+    await settle();
+    const rows = platform.logs.map((l) => [l.attributes.violated_directive, l.attributes.blocked_uri, l.attributes.disposition]);
+    expect(rows).toEqual([
+      ['script-src', 'inline', 'report'],
+      ['img-src', 'data', 'enforce'],
+      ['connect-src', 'other', 'enforce'],
+      ['', '', 'enforce'],
+    ]);
+    expect(platform.logs.map((l) => l.level)).toEqual(['warn', 'warn', 'warn', 'warn']);
+    expect(JSON.stringify(platform.logs)).not.toMatch(/secret|c2VjcmV0/);
+  });
+
+  it('is a no-op without addEventListener (non-browser runtimes)', () => {
+    vi.stubGlobal('addEventListener', undefined);
+    try {
+      const off = installGlobalErrorHandlers();
+      expect(off).toBeTypeOf('function');
+      expect(() => off()).not.toThrow();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

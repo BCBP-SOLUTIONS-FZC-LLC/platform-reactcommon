@@ -125,4 +125,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - a tag-triggered release to a GitHub Release with an SBOM and Cosign-signed checksums.
 - **Docs:** `ARCHITECTURE.md`, the LLD, functional areas, observability, problem details, `README.md`, `SECURITY.md`, `VERSIONING.md`, `CONTRIBUTING.md` and this changelog; a `.githooks/pre-commit` with the fast gates.
 
+### Security
+
+Fixed before the first release, after a security and production-readiness review:
+
+- `/http`: route param values `.` and `..` are refused; URL parsing resolved them as path steps, so the call (with the token) could reach another endpoint.
+- `/logging`, `/tracing`: sensitive keys inside class instances are redacted, and span attributes and recorded errors are scrubbed of JWT and Bearer values like logs (`scrubSecrets` in `/core`).
+- `/auth` on shared devices: after a local logout the next sign-in asks for credentials (`prompt=login`); a sign-in by a different user clears the previous user's app storage first (only a SHA-256 of realm and `sub` is kept).
+- `/mfe`: remote names never resolve from `Object.prototype`; an already-aborted `loadRemote` injects no script.
+- `/config`: `http://localhost` origins are accepted only when the page environment is `local`, `dev` or `test`.
+- `examples/cloudfront`: `/csp-report` is a Lambda URL behind a CloudFront secret origin header (`x-origin-verify`, constant-time, rotation list, fails closed), not OAC, which refuses a browser's POST; the CSP adds `report-uri` as a fallback and takes the cross-origin remote and API origins.
+
+### Changed
+
+- `@platform/webpack-preset`: a remote requires `^<the SDK version it was built against>` (`sharedFor('remote')`); the shell keeps `^1.0.0-0`. A shell with an older SDK refuses the remote inside its `RemoteBoundary` instead of failing on a missing export. `react/jsx-runtime`, `react/jsx-dev-runtime` and `react-dom/client` are shared like `react`.
+- `/config`: `telemetry.enabled` (default `true`) turns all trace, log and metric export off.
+- `/flags`: `read_only` is true when the platform or the tenant says so.
+- Release PRs run `pnpm run version-packages` (`changeset version` + `exports:sync`).
+- The coverage gate is 98% of statements (as platform-gincommon); 1100+ tests.
+
+### Fixed
+
+- `/http` + `useApi`: a GET made right after every subscriber of a shared GET aborted no longer joins the dead request (`useApi` stayed `loading` under React StrictMode); failures while reading a body are `TimeoutError` / `AbortedError` / `NetworkError`; works without `AbortSignal.any` (Safari < 17.4); each subscriber of a deduplicated GET gets its own copy of `data`.
+- `/auth`, `/react`: `getSession()` returns one stable `loading` object before `initializeAuth` (React looped); hooks keep stable subscriptions; `useSession` follows a provider installed after its first render; the first recorded sign-in keeps a draft saved before the redirect.
+- `/tracing`: a hidden page sends the newest spans first in one keepalive request (a closing tab keeps them), then flushes the rest; `pagehide` sends what fits one keepalive request and counts the rest (`droppedOnUnload`); the sampler description matches Go's `%g`.
+- `/metrics`: instruments created before `initializeCore` record once it has run.
+- `/storage`: a write that fails (storage full) is read back for the rest of the page, and the last saved value stays for a reload.
+- `/i18n`: a namespace registered during a locale change loads the new locale; `/logging`: `Map` and `Set` keep their contents.
+- `@platform/eslint-plugin`: `no-identity-headers` sees computed `['headers']`; the import rules see template-literal `require` / `import()`.
+
 [Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/commits/main

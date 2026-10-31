@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Batcher, type BatcherStats } from '../../src/internal/batcher.ts';
+import { Batcher, exportWith, type BatcherStats } from '../../src/internal/batcher.ts';
 
 /** A send whose batches stay pending until released, to model a slow collector. */
 function slowSend() {
@@ -105,4 +105,48 @@ describe('Batcher', () => {
     expect(b.takeAll()).toEqual([2, 9, 3]);
     expect(stats.droppedQueueFull).toBe(1);
   });
+
+  it('sends a partial batch one delay after a slot frees when its timer fired while every slot was busy', async () => {
+    const s = slowSend();
+    const stats = newStats();
+    const b = new Batcher(s.send, stats, { maxQueueSize: 10, batchSize: 2, delayMs: 1000, maxInFlight: 1 });
+    b.add(1);
+    b.add(2); // full: in flight
+    b.add(3); // partial: its timer starts
+    await vi.advanceTimersByTimeAsync(1000); // fires, but no slot is free
+    expect(s.sent).toEqual([[1, 2]]);
+    s.pending.shift()!(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.sent).toEqual([[1, 2]]); // not at once: a partial batch waits for its delay
+    await vi.advanceTimersByTimeAsync(999);
+    expect(s.sent).toEqual([[1, 2]]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(s.sent).toEqual([[1, 2], [3]]);
+    s.pending.shift()!(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stats).toEqual({ exported: 3, droppedQueueFull: 0, exportFailures: 0 });
+  });
 });
+
+describe('exportWith', () => {
+  it("resolves true only for an OTel exporter's success code", async () => {
+    const exporter = { export: vi.fn((_items: number[], cb: (r: { code: number }) => void) => cb({ code: _items.length > 1 ? 1 : 0 })) };
+    const send = exportWith(exporter);
+    await expect(send([1])).resolves.toBe(true);
+    await expect(send([1, 2])).resolves.toBe(false);
+    expect(exporter.export).toHaveBeenCalledWith([1, 2], expect.any(Function));
+  });
+
+  it('feeds a Batcher that counts exporter failures', async () => {
+    const stats = newStats();
+    let code = 0;
+    const b = new Batcher(exportWith<number>({ export: (_i, cb) => cb({ code }) }), stats, { maxQueueSize: 10, batchSize: 1, delayMs: 1000, maxInFlight: 1 });
+    b.add(1);
+    await b.flush();
+    code = 2;
+    b.add(2);
+    await b.flush();
+    expect(stats).toEqual({ exported: 1, droppedQueueFull: 0, exportFailures: 1 });
+  });
+});
+

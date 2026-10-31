@@ -35,7 +35,7 @@ Import **subpaths** only (`@platform/frontend-sdk/http`). The root and deep path
 
 The shell provides the SDK to every remote as a **strict singleton** shared under `^<MAJOR>.0.0-0` (`@platform/webpack-preset`). So:
 - **Across majors:** a remote built for another major fails share negotiation. The failure stays in its `RemoteBoundary`, never breaking the shell. A MAJOR therefore means rebuilding the shell and every remote together.
-- **Within a major:** remotes run against **the shell's** SDK version. A remote that uses an export added in `1.4.0` needs a shell on `≥ 1.4.0`. Rule: **upgrade the shell first**, then the remotes.
+- **Within a major:** remotes run against **the shell's** SDK version. A remote requires `^<the SDK version it was built against>` (`sharedFor('remote')`), so a remote built on `1.4.0` is refused by a shell on `1.3.x`: the failure stays in its `RemoteBoundary` at share negotiation, never a missing export at run time. Rules: **upgrade the shell first**, then the remotes; **roll the shell back** only to an SDK at or above the newest one any deployed remote was built against.
 - **React and the OTel API** are shared the same way, with the ranges in `platformShared` (`react`/`react-dom` `^18.3.0 || ^19.0.0`, `@opentelemetry/api` `~1.10.0`). Narrowing any of them is a MAJOR.
 
 ### Guarantees
@@ -43,7 +43,7 @@ The shell provides the SDK to every remote as a **strict singleton** shared unde
 - **Pre-release `1.0.0-alpha.N` (current).** The repository is in changesets pre mode (`alpha`), so every release is `1.0.0-alpha.N`, whatever the bump:
   - a breaking change bumps `N` and is listed in the CHANGELOG;
   - nothing is deployed, and the shell and remotes upgrade together;
-  - remotes share the SDK under `^1.0.0-0`, which accepts every alpha and every later `1.x`.
+  - the shell shares the SDK under `^1.0.0-0`, and each remote requires `^<the SDK version it was built against>` (for example `^1.0.0-alpha.3`, which accepts later alphas and every `1.x`).
 - **MAJOR `1` (from `1.0.0`, cut with the first end-to-end environment):** we avoid breaking changes within `1.x`. When one is required, we release `2.0.0` and document the migration in the CHANGELOG.
 - **MINOR:** safe to upgrade without code changes unless you opt into new features (shell first, see above).
 - **PATCH:** drop-in replacement; upgrade recommended for security fixes.
@@ -87,9 +87,11 @@ The release workflow (`.github/workflows/release.yml`) automates verification, e
 
 1. **Merge** all changes for the release to `main`. Each change to a published package carries a `.changeset/*.md` and a `CHANGELOG.md` entry under `[Unreleased]` (the *Changelog check* workflow enforces both).
 
-2. **Open a release PR** that runs `pnpm changeset version`:
+2. **Open a release PR** that runs `pnpm run version-packages`:
    ```bash
-   pnpm changeset version   # bumps all three packages, consumes the changesets
+   pnpm run version-packages   # changeset version (bumps all three, consumes the changesets) + exports:sync
+   # exports:sync writes the version into the generated SDK facts (the share range remotes require);
+   # without it the release PR fails exports:check
    # CHANGELOG.md: rename [Unreleased] to [X.Y.Z] - YYYY-MM-DD, add an empty [Unreleased] and the compare links
    pnpm install             # if the lockfile changed
    pnpm verify
@@ -114,7 +116,7 @@ The release workflow (`.github/workflows/release.yml`) automates verification, e
 
 **Leaving the alpha (`1.0.0`):**
 1. `pnpm changeset pre exit`.
-2. `pnpm changeset version`, which sets `1.0.0`, and the `## [1.0.0]` CHANGELOG section.
+2. `pnpm run version-packages`, which sets `1.0.0`, and the `## [1.0.0]` CHANGELOG section.
 3. The release PR and the tag `v1.0.0`, as above.
 
 From then on, releases follow plain SemVer.

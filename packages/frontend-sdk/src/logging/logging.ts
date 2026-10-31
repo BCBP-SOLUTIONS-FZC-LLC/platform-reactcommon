@@ -4,6 +4,7 @@ import { context as otelContext, isSpanContextValid, trace } from '@opentelemetr
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { LoggerProvider, type LogRecordExporter } from '@opentelemetry/sdk-logs';
+import { tryGetConfig } from '../config/index.ts';
 import { NotInitializedError, getIdentity, getSessionId, hasConsent, type MfeScope } from '../core/index.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { collectorUrl } from '../internal/urls.ts';
@@ -69,6 +70,8 @@ function intOption(name: string, value: number | undefined, fallback: number, mi
 /**
  * Shell only: starts OTLP logging to `${otlpBaseUrl}/v1/logs`. Requires initializeCore (the
  * identity becomes the resource). A second call is a no-op. Loggers obtained earlier start sending.
+ * With `telemetry.enabled: false` in the runtime config it is a no-op: no record of any level
+ * (errors and essential warnings included) is sent; loggers keep writing to the console in local/dev.
  */
 export function initializeLogging(o: { otlpBaseUrl: string; level?: LogLevel; batchSize?: number; flushMs?: number }): void {
   const identity = getIdentity();
@@ -82,6 +85,7 @@ export function initializeLogging(o: { otlpBaseUrl: string; level?: LogLevel; ba
     flushMs: intOption('flushMs', o.flushMs, 5_000, 100, 60_000),
     maxQueueSize: 1_000,
   };
+  if (tryGetConfig()?.telemetry.enabled === false) return; // the runtime config's off switch
 
   const stats = { exported: 0, droppedQueueFull: 0, exportFailures: 0, beacons: 0, droppedNoConsent: 0 };
   const processor = new DropOldestLogProcessor(exporterFactory(url), url, stats, queue);

@@ -3,7 +3,7 @@
 # three packages' sources), from Vitest's coverage/coverage-summary.json.
 set -euo pipefail
 
-THRESHOLD="${COVERAGE_THRESHOLD:-94}"
+THRESHOLD="${COVERAGE_THRESHOLD:-98}"
 SUMMARY=coverage/coverage-summary.json
 
 test -f "${SUMMARY}" || {

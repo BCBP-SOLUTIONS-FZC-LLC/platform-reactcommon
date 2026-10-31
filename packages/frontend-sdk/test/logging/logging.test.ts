@@ -1,5 +1,6 @@
 import type { LogRecordExporter, ReadableLogRecord } from '@opentelemetry/sdk-logs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RuntimeConfigSchema, setRuntimeConfig } from '../../src/config/index.ts';
 import { NotInitializedError, getSessionId, initializeCore, setConsentProvider, type ConsentCategory } from '../../src/core/index.ts';
 import { getRuntime, resetRuntimeForTests } from '../../src/internal/runtime.ts';
 import { getLogger, initializeLogging, serializeError, setRouteTemplate } from '../../src/logging/index.ts';
@@ -27,6 +28,18 @@ const sent = async () => {
   return records;
 };
 const attrsOf = (r: ReadableLogRecord) => r.attributes as Record<string, unknown>;
+/** Sets the page's runtime config with telemetry.enabled = `enabled`. */
+const telemetryConfig = (enabled: boolean) =>
+  setRuntimeConfig(
+    RuntimeConfigSchema.parse({
+      api: { baseUrl: '/api' },
+      telemetry: { enabled },
+      auth: { idleTimeoutMs: 1_800_000, redirectPath: '/auth/callback' },
+      remotes: { loadTimeoutMs: 10_000, retries: 0 },
+      i18n: { defaultLocale: 'en', supportedLocales: ['en'] },
+      appUpdate: { pollIntervalMs: 300_000 },
+    }),
+  );
 const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
 
 beforeEach(() => {
@@ -59,6 +72,41 @@ describe('initializeLogging', () => {
     expect(() => start({ batchSize: 0 })).toThrow(RangeError);
     expect(() => start({ flushMs: 10 })).toThrow(RangeError);
     expect(() => start({ level: 'trace' as never })).toThrow(RangeError);
+  });
+
+  it('sends nothing at any level, and does not throw, when the runtime config turns telemetry off', async () => {
+    const beacon = vi.fn(() => true);
+    vi.stubGlobal('navigator', { sendBeacon: beacon });
+    telemetryConfig(false);
+    expect(() => start()).not.toThrow();
+    expect(loggingStats()).toBeUndefined();
+    const log = getLogger({ mfe: 'tenders' });
+    log.debug('d');
+    log.info('i');
+    log.warn('essential', { essential: true });
+    log.error('boom', { error: new Error('x') });
+    globalThis.dispatchEvent?.(new Event('pagehide'));
+    expect(await sent()).toEqual([]);
+    expect(exportedUrl).toBeUndefined(); // no exporter was even built
+    expect(beacon).not.toHaveBeenCalled();
+  });
+
+  it('keeps the dev console when the runtime config turns telemetry off', () => {
+    resetRuntimeForTests();
+    core('dev');
+    telemetryConfig(false);
+    start();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    getLogger().error('still visible');
+    expect(err).toHaveBeenCalledWith('[shell] still visible', expect.anything());
+    expect(exportedUrl).toBeUndefined();
+  });
+
+  it('sends as usual when the runtime config leaves telemetry on', async () => {
+    telemetryConfig(true);
+    start();
+    getLogger().error('sent');
+    expect((await sent()).map((r) => r.body)).toEqual(['sent']);
   });
 
   it('sends OTLP log records with gincommon resource attributes to <otlpBaseUrl>/v1/logs', async () => {
@@ -156,11 +204,70 @@ describe('redaction (sanitizeFields, then strings, then JWT/Bearer, then the mes
     expect(attrsOf(r!)).not.toHaveProperty('missing');
   });
 
+  it('redacts sensitive keys inside class instances, which sanitizeFields passes through', async () => {
+    class Creds {
+      user = 'u';
+      password = 'hunter2';
+      nested = { access_token: 'tok' };
+    }
+    start();
+    getLogger().info('x', { c: new Creds(), list: [new Creds()] });
+    const [r] = await sent();
+    const redacted = { user: 'u', password: '[REDACTED]', nested: { access_token: '[REDACTED]' } };
+    expect(attrsOf(r!)).toMatchObject({ c: redacted, list: [redacted] });
+    expect(JSON.stringify(attrsOf(r!))).not.toMatch(/hunter2|tok"/);
+  });
+
   it('catches a JWT cut short by the 256-byte limit', () => {
     const long = `${'x'.repeat(200)} ${JWT}`;
     expect(cleanString(long)).not.toContain('eyJ');
     expect(scrubSecrets('token eyJhbGciOiJIUzI1NiJ9.')).toBe('token [REDACTED]');
     expect(scrubSecrets('eyJ alone is fine')).toBe('eyJ alone is fine');
+  });
+
+  it('keeps booleans and null, serialises nested errors and invalid dates, and replaces cycles through class instances', async () => {
+    start();
+    class Node {
+      name = 'n';
+      next: Node | undefined;
+    }
+    const node = new Node();
+    node.next = node;
+    const cause = new Error(`refresh failed: Bearer ${JWT}`);
+    cause.stack = `Error: refresh failed\n    at https://app.example/x.js?token=abc:1:2`;
+    getLogger().info('x', { cause, list: [new TypeError('bad'), undefined], when: new Date(Number.NaN), node, ok: false, none: null });
+    const a = attrsOf((await sent())[0]!);
+    expect(a.cause).toEqual({ name: 'Error', message: 'refresh failed: Bearer [REDACTED]', stack: 'Error: refresh failed\n    at https://app.example/x.js:1:2' });
+    expect(a.list).toMatchObject([{ name: 'TypeError', message: 'bad' }, null]); // undefined in an array keeps its slot
+    expect(a.ok).toBe(false);
+    expect(a.none).toBeNull();
+    expect(a.when).toBe('Invalid Date');
+    expect(a.node).toEqual({ name: 'n', next: '[Circular]' });
+  });
+
+  it('logs a Map as an object of its entries and a Set as an array, redacted and with cycles replaced', async () => {
+    start();
+    const map = new Map<unknown, unknown>([
+      ['user', 'u'],
+      ['password', 'hunter2'],
+      [42, { access_token: 'tok', note: `see ${JWT}` }],
+      [{ id: 1 }, 'object key'],
+    ]);
+    map.set('self', map);
+    const set = new Set<unknown>(['a', 1, new Map([['api_key', 'k']])]);
+    set.add(set);
+    getLogger().info('x', { map, set, nested: { inner: new Map([['n', new Set([1, 2])]]) } });
+    const a = attrsOf((await sent())[0]!);
+    expect(a.map).toEqual({
+      user: 'u',
+      password: '[REDACTED]',
+      42: { access_token: '[REDACTED]', note: 'see [REDACTED]' },
+      '[object Object]': 'object key',
+      self: '[Circular]',
+    });
+    expect(a.set).toEqual(['a', 1, { api_key: '[REDACTED]' }, '[Circular]']);
+    expect(a.nested).toEqual({ inner: { n: [1, 2] } });
+    expect(JSON.stringify(a)).not.toMatch(/hunter2|tok"|"k"/);
   });
 
   it('replaces cycles', async () => {
@@ -313,6 +420,91 @@ describe('transport', () => {
     getLogger().info('refused');
     target.dispatchEvent(new Event('pagehide'));
     await vi.waitFor(() => expect(records.map((r) => r.body)).toEqual(['refused']));
+  });
+
+  it('sends nothing by beacon when the queue is empty, and only when the page becomes hidden', async () => {
+    const target = new EventTarget();
+    vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
+    vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+    vi.stubGlobal('document', doc);
+    const sendBeacon = vi.fn(() => true);
+    vi.stubGlobal('navigator', { sendBeacon });
+    start({ flushMs: 60_000 });
+    target.dispatchEvent(new Event('pagehide'));
+    expect(sendBeacon).not.toHaveBeenCalled(); // empty queue
+    getLogger().info('queued');
+    doc.dispatchEvent(new Event('visibilitychange'));
+    expect(sendBeacon).not.toHaveBeenCalled(); // still visible
+    doc.visibilityState = 'hidden';
+    doc.dispatchEvent(new Event('visibilitychange'));
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+    expect(loggingStats()).toMatchObject({ beacons: 1, exported: 1 });
+    await shutdownLogging();
+    doc.dispatchEvent(new Event('visibilitychange'));
+    expect(sendBeacon).toHaveBeenCalledTimes(1); // listeners removed
+    expect(records).toEqual([]);
+  });
+
+  it('falls back to fetch without sendBeacon, or when sendBeacon throws', async () => {
+    const target = new EventTarget();
+    vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
+    vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
+    vi.stubGlobal('navigator', {});
+    start({ flushMs: 60_000 });
+    getLogger().info('no-beacon');
+    target.dispatchEvent(new Event('pagehide'));
+    await vi.waitFor(() => expect(records.map((r) => r.body)).toEqual(['no-beacon']));
+
+    vi.stubGlobal('navigator', {
+      sendBeacon: () => {
+        throw new TypeError('Illegal invocation');
+      },
+    });
+    getLogger().info('beacon-threw');
+    expect(() => target.dispatchEvent(new Event('pagehide'))).not.toThrow();
+    await vi.waitFor(() => expect(records.map((r) => r.body)).toEqual(['no-beacon', 'beacon-threw']));
+    expect(loggingStats()!.beacons).toBe(0);
+  });
+
+  it('sends a single record over 60 KiB by fetch, not by beacon', async () => {
+    const target = new EventTarget();
+    vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
+    vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
+    const sendBeacon = vi.fn(() => true);
+    vi.stubGlobal('navigator', { sendBeacon });
+    start({ flushMs: 60_000 });
+    // Each string is capped at 256 bytes, but not how many an array holds (OTel caps attributes at 128).
+    getLogger().info('huge', { rows: Array.from({ length: 300 }, () => 'y'.repeat(250)) });
+    target.dispatchEvent(new Event('pagehide'));
+    expect(sendBeacon).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(records.map((r) => r.body)).toEqual(['huge']));
+    expect(attrsOf(records[0]!).rows).toHaveLength(300);
+    expect(loggingStats()!.beacons).toBe(0);
+  });
+
+  it('never rejects on shutdown when the exporter fails to flush or shut down', async () => {
+    const rejecting: LogRecordExporter = {
+      export: exporter.export,
+      forceFlush: () => Promise.reject(new Error('flush failed')),
+      shutdown: () => Promise.reject(new Error('shutdown failed')),
+    };
+    const throwing: LogRecordExporter = {
+      export: exporter.export,
+      forceFlush: () => {
+        throw new Error('not a promise');
+      },
+      shutdown: async () => {},
+    };
+    for (const e of [rejecting, throwing]) {
+      setLoggingInternalsForTests({ exporter: () => e });
+      records = [];
+      start();
+      getLogger().info('delivered');
+      await expect(shutdownLogging()).resolves.toBeUndefined();
+      expect(records.map((r) => r.body)).toEqual(['delivered']);
+      expect(loggingStats()).toBeUndefined();
+    }
   });
 
   it('splits beacons over 60 KiB', async () => {

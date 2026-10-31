@@ -19,6 +19,7 @@ export const PENDING_PREFIX = '@platform/frontend-sdk:auth:pending:';
 export const RESTORE_MARK_KEY = '@platform/frontend-sdk:auth:restore-attempt'; // sessionStorage: the loop guard
 export const SIGNED_OUT_KEY = '@platform/frontend-sdk:auth:signed-out'; // localStorage, shared by tabs
 export const ACTIVITY_KEY = '@platform/frontend-sdk:auth:last-activity'; // localStorage, shared by tabs
+export const LAST_USER_KEY = '@platform/frontend-sdk:auth:last-user'; // localStorage: SHA-256 of realm + sub, never the sub
 export const CHANNEL_NAME = 'platform-auth';
 
 const PENDING_TTL_MS = 10 * 60_000;
@@ -97,9 +98,37 @@ function randomToken(bytes: number): string {
   return base64url(b);
 }
 
+async function sha256(text: string): Promise<Uint8Array> {
+  return new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
+}
+
 async function s256(verifier: string): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
-  return base64url(new Uint8Array(digest));
+  return base64url(await sha256(verifier));
+}
+
+/**
+ * Storage namespaces are per tenant, not per user: when this sign-in is a different user from the last
+ * one on this browser (a shared device after idle expiry, step-up or signInAgain), the previous user's
+ * app storage goes before the new one sees it. Only a hash of realm + sub is kept. With no
+ * fingerprint recorded yet (first sign-in on this browser, or after an upgrade) nothing is cleared,
+ * so a draft saved just before the login redirect survives; an unreadable fingerprint clears.
+ */
+async function forgetPreviousUser(realm: string, sub: string): Promise<void> {
+  const fp = Array.from(await sha256(`${realm}\n${sub}`), (b) => b.toString(16).padStart(2, '0')).join('');
+  const s = store('local');
+  let last: string | null | undefined;
+  try {
+    last = s ? s.getItem(LAST_USER_KEY) : undefined;
+  } catch {
+    last = undefined; // unreadable: treat as a different user
+  }
+  if (last === fp) return;
+  if (last !== null) clearAllAppStorage();
+  try {
+    s?.setItem(LAST_USER_KEY, fp);
+  } catch {
+    // the next sign-in clears again, which is the safe side
+  }
 }
 
 /** The JWT payload, or undefined when it is not a JWT with a JSON object payload. Never verifies. */
@@ -607,6 +636,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       const body = (await res.json().catch(() => ({}))) as TokenResponse;
       if (!res.ok) throw new Error(`token endpoint answered ${res.status} ${typeof body?.error === 'string' ? body.error : ''}`.trim());
       const t = accept(body, w, record.nonce);
+      await forgetPreviousUser(w.realm, t.sub);
       flag('session', RESTORE_MARK_KEY, false);
       flag('local', SIGNED_OUT_KEY, false);
       return becomeAuthenticated(t, w);
@@ -652,7 +682,10 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     },
 
     login(o) {
-      return authorize({ workspace: o.workspace, reason: 'login', returnUrl: o.returnUrl, prompt: o.prompt, loginHint: o.loginHint });
+      // After a local logout Keycloak's SSO session is still alive: on a shared device the next "Sign in"
+      // would silently be the previous user, so credentials are asked for until a sign-in succeeds.
+      const prompt = o.prompt ?? (flag('local', SIGNED_OUT_KEY) ? 'login' : undefined);
+      return authorize({ workspace: o.workspace, reason: 'login', returnUrl: o.returnUrl, prompt, loginHint: o.loginHint });
     },
 
     async logout(o) {

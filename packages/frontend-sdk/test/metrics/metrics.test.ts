@@ -1,17 +1,32 @@
 import { AggregationTemporality, InMemoryMetricExporter, type PushMetricExporter } from '@opentelemetry/sdk-metrics';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RuntimeConfigSchema, setRuntimeConfig } from '../../src/config/index.ts';
 import { initializeCore, setConsentProvider, type ConsentCategory } from '../../src/core/index.ts';
 import { getRuntime, resetRuntimeForTests } from '../../src/internal/runtime.ts';
+import { METRIC_REGISTRY } from '../../src/internal/generated/metric-registry.ts';
 import { servicePrefix, suffixProblem } from '../../src/metrics/checks.ts';
 import { InvalidMetricError, getDomainMeter, getServiceMeter, initializeMetrics, startWebVitals } from '../../src/metrics/index.ts';
 import { renderMetricInventory } from '../../src/metrics/inventory.ts';
-import { metricsStats, setMetricsInternalsForTests, shutdownMetrics } from '../../src/metrics/metrics.ts';
+import { metricsState, metricsStats, setMetricsInternalsForTests, shutdownMetrics } from '../../src/metrics/metrics.ts';
 import { PARITY_CASES, sdkVerdict } from './parity-cases.ts';
 
 let exporter: InMemoryMetricExporter;
 let exportedUrl: string | undefined;
 const consent = (granted: ConsentCategory[]) => setConsentProvider({ has: (c) => granted.includes(c), subscribe: () => () => {} });
 const core = (domain = 'tender_management') => initializeCore({ serviceName: 'web-app', domain, environment: 'dev', buildVersion: '1.0.0' });
+
+/** Sets the page's runtime config with telemetry.enabled = `enabled`. */
+const telemetryConfig = (enabled: boolean) =>
+  setRuntimeConfig(
+    RuntimeConfigSchema.parse({
+      api: { baseUrl: '/api' },
+      telemetry: { enabled },
+      auth: { idleTimeoutMs: 1_800_000, redirectPath: '/auth/callback' },
+      remotes: { loadTimeoutMs: 10_000, retries: 0 },
+      i18n: { defaultLocale: 'en', supportedLocales: ['en'] },
+      appUpdate: { pollIntervalMs: 300_000 },
+    }),
+  );
 
 /** Exported data points of `name`, after a flush. */
 async function points(name: string) {
@@ -41,7 +56,19 @@ beforeEach(() => {
 afterEach(async () => {
   await shutdownMetrics();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
+
+/** The InvalidMetricError rule `f` throws, or 'ok'. */
+function ruleOf(f: () => unknown): string {
+  try {
+    f();
+  } catch (e) {
+    expect(e).toBeInstanceOf(InvalidMetricError);
+    return (e as InvalidMetricError).rule;
+  }
+  return 'ok';
+}
 
 describe('parity cases (also run against metricslint by scripts/metrics-parity.ts)', () => {
   it.each(PARITY_CASES.map((c) => [`${c.tier}: ${c.name}`, c] as const))('%s', (_, c) => {
@@ -93,12 +120,106 @@ describe('initializeMetrics', () => {
     expect(() => initializeMetrics({ otlpBaseUrl: '/otel' })).toThrow('initializeCore');
   });
 
+  it('exports nothing, and does not throw, when the runtime config turns telemetry off', async () => {
+    telemetryConfig(false);
+    expect(() => initializeMetrics({ otlpBaseUrl: '/otel' })).not.toThrow();
+    expect(metricsState().provider).toBeUndefined();
+    getServiceMeter().counter('tender_management_web_app_saves_total', 'Saves.', []).add(1);
+    globalThis.dispatchEvent?.(new Event('pagehide'));
+    expect(await points('tender_management_web_app_saves_total')).toEqual([]);
+    expect(exportedUrl).toBeUndefined(); // no exporter was even built
+  });
+
+  it('exports as usual when the runtime config leaves telemetry on', async () => {
+    telemetryConfig(true);
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    getServiceMeter().counter('tender_management_web_app_saves_total', 'Saves.', []).add(1);
+    expect((await points('tender_management_web_app_saves_total')).map((p) => p.value)).toEqual([1]);
+  });
+
   it('exports nothing without telemetry consent', async () => {
     consent([]);
     initializeMetrics({ otlpBaseUrl: '/otel' });
     getServiceMeter().counter('tender_management_web_app_saves_total', 'Saves.', []).add(1);
     expect(await points('tender_management_web_app_saves_total')).toEqual([]);
     expect(metricsStats().droppedNoConsent).toBeGreaterThan(0);
+  });
+
+  it('is a no-op the second time', () => {
+    let made = 0;
+    setMetricsInternalsForTests({
+      exporter: (url) => {
+        made++;
+        exportedUrl = url;
+        return exporter as PushMetricExporter;
+      },
+    });
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    const provider = metricsState().provider;
+    initializeMetrics({ otlpBaseUrl: '/other', exportIntervalMs: 5_000 });
+    expect(made).toBe(1);
+    expect(exportedUrl).toBe('http://localhost/otel/v1/metrics');
+    expect(metricsState().provider).toBe(provider);
+  });
+
+  it('flushes on pagehide and when the page is hidden, and stops listening after shutdown', async () => {
+    const win = new EventTarget();
+    vi.stubGlobal('addEventListener', win.addEventListener.bind(win));
+    vi.stubGlobal('removeEventListener', win.removeEventListener.bind(win));
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+    vi.stubGlobal('document', doc);
+    initializeMetrics({ otlpBaseUrl: '/otel' }); // 60 s interval: only a page event exports in this test
+    const flush = vi.spyOn(metricsState().provider!, 'forceFlush');
+    getServiceMeter().counter('tender_management_web_app_hides_total', 'Hides.', []).add(3);
+
+    doc.dispatchEvent(new Event('visibilitychange'));
+    expect(flush).not.toHaveBeenCalled(); // still visible
+    doc.visibilityState = 'hidden';
+    doc.dispatchEvent(new Event('visibilitychange'));
+    expect(flush).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(exporter.getMetrics().length).toBeGreaterThan(0));
+    win.dispatchEvent(new Event('pagehide'));
+    expect(flush).toHaveBeenCalledTimes(2);
+
+    await shutdownMetrics();
+    win.dispatchEvent(new Event('pagehide'));
+    doc.dispatchEvent(new Event('visibilitychange'));
+    expect(flush).toHaveBeenCalledTimes(2);
+    const exported = exporter
+      .getMetrics()
+      .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
+      .filter((m) => m.descriptor.name === 'tender_management_web_app_hides_total')
+      .flatMap((m) => m.dataPoints.map((p) => p.value));
+    expect(exported).toEqual([3]); // delta: later flushes carry no new points
+  });
+
+  it('survives a throwing exporter: flushes, page-hide flushes and shutdown never throw', async () => {
+    const win = new EventTarget();
+    vi.stubGlobal('addEventListener', win.addEventListener.bind(win));
+    vi.stubGlobal('removeEventListener', win.removeEventListener.bind(win));
+    let attempts = 0;
+    setMetricsInternalsForTests({
+      exporter: () => ({
+        export: () => {
+          attempts++;
+          throw new Error('collector down');
+        },
+        forceFlush: async () => {},
+        shutdown: async () => {},
+      }),
+    });
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    const c = getServiceMeter().counter('tender_management_web_app_lost_total', 'Lost.', []);
+    c.add(1);
+    await expect(metricsState().provider!.forceFlush()).resolves.toBeUndefined();
+    expect(attempts).toBe(1);
+    c.add(1);
+    win.dispatchEvent(new Event('pagehide')); // the failed flush is swallowed, not an unhandled rejection
+    await vi.waitFor(() => expect(attempts).toBe(2));
+    c.add(1);
+    await expect(shutdownMetrics()).resolves.toBeUndefined();
+    expect(metricsState().provider).toBeUndefined();
+    expect(metricsStats().droppedNoConsent).toBe(0);
   });
 
   it('records histograms in seconds with the request_duration preset by default', async () => {
@@ -129,6 +250,39 @@ describe('meters', () => {
     expect(rule(() => getDomainMeter().counter('iam_tenant_resolution_total'))).toBe('namespace');
   });
 
+  it('reject domain metrics that are unknown, not domain-tier, of the other type, or duplicate labels', () => {
+    expect(ruleOf(() => getDomainMeter().counter('tender_management_unknown_total'))).toBe('registry');
+    expect(ruleOf(() => getDomainMeter().histogram('platform_http_request_duration_seconds'))).toBe('registry');
+    expect(() => getDomainMeter().histogram('platform_http_request_duration_seconds')).toThrow('not a domain one');
+    resetRuntimeForTests();
+    core('iam');
+    expect(() => getDomainMeter().counter('iam_lifecycle_event_lag_seconds')).toThrow('is a histogram, not a counter');
+    expect(ruleOf(() => getDomainMeter().histogram('iam_lifecycle_event_lag_seconds'))).toBe('ok');
+    expect(ruleOf(() => getServiceMeter().counter('iam_web_app_x_total', 'X.', ['kind', 'kind']))).toBe('label_vocabulary');
+  });
+
+  it("take a domain histogram's help, labels and buckets from its registry entry", async () => {
+    resetRuntimeForTests();
+    core('iam');
+    consent(['telemetry']);
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    const h = getDomainMeter().histogram('iam_lifecycle_event_lag_seconds');
+    h.record(2, { event_type: 'tenant.created' });
+    h.record(1, { event_type: 'tenant.created', strategy: 'x' } as Record<string, string>); // undeclared: dropped
+    await shutdownMetrics();
+    const [m] = exporter
+      .getMetrics()
+      .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
+      .filter((x) => x.descriptor.name === 'iam_lifecycle_event_lag_seconds');
+    expect(m!.descriptor.description).toBe(METRIC_REGISTRY.metrics.find((x) => x.name === 'iam_lifecycle_event_lag_seconds')!.help);
+    expect(m!.descriptor.unit).toBe('s');
+    expect(m!.dataPoints).toHaveLength(1);
+    const p = m!.dataPoints[0]!;
+    expect(p.attributes).toEqual({ event_type: 'tenant.created', domain: 'iam', service: 'web-app', environment: 'dev' });
+    expect((p.value as { buckets: { boundaries: number[] } }).buckets.boundaries).toEqual([0.05, 0.1, 0.5, 1, 5, 15, 60, 300, 1800]);
+    expect(metricsStats().droppedInvalid).toBe(1);
+  });
+
   it('are idempotent for the same definition and reject a different one', () => {
     const a = getServiceMeter().counter('tender_management_web_app_x_total', 'X.', ['kind']);
     const b = getServiceMeter().counter('tender_management_web_app_x_total', 'X.', ['kind']);
@@ -146,11 +300,54 @@ describe('meters', () => {
     expect(() => getServiceMeter({ mfe: 'unknown-remote' }).counter('x_total', 'X.', [])).toThrow('remote manifest');
   });
 
-  it('are no-ops without a page identity (a remote run standalone)', () => {
+  it('are no-ops without a page identity (a remote run standalone), but still check what they can', () => {
     resetRuntimeForTests();
-    expect(() => getServiceMeter().counter('anything', '', []).add(1)).not.toThrow();
-    expect(() => getDomainMeter().histogram('anything').record(1)).not.toThrow();
+    expect(() => getServiceMeter().counter('iam_admin_x_total', 'X.', []).add(1)).not.toThrow();
+    expect(() => getDomainMeter().histogram('iam_lifecycle_event_lag_seconds').record(1, { event_type: 'tenant.created' })).not.toThrow();
     expect(renderMetricInventory()).toBe('');
+    expect(metricsStats().droppedInvalid).toBe(0);
+    // Rules that need no scope identity throw at creation all the same.
+    expect(ruleOf(() => getServiceMeter().counter('anything', 'X.', []))).toBe('suffix');
+    expect(ruleOf(() => getServiceMeter().counter('anything_total', ' ', []))).toBe('registry');
+    expect(ruleOf(() => getServiceMeter().counter('anything_total', 'X.', ['user_id']))).toBe('prohibited_label');
+    expect(ruleOf(() => getServiceMeter().histogram('anything_seconds', 'X.', [], [2, 1]))).toBe('registry');
+    expect(ruleOf(() => getDomainMeter().histogram('anything'))).toBe('registry');
+    expect(ruleOf(() => getDomainMeter().counter('iam_lifecycle_event_lag_seconds'))).toBe('registry');
+  });
+
+  it('created before initializeCore (module scope in shell code) record once it runs', async () => {
+    resetRuntimeForTests();
+    const early = getServiceMeter().counter('iam_web_app_boot_total', 'Boot.', ['kind']);
+    const lag = getDomainMeter().histogram('iam_lifecycle_event_lag_seconds');
+    early.add(7, { kind: 'before' }); // no identity yet: a no-op
+    lag.record(7, { event_type: 'tenant.created' });
+    core('iam');
+    consent(['telemetry']);
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    early.add(2, { kind: 'after' });
+    lag.record(3, { event_type: 'tenant.created' });
+    const identity = { domain: 'iam', service: 'web-app', environment: 'dev' };
+    expect((await points('iam_web_app_boot_total')).map((p) => [p.value, p.attributes])).toEqual([[2, { kind: 'after', ...identity }]]);
+    expect((await points('iam_lifecycle_event_lag_seconds')).map((p) => [(p.value as { sum: number }).sum, p.attributes])).toEqual([
+      [3, { event_type: 'tenant.created', ...identity }],
+    ]);
+    expect(metricsStats().droppedInvalid).toBe(0);
+  });
+
+  it('created before initializeCore drop their points (counted, never thrown) when the identity does not fit them', () => {
+    resetRuntimeForTests();
+    const wrongPrefix = getServiceMeter().counter('iam_admin_x_total', 'X.', []);
+    const wrongDomain = getDomainMeter().counter('iam_tenant_resolution_total');
+    const remote = getServiceMeter({ mfe: 'iam-admin' }).counter('iam_admin_y_total', 'Y.', []);
+    core();
+    expect(() => wrongPrefix.add(1)).not.toThrow();
+    expect(() => wrongDomain.add(1, { strategy: 'slug', outcome: 'success' })).not.toThrow();
+    remote.add(1); // the manifest has not loaded yet
+    expect(metricsStats().droppedInvalid).toBe(3);
+    getRuntime().remotes = { 'iam-admin': 'iam' };
+    remote.add(1); // retried: the remote now has its owning domain
+    expect(metricsStats().droppedInvalid).toBe(3);
+    expect(renderMetricInventory()).toMatch(/^iam_admin_y_total\{domain="iam",environment="dev",service="iam-admin"\} /m);
   });
 });
 

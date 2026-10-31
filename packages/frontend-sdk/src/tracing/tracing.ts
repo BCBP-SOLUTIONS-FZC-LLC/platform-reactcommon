@@ -13,10 +13,11 @@ import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { StackContextManager, TracerProvider, type SpanExporter } from '@opentelemetry/sdk-trace';
-import { NotInitializedError, getIdentity, isSensitiveKey, sanitizeString } from '../core/index.ts';
+import { tryGetConfig } from '../config/index.ts';
+import { NotInitializedError, getIdentity, isSensitiveKey, sanitizeString, scrubSecrets } from '../core/index.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { collectorUrl, isExactOrigin } from '../internal/urls.ts';
-import { DEFAULT_QUEUE, DropOldestBatchSpanProcessor, type QueueOptions, type TracingStats } from './processor.ts';
+import { DEFAULT_QUEUE, DropOldestBatchSpanProcessor, EXPORTER_CONCURRENCY, type QueueOptions, type TracingStats } from './processor.ts';
 import { platformSampler } from './sampler.ts';
 
 export interface TracingOptions {
@@ -59,8 +60,9 @@ const propagator = new W3CTraceContextPropagator();
 const headerSetter: TextMapSetter<Headers> = { set: (carrier, key, value) => carrier.set(key, value) };
 
 // Test seam: tests replace the exporter and queue sizes; the shell never touches these.
+// The Batcher keeps at most two exports in flight, plus the one request sent on unload.
 let exporterFactory: (url: string) => SpanExporter = (url) =>
-  new OTLPTraceExporter({ url, timeoutMillis: 10_000, concurrencyLimit: 2 });
+  new OTLPTraceExporter({ url, timeoutMillis: 10_000, concurrencyLimit: EXPORTER_CONCURRENCY });
 let queueOptions: QueueOptions = DEFAULT_QUEUE;
 export function setTracingInternalsForTests(o: { exporter?: (url: string) => SpanExporter; queue?: QueueOptions }): void {
   if (o.exporter) exporterFactory = o.exporter;
@@ -78,7 +80,8 @@ function assertOrigin(origin: string): string {
 
 /**
  * Shell only: starts tracing. Requires initializeCore (the identity becomes the resource). A
- * second call is a no-op. Spans started earlier through getTracer() start recording now.
+ * second call is a no-op. Spans started earlier through getTracer() start recording now. With
+ * `telemetry.enabled: false` in the runtime config it is a no-op: spans stay no-ops, nothing is sent.
  */
 export function initializeTracing(o: TracingOptions): void {
   const identity = getIdentity();
@@ -88,8 +91,9 @@ export function initializeTracing(o: TracingOptions): void {
   if (typeof ratio !== 'number' || Number.isNaN(ratio)) throw new RangeError(`sampleRatio must be a number, got ${ratio}`);
   const url = collectorUrl(o.otlpBaseUrl, 'traces');
   const allowlist = new Set((o.propagationAllowlist ?? []).map(assertOrigin));
+  if (tryGetConfig()?.telemetry.enabled === false) return; // the runtime config's off switch
 
-  const stats: TracingStats = { exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, exportFailures: 0 };
+  const stats: TracingStats = { exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, droppedOnUnload: 0, exportFailures: 0 };
   const processor = new DropOldestBatchSpanProcessor(exporterFactory(url), stats, queueOptions);
   const provider = new TracerProvider({
     // gincommon's resource (otel/setup.go). No service.instance.id: one per browser would explode cardinality.
@@ -106,15 +110,16 @@ export function initializeTracing(o: TracingOptions): void {
   otelContext.setGlobalContextManager(contextManager);
   trace.setGlobalTracerProvider(provider);
 
-  // Flush when the page is hidden or unloaded: the exporter's fetch uses keepalive.
-  const flush = () => void processor.forceFlush();
+  // Hidden (a tab switch; the page may come back): flush the whole queue through the Batcher, so
+  // nothing is dropped. Unloading: one keepalive request (the only kind that outlives the page).
+  const onPageHide = () => processor.drainOnUnload();
   const onVisibility = () => {
-    if (globalThis.document?.visibilityState === 'hidden') flush();
+    if (globalThis.document?.visibilityState === 'hidden') processor.flushOnHidden();
   };
-  globalThis.addEventListener?.('pagehide', flush);
+  globalThis.addEventListener?.('pagehide', onPageHide);
   globalThis.document?.addEventListener?.('visibilitychange', onVisibility);
   const removeListeners = () => {
-    globalThis.removeEventListener?.('pagehide', flush);
+    globalThis.removeEventListener?.('pagehide', onPageHide);
     globalThis.document?.removeEventListener?.('visibilitychange', onVisibility);
   };
 
@@ -137,9 +142,14 @@ export function tracingStats(): Readonly<TracingStats> | undefined {
   return state()?.stats;
 }
 
+/** As a logged string: control characters removed, 256 bytes, JWT and Bearer credentials scrubbed. */
+function cleanString(s: string): string {
+  return scrubSecrets(sanitizeString(s));
+}
+
 function safeAttribute(k: string, v: string | number | boolean): string | number | boolean {
   if (isSensitiveKey(k)) return '[REDACTED]';
-  return typeof v === 'string' ? sanitizeString(v) : v;
+  return typeof v === 'string' ? cleanString(v) : v;
 }
 
 function safeAttributes(attrs?: Record<string, string | number | boolean>): Record<string, string | number | boolean> {
@@ -157,7 +167,7 @@ class SdkSpan implements Span {
 
   recordError(e: unknown): void {
     const name = e instanceof Error ? e.name : typeof e;
-    const message = sanitizeString(e instanceof Error ? e.message : String(e));
+    const message = cleanString(e instanceof Error ? e.message : String(e));
     this.inner.recordException({ name, message });
     this.inner.setStatus({ code: SpanStatusCode.ERROR, message });
   }

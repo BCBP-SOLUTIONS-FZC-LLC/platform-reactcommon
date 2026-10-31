@@ -117,6 +117,17 @@ describe('ProblemError', () => {
     expect(new ProblemError(details).message).toBe('Validation failed');
   });
 
+  it('keeps optional members when present and leaves them undefined otherwise', () => {
+    const full = new ProblemError(
+      { ...details, detail: 'd', instance: '/i', traceId: 't', errorCode: 'E', tenantId: 'acme', timestamp: '2026-10-29T22:14:41Z', extensions: { a: 1 } },
+      { requestId: 'r' },
+    );
+    expect(full).toMatchObject({ detail: 'd', instance: '/i', traceId: 't', errorCode: 'E', tenantId: 'acme', timestamp: '2026-10-29T22:14:41Z', requestId: 'r' });
+    expect(Object.isFrozen(full.extensions)).toBe(true);
+    const bare = new ProblemError({ type: 'about:blank', title: 'x', status: 400, extensions: {} });
+    for (const m of ['detail', 'instance', 'traceId', 'errorCode', 'tenantId', 'timestamp', 'validationErrors', 'requestId']) expect(bare[m as keyof ProblemError]).toBeUndefined();
+  });
+
   it('groups validation errors by field path, safely', () => {
     const map = toFieldErrorMap(new ProblemError(details));
     expect(map['items[0].sku']).toEqual(['is required', 'must be 8 characters']);

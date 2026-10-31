@@ -19,6 +19,7 @@
     "contracts:sync": "tsx scripts/sync-contracts.ts",
     "contracts:check": "tsx scripts/sync-contracts.ts --check",
     "changeset": "changeset",
+    "version-packages": "changeset version && pnpm exports:sync",
     "verify": "pnpm exports:check && pnpm docs:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm examples:check && pnpm api:check && pnpm depcruise",
     "api:check": "pnpm -r api:check",
     "metrics:parity": "tsx scripts/metrics-parity.ts",

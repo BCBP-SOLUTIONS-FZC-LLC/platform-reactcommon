@@ -13,10 +13,18 @@ function rule(description: string, messages: Record<string, string>, create: Rul
   return { meta: { type: 'problem', docs: { description, url: DOCS }, messages, schema }, create };
 }
 
+/** The value of a string literal or of a template literal without expressions (`…`), else undefined. */
+function staticString(n: Node | null | undefined): string | undefined {
+  if (n?.type === 'Literal' && typeof n.value === 'string') return n.value;
+  if (n?.type === 'TemplateLiteral' && n.expressions.length === 0) return n.quasis[0]?.value.cooked ?? undefined;
+  return undefined;
+}
+
 /** Calls `check(source, node)` for every static module specifier: import, export … from, import(), require(). */
 function moduleSources(check: (source: string, node: Node) => void): Rule.RuleListener {
   const visit = (source: Node | null | undefined) => {
-    if (source && source.type === 'Literal' && typeof source.value === 'string') check(source.value, source);
+    const value = staticString(source);
+    if (value !== undefined) check(value, source!);
   };
   return {
     ImportDeclaration: (n) => visit(n.source as Node),
@@ -33,6 +41,11 @@ function propertyName(n: Node): string | undefined {
   if (n.type === 'Identifier') return n.name;
   if (n.type === 'Literal' && typeof n.value === 'string') return n.value;
   return undefined;
+}
+
+/** An object property's key: `a`, 'a', ['a'] or [`a`]; undefined for a computed expression. */
+function keyName(p: ESTree.Property): string | undefined {
+  return p.computed ? staticString(p.key as Node) : propertyName(p.key as Node);
 }
 
 function memberName(n: ESTree.MemberExpression): string | undefined {
@@ -73,14 +86,14 @@ export const noIdentityHeaders = rule(
       if (obj.type !== 'ObjectExpression') return;
       for (const p of obj.properties) {
         if (p.type !== 'Property') continue;
-        const name = p.computed ? (p.key.type === 'Literal' ? String(p.key.value) : undefined) : propertyName(p.key as Node);
+        const name = keyName(p);
         if (name && FORBIDDEN.has(name.toLowerCase())) report(p.key as Node, name);
       }
     };
     return {
       // { headers: { 'x-user-id': … } } in fetch(), ApiClient options, …
       Property(n) {
-        if (!n.computed && propertyName(n.key as Node) === 'headers') checkObject(n.value as Node);
+        if (keyName(n) === 'headers') checkObject(n.value as Node);
       },
       NewExpression(n) {
         if (n.callee.type === 'Identifier' && n.callee.name === 'Headers' && n.arguments[0]) checkObject(n.arguments[0] as Node);

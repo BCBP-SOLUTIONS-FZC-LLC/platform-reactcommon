@@ -597,7 +597,7 @@ graph LR
 ```mermaid
 graph LR
     subgraph ci["ci.yml  —  every PR (any base) and push to main"]
-        vt["Validate / Test<br/>all tests · coverage ≥ 94% of packages/*/src"]
+        vt["Validate / Test<br/>all tests · coverage ≥ 98% of packages/*/src"]
         vq["Validate / Quality<br/>hygiene · action pins · lockfile · exports · lint · types ·<br/>build · API reports · depcruise · examples CSP · docs · audit"]
         vc["Validate / Contracts<br/>contracts:check · metrics:parity"]
         pk["Package tarballs<br/>build + pnpm pack ×3"]
@@ -679,13 +679,13 @@ All three packages share one version (`fixed`). The release flow:
 2. The merge commit is tagged `vX.Y.Z`.
 3. `release.yml` verifies the tag and versions, reruns every gate at the tag, and publishes a **GitHub Release** with the tarballs, a CycloneDX SBOM and Cosign-signed checksums. There's no npm registry yet.
 
-During the alpha, versions are `1.0.0-alpha.N` and remotes share the SDK under `^1.0.0-0`. `1.0.0` is cut with the first environment, and SemVer is strict from then on (design doc §C3 "Versioning").
+During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`, so a shell with an older SDK refuses it at share negotiation. `1.0.0` is cut with the first environment, and SemVer is strict from then on (design doc §C3 "Versioning").
 
 ## Testing strategy
 
 | Layer | How |
 |---|---|
-| Unit | Vitest per subpath (`packages/frontend-sdk/test/<subpath>`). Node by default; `happy-dom` for React; `jsdom` for DOMPurify. Coverage gate ≥ 94 % statements of `packages/*/src` |
+| Unit | Vitest per subpath (`packages/frontend-sdk/test/<subpath>`). Node by default; `happy-dom` for React; `jsdom` for DOMPurify. Coverage gate ≥ 98 % statements of `packages/*/src` |
 | Contract | Shared fixtures from platform-interop-tests (headers, identity, redaction, problem bodies) and the PUB-1 / P-35 cases, run by the SDK and by the example shell's ports |
 | Fake backends | A Keycloak fake at the HTTP level (PKCE, rotation, reuse revokes the session); `mockApi` / `mockProblem` |
 | Parity | `metrics:parity`: SDK registration checks vs gincommon `metricslint`, inventory passes `-strict` |

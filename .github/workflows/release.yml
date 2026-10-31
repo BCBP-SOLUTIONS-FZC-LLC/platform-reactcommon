@@ -12,8 +12,9 @@
 #            └─► validate-contracts ──────────────────────────┘
 #
 # One version for the three packages (changesets `fixed` group). To release:
-#   1. a release PR runs `pnpm changeset version` (bumps all three packages, writes each
-#      CHANGELOG.md section, consumes .changeset/*.md) and merges to main;
+#   1. a release PR runs `pnpm run version-packages` (changeset version: bumps all three packages and
+#      consumes .changeset/*.md; exports:sync: the generated SDK version), turns [Unreleased] in
+#      CHANGELOG.md into the version's section, and merges to main;
 #   2. tag the merge commit vX.Y.Z (the version it set) and push the tag.
 #
 # Nothing is published until every gate has passed on the exact tarballs that ship: package packs

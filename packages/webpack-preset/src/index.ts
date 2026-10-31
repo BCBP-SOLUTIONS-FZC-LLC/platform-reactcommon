@@ -1,13 +1,14 @@
 /**
  * Webpack 5 Module Federation preset for the platform's shell and remotes (design doc §C3): one shared
- * map for every app (singletons, strict versions), the SDK provided by the shell only, and CSP-safe
+ * map for every app (singletons, strict versions), the SDK provided by the shell only (a remote requires
+ * at least the SDK version it was built against), and CSP-safe
  * output (Trusted Types, no eval devtools, hidden source maps, content hashes).
  *
  * @packageDocumentation
  */
 import { createRequire } from 'node:module';
 import webpack, { type Configuration } from 'webpack';
-import { SDK_PACKAGE, SDK_SHARE_RANGE, SDK_SUBPATHS } from './generated/sdk.ts';
+import { SDK_PACKAGE, SDK_SHARE_RANGE, SDK_SUBPATHS, SDK_VERSION } from './generated/sdk.ts';
 
 /** A Module Federation shared entry (the subset the platform uses). */
 export interface SharedConfig {
@@ -32,12 +33,18 @@ const shared = (requiredVersion: string): SharedConfig => ({ singleton: true, st
 const NOT_SHARED = new Set(['testing']);
 
 /**
- * The shared map, identical in the shell and every remote. Module Federation keys sharing by request, so
- * every SDK subpath is listed; all of them share one SDK instance.
+ * The shared map both roles start from. Module Federation keys sharing by request, so every SDK subpath is
+ * listed; all of them share one SDK instance. The SDK entries carry the shell's broad range (any release of
+ * the major); sharedFor('remote') tightens them to the SDK version the remote is built against.
  */
 export const platformShared: Readonly<Record<string, SharedConfig>> = Object.freeze({
   react: shared(pin('react')),
+  // The entry points apps import besides the package roots: shared too, or each remote bundles its own
+  // JSX runtime, whose elements another React major refuses to render.
+  'react/jsx-runtime': shared(pin('react')),
+  'react/jsx-dev-runtime': shared(pin('react')),
   'react-dom': shared(pin('react-dom')),
+  'react-dom/client': shared(pin('react-dom')),
   '@opentelemetry/api': shared(pin('@opentelemetry/api')),
   [SDK_PACKAGE]: shared(SDK_SHARE_RANGE),
   ...Object.fromEntries(SDK_SUBPATHS.filter((s) => !NOT_SHARED.has(s)).map((s) => [`${SDK_PACKAGE}/${s}`, shared(SDK_SHARE_RANGE)])),
@@ -48,12 +55,24 @@ function isSdk(request: string): boolean {
 }
 
 /**
+ * What a remote requires of the shell's SDK: at least the version it compiles against (this preset's, as
+ * the SDK and the preset release under one version), within that major. A remote that calls an export
+ * added in 1.5 is refused by a 1.4 shell at share negotiation (strictVersion), which loadRemote reports as
+ * an incompatible remote, instead of loading and failing when the missing export is called.
+ */
+const REMOTE_SDK_RANGE = `^${SDK_VERSION}`;
+
+/**
  * The shared map for a role. Shell: `eager: false` everywhere (bootstrap through a dynamic import). Remote:
- * the SDK gets `import: false`, so it always comes from the shell and is never bundled into the remote.
+ * the SDK gets `import: false`, so it always comes from the shell and is never bundled into the remote,
+ * and requires `^<SDK version it was built with>` (REMOTE_SDK_RANGE).
  */
 export function sharedFor(role: 'shell' | 'remote'): Record<string, SharedConfig> {
   return Object.fromEntries(
-    Object.entries(platformShared).map(([request, c]) => [request, role === 'shell' ? { ...c, eager: false } : isSdk(request) ? { ...c, import: false } : c]),
+    Object.entries(platformShared).map(([request, c]) => [
+      request,
+      role === 'shell' ? { ...c, eager: false } : isSdk(request) ? { ...c, requiredVersion: REMOTE_SDK_RANGE, import: false } : c,
+    ]),
   ) as Record<string, SharedConfig>;
 }
 

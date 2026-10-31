@@ -68,6 +68,9 @@ describe('ICU-lite messages', () => {
     ['bad name', '{1x}'],
     ['missing selector body', '{n, plural, one x other {y}}'],
     ['bad offset', '{n, plural, offset:-1 other {x}}'],
+    ['unterminated option', '{n, plural, other {# bids'],
+    ['empty selector', '{n, plural, {x} other {y}}'],
+    ['unterminated select', '{g, select, female {she} other {they}'],
   ])('renders a malformed message (%s) as its raw text and reports it', (_, src) => {
     expect(() => parseMessage(src)).toThrow();
     const onError = vi.fn();
@@ -79,5 +82,20 @@ describe('ICU-lite messages', () => {
     expect(f('{constructor}', {})).toBe('{constructor}');
     expect(f('{__proto__}', {})).toBe('{__proto__}');
     expect(f('${alert(1)}', {})).toBe('${alert(1)}');
+  });
+
+  it('falls back to other when the plural category has no option', () => {
+    expect(f('{n, plural, other {# items}}', { n: 1 })).toBe('1 items');
+    expect(f('{n, plural, one {# item} other {# items}}', { n: '2' })).toBe('2 items'); // a numeric string counts
+    expect(f('{n, plural, one {# item} other {# items}}', { n: 'many' })).toBe('{n}');
+  });
+
+  it('keeps formatting correctly past the parse-cache limit', () => {
+    const onError = vi.fn();
+    for (let k = 0; k < 2_100; k++) expect(formatMessage(`m${k} {n, plural, one {# bid} other {# bids}}`, { n: k }, en, onError)).toBe(`m${k} ${en.number(k)} ${k === 1 ? 'bid' : 'bids'}`);
+    // early entries were evicted and are parsed again, malformed ones still reported each time
+    expect(f('m0 {n, plural, one {# bid} other {# bids}}', { n: 1 })).toBe('m0 1 bid');
+    formatMessage('Hello {name', {}, en, onError);
+    expect(onError).toHaveBeenCalledWith('Hello {name');
   });
 });

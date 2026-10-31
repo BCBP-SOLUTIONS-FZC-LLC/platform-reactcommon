@@ -12,6 +12,7 @@ import {
   startVersionPolling,
   subscribeAppUpdate,
 } from '../../src/mfe/index.ts';
+import { currentManifest } from '../../src/mfe/manifest.ts';
 import { containerGlobal, resetContainersForTests, setMfeInternalsForTests } from '../../src/mfe/remote.ts';
 import { FakeStorage } from '../core/helpers.ts';
 
@@ -177,6 +178,21 @@ describe('loadRemote', () => {
   it('fails a remote that is not in the manifest', async () => {
     install('nope', {});
     await expect(loadRemote('nope', './X', { retries: 0 })).rejects.toBeInstanceOf(RemoteLoadError);
+  });
+
+  it('never resolves a remote name from Object.prototype', async () => {
+    const inject = vi.fn(async () => {});
+    setMfeInternalsForTests({ injectScript: inject });
+    const published = { ...currentManifest() }; // a plain object, as a test or older shell may publish
+    for (const manifest of [currentManifest(), published]) {
+      getRuntime().manifest = manifest;
+      for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+        const e = await loadRemote(name, './X', { retries: 0 }).catch((x: unknown) => x);
+        expect(e).toBeInstanceOf(RemoteLoadError);
+        expect((e as Error).message).toContain('not in the remote manifest');
+      }
+    }
+    expect(inject).not.toHaveBeenCalled();
   });
 
   it('retries a failing entry with backoff, then succeeds', async () => {
@@ -368,3 +384,163 @@ describe('app updates', () => {
     expect(l).not.toHaveBeenCalled();
   });
 });
+
+describe('entry origin checks', () => {
+  it('refuses unparsable entries and entries with credentials in the URL', async () => {
+    vi.stubGlobal(
+      'fetch',
+      respond({
+        broken: { entry: 'https://[::1', version: '1.0.0', ownerDomain: 'iam' },
+        creds: { entry: 'https://user:pass@app.bcbpsolutions.com/remotes/x.js', version: '1.0.0', ownerDomain: 'iam' },
+        tenders: manifestBody.tenders,
+      }),
+    );
+    expect(Object.keys(await loadManifest())).toEqual(['tenders']);
+    expect(errorLog).toHaveBeenCalledTimes(2);
+  });
+
+  it('checks the entry origin again right before injecting, whatever the published manifest says', async () => {
+    // e.g. a manifest object placed on the shared runtime by another SDK copy, never validated here
+    getRuntime().manifest = { evil: { entry: 'https://evil.example/remoteEntry.js', version: '1', ownerDomain: 'iam' } };
+    const inject = vi.fn(async () => {});
+    setMfeInternalsForTests({ injectScript: inject });
+    await expect(loadRemote('evil', './X', { retries: 0 })).rejects.toThrow('not an allowed origin');
+    expect(inject).not.toHaveBeenCalled();
+  });
+});
+
+describe('loadRemote with a caller signal', () => {
+  beforeEach(async () => {
+    vi.stubGlobal('fetch', respond(manifestBody));
+    await loadManifest();
+    vi.stubGlobal('__webpack_init_sharing__', undefined);
+    vi.stubGlobal('__webpack_share_scopes__', undefined);
+  });
+
+  it('resolves normally when the signal never aborts', async () => {
+    const c = fakeContainer({ './X': 'x' });
+    setMfeInternalsForTests({ injectScript: async () => void ((globalThis as Record<string, unknown>).tenders = c) });
+    expect(await loadRemote('tenders', './X', { signal: new AbortController().signal })).toBe('x');
+    expect(metrics).toEqual([{ mfe: 'tenders', outcome: 'success' }]);
+  });
+
+  it('still reports the entry failure, not an abort, when the signal never aborts', async () => {
+    setMfeInternalsForTests({ injectScript: () => Promise.reject(new Error('net::ERR_FAILED')) });
+    const e = await loadRemote('tenders', './X', { retries: 0, signal: new AbortController().signal }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(RemoteLoadError);
+    expect((e as RemoteLoadError).message).toContain('net::ERR_FAILED');
+    expect(metrics).toEqual([{ mfe: 'tenders', outcome: 'error', reason: 'network' }]);
+  });
+
+  it('rejects at once for an already-aborted signal, without retrying or logging', async () => {
+    const c = fakeContainer({ './X': 'x' });
+    const injectScript = vi.fn(async () => void ((globalThis as Record<string, unknown>).tenders = c));
+    setMfeInternalsForTests({ injectScript });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(loadRemote('tenders', './X', { signal: controller.signal })).rejects.toThrow('aborted');
+    expect(injectScript).not.toHaveBeenCalled(); // no fetch of the remote entry
+    expect(c.get).not.toHaveBeenCalled();
+    expect(metrics).toEqual([{ mfe: 'tenders', outcome: 'error', reason: 'aborted' }]);
+    expect(errorLog).not.toHaveBeenCalled();
+  });
+
+  it('stops when the caller aborts while the module itself is loading', async () => {
+    const c = fakeContainer({});
+    c.get.mockImplementation(() => new Promise(() => {}));
+    setMfeInternalsForTests({ injectScript: async () => void ((globalThis as Record<string, unknown>).tenders = c) });
+    const controller = new AbortController();
+    const p = loadRemote('tenders', './Slow', { signal: controller.signal });
+    await vi.waitFor(() => expect(c.get).toHaveBeenCalled());
+    controller.abort();
+    const e = await p.catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(RemoteLoadError);
+    expect((e as RemoteLoadError).message).toContain('aborted');
+    expect(metrics).toEqual([{ mfe: 'tenders', outcome: 'error', reason: 'aborted' }]);
+    expect(errorLog).not.toHaveBeenCalled();
+  });
+});
+
+describe('the entry <script> outside a browser', () => {
+  it('fails as a network error when there is no document', async () => {
+    vi.stubGlobal('fetch', respond(manifestBody));
+    await loadManifest();
+    vi.stubGlobal('document', undefined);
+    vi.resetModules();
+    const remote = await import('../../src/mfe/remote.ts');
+    const e = await remote.loadRemote('tenders', './X', { retries: 0 }).catch((x: unknown) => x);
+    expect((e as Error).message).toContain('no document');
+    expect(metrics).toEqual([{ mfe: 'tenders', outcome: 'error', reason: 'network' }]);
+  });
+});
+
+describe('app updates and page visibility', () => {
+  it('does not reload when sessionStorage itself is inaccessible', () => {
+    const before = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('denied', 'SecurityError');
+      },
+    });
+    try {
+      expect(reloadOnceForChunkError(new Error('Loading chunk 7 failed'))).toBe(false);
+      expect(globalThis.location.reload).not.toHaveBeenCalled();
+    } finally {
+      if (before) Object.defineProperty(globalThis, 'sessionStorage', before);
+      else delete (globalThis as Record<string, unknown>).sessionStorage;
+    }
+  });
+
+  it('skips polls while the page is hidden and checks again when it becomes visible', async () => {
+    vi.useFakeTimers();
+    try {
+      const doc = Object.assign(new EventTarget(), { visibilityState: 'hidden' as DocumentVisibilityState });
+      vi.stubGlobal('document', doc);
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ version: '2.0.0' })));
+      vi.stubGlobal('fetch', fetchMock);
+      const l = vi.fn();
+      subscribeAppUpdate(l);
+      const stop = startVersionPolling({ intervalMs: 1_000 });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(fetchMock).not.toHaveBeenCalled();
+      doc.dispatchEvent(new Event('visibilitychange')); // still hidden
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchMock).not.toHaveBeenCalled();
+      doc.visibilityState = 'visible';
+      doc.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(l).toHaveBeenCalledWith({ current: '1.0.0', available: '2.0.0' });
+      stop();
+      doc.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(fetchMock).toHaveBeenCalledTimes(1); // stopped: no listener, no timer
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops notifying a listener once it unsubscribes', async () => {
+    vi.useFakeTimers();
+    try {
+      let version = '1.0.0';
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ version }))));
+      const kept = vi.fn();
+      const gone = vi.fn();
+      subscribeAppUpdate(kept);
+      const off = subscribeAppUpdate(gone);
+      const stop = startVersionPolling({ intervalMs: 1_000 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(off()).toBe(true);
+      version = '1.1.0';
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(kept).toHaveBeenCalledWith({ current: '1.0.0', available: '1.1.0' });
+      expect(gone).not.toHaveBeenCalled();
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+

@@ -5,5 +5,11 @@ export const SDK_PACKAGE = '@platform/frontend-sdk';
 /** The SDK subpaths a consumer may import (the exports map, without the throwing root). */
 export const SDK_SUBPATHS = ["core","problem","authz","config","security","storage","tracing","logging","metrics","http","flags","i18n","auth","mfe","nav","react","testing"] as const;
 
-/** The range every shell and remote shares the SDK under. */
+/**
+ * The SDK version this release was built with: the SDK and the tooling packages share one version
+ * (changesets `fixed`), so it is the SDK a remote built with this preset compiles against.
+ */
+export const SDK_VERSION = '1.0.0-alpha.0';
+
+/** The range the shell shares the SDK under (any release of the major); remotes require `^${SDK_VERSION}`. */
 export const SDK_SHARE_RANGE = '^1.0.0-0';

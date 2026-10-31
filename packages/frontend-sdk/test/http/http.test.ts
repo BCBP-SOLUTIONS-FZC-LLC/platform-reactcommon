@@ -9,6 +9,7 @@ import {
   subscribeOnline,
   type TokenSource,
 } from '../../src/http/index.ts';
+import { subscribeRuntime } from '../../src/internal/events.ts';
 import { getRuntime, resetRuntimeForTests } from '../../src/internal/runtime.ts';
 import { AbortedError, NetworkError, PlatformProblemTypes, ProblemError, TimeoutError } from '../../src/problem/index.ts';
 import { initializeTracing, shutdownTracing } from '../../src/tracing/index.ts';
@@ -105,6 +106,19 @@ describe('URL', () => {
     await expect(api.get('/tenders?x=1' as never)).rejects.toThrow(TypeError);
     await expect(api.get('/a/../b' as never)).rejects.toThrow(TypeError);
     expect(calls).toHaveLength(0);
+  });
+
+  it("refuses '.' and '..' as param values, which URL parsing would resolve as path steps", async () => {
+    setTokenSource(tokens());
+    const api = createApiClient();
+    await expect(api.post('/tenders/:id/approve', { params: { id: '..' } })).rejects.toThrow("must not be '.' or '..'");
+    await expect(api.get('/tenders/:id/bids', { params: { id: '.' } })).rejects.toThrow(TypeError);
+    await expect(api.get('/a/:x/:y', { params: { x: '..', y: '..' } })).rejects.toThrow(TypeError);
+    expect(calls).toHaveLength(0); // nothing sent, so no token went to another endpoint
+    // Encoded or longer dot strings stay one literal segment.
+    await api.get('/tenders/:id', { params: { id: '%2e%2e' } });
+    await api.get('/tenders/:id', { params: { id: '...' } });
+    expect(calls.map((c) => c.url.pathname)).toEqual(['/api/tenders/%252e%252e', '/api/tenders/...']);
   });
 });
 
@@ -259,6 +273,79 @@ describe('failures', () => {
     expect((e as TimeoutError).timeoutMs).toBe(20);
   });
 
+  describe('while the body is read', () => {
+    // A body that streams until the request's signal aborts it, as a browser's does.
+    const stalledBody = (_u: URL, init: RequestInit) =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            init.signal!.addEventListener('abort', () => c.error(init.signal!.reason));
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+
+    it('the deadline gives a TimeoutError, not a raw DOMException', async () => {
+      handler = stalledBody;
+      const e = await createApiClient().get('/slow-body', { timeoutMs: 20, retry: false }).catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(TimeoutError);
+      expect((e as TimeoutError).timeoutMs).toBe(20);
+    });
+
+    it('a caller abort gives an AbortedError', async () => {
+      handler = stalledBody;
+      const controller = new AbortController();
+      const p = createApiClient().get('/slow-body', { signal: controller.signal, dedupe: false });
+      await vi.waitFor(() => expect(calls).toHaveLength(1));
+      controller.abort();
+      await expect(p).rejects.toBeInstanceOf(AbortedError);
+    });
+
+    it('a dropped connection gives a NetworkError; a problem body still parses', async () => {
+      handler = () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.error(new TypeError('network error'));
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      await expect(createApiClient().get('/a', { retry: false })).rejects.toBeInstanceOf(NetworkError);
+      handler = () => problem(404);
+      await expect(createApiClient().get('/a')).rejects.toBeInstanceOf(ProblemError);
+    });
+  });
+
+  describe('without AbortSignal.any (Safari < 17.4)', () => {
+    const any = AbortSignal.any;
+    beforeEach(() => {
+      (AbortSignal as { any?: unknown }).any = undefined;
+    });
+    afterEach(() => {
+      AbortSignal.any = any;
+    });
+
+    it('still succeeds, times out and honours the caller signal', async () => {
+      const api = createApiClient();
+      expect((await api.get('/a', { signal: new AbortController().signal })).data).toEqual({ ok: true });
+
+      handler = (_u, init) => new Promise((_r, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason)));
+      const t = await api.get('/slow', { signal: new AbortController().signal, timeoutMs: 20, retry: false }).catch((x: unknown) => x);
+      expect(t).toBeInstanceOf(TimeoutError);
+
+      const controller = new AbortController();
+      const p = api.get('/slow', { signal: controller.signal, dedupe: false });
+      await vi.waitFor(() => expect(calls).toHaveLength(3));
+      controller.abort();
+      await expect(p).rejects.toBeInstanceOf(AbortedError);
+
+      const done = new AbortController();
+      done.abort();
+      await expect(api.get('/a', { signal: done.signal, dedupe: false })).rejects.toBeInstanceOf(AbortedError);
+    });
+  });
+
   it("throws AbortedError when the caller aborts, and doesn't retry", async () => {
     const controller = new AbortController();
     handler = (_u, init) => new Promise((_r, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason)));
@@ -393,9 +480,29 @@ describe('GET deduplication', () => {
     const api = createApiClient();
     const [a, b] = await Promise.all([api.get('/a', { query: { x: 1 } }), api.get('/a', { query: { x: 1 } })]);
     expect(calls).toHaveLength(1);
-    expect(a).toBe(b);
+    expect(a).toEqual(b);
     await api.get('/a', { query: { x: 1 } });
     expect(calls).toHaveLength(2); // not cached once settled
+  });
+
+  it("gives each subscriber its own data, so one caller's mutation never reaches another", async () => {
+    handler = () => json({ items: [3, 1, 2] });
+    const api = createApiClient();
+    for (const fallback of [false, true]) {
+      if (fallback) vi.stubGlobal('structuredClone', undefined); // JSON round-trip instead
+      const [a, b, c] = await Promise.all([
+        api.get<{ items: number[] }>('/a'),
+        api.get<{ items: number[] }>('/a', { signal: new AbortController().signal }),
+        api.get<{ items: number[] }>('/a'),
+      ]);
+      a.data.items.sort();
+      expect(a.data.items).toEqual([1, 2, 3]);
+      expect(b.data.items).toEqual([3, 1, 2]);
+      expect(c.data.items).toEqual([3, 1, 2]);
+      expect(b.headers).toBe(a.headers); // only the data is copied
+      expect(b.status).toBe(200);
+    }
+    expect(calls).toHaveLength(2);
   });
 
   it('does not share across users, URLs, or with dedupe: false', async () => {
@@ -441,6 +548,21 @@ describe('GET deduplication', () => {
     await expect(Promise.all([p3, p4])).rejects.toBeInstanceOf(AbortedError);
     expect(fetchSignal.aborted).toBe(true);
   });
+
+  it('starts afresh when a GET for the same key arrives right after every subscriber aborted', async () => {
+    // StrictMode remounts, reload() while loading, deps A→B→A: the new call must not join the dead one.
+    handler = (_u, init) =>
+      calls.length === 1 ? new Promise((_r, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason))) : json({ ok: 2 });
+    const api = createApiClient();
+    const c1 = new AbortController();
+    const p1 = api.get('/a', { signal: c1.signal });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    c1.abort();
+    const p2 = api.get('/a', { signal: new AbortController().signal });
+    await expect(p1).rejects.toBeInstanceOf(AbortedError);
+    expect((await p2).data).toEqual({ ok: 2 });
+    expect(calls).toHaveLength(2);
+  });
 });
 
 describe('metrics (instrument port)', () => {
@@ -482,5 +604,92 @@ describe('online state', () => {
     off();
     target.dispatchEvent(new Event('online'));
     expect(l.mock.calls).toEqual([[true], [false]]);
+  });
+});
+
+describe('edge paths', () => {
+  it('sends PATCH with the JSON body, the token and no idempotency key', async () => {
+    setTokenSource(tokens());
+    await createApiClient().patch('/tenders/:id', { params: { id: 1 }, body: { title: 'y' } });
+    expect(calls[0]!.init.method).toBe('PATCH');
+    expect(calls[0]!.init.body).toBe('{"title":"y"}');
+    expect(h().get('authorization')).toBe('Bearer t1');
+    expect(h().has('idempotency-key')).toBe(false);
+  });
+
+  it('sends no token, but still calls, when the token source throws', async () => {
+    setTokenSource({ getAccessToken: () => Promise.reject(new Error('storage gone')), refresh: async () => false, onUnauthorized: () => {} });
+    expect((await createApiClient().get('/a')).data).toEqual({ ok: true });
+    expect(h().has('authorization')).toBe(false);
+  });
+
+  it('calls onUnauthorized, without retrying, when the refresh itself rejects', async () => {
+    const t = tokens();
+    t.refresh.mockRejectedValue(new Error('refresh endpoint down'));
+    setTokenSource(t);
+    handler = () => problem(401);
+    const e = await createApiClient().get('/a').catch((x: unknown) => x);
+    expect((e as ProblemError).status).toBe(401);
+    expect(t.onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('falls back to backoff when Retry-After is unparsable', async () => {
+    let n = 0;
+    handler = () => (n++ === 0 ? new Response('', { status: 503, headers: { 'retry-after': 'soon' } }) : json({ ok: 1 }));
+    expect((await createApiClient().get('/a')).data).toEqual({ ok: 1 }); // Math.random() = 0: no wait
+    expect(calls).toHaveLength(2);
+  });
+
+  it('stops with AbortedError when the caller aborts before the backoff starts', async () => {
+    const controller = new AbortController();
+    handler = () => {
+      controller.abort();
+      return new Response('', { status: 503 });
+    };
+    await expect(createApiClient().put('/a', { signal: controller.signal })).rejects.toBeInstanceOf(AbortedError);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('stops with AbortedError when the caller aborts during the Retry-After wait', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      handler = () => new Response('', { status: 429, headers: { 'retry-after': '5' } });
+      const p = createApiClient().delete('/a', { signal: controller.signal });
+      const settled = p.catch((x: unknown) => x);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(calls).toHaveLength(1);
+      controller.abort();
+      expect(await settled).toBeInstanceOf(AbortedError);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(calls).toHaveLength(1); // no retry after the abort
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects a deduplicated GET whose signal is already aborted, and sends nothing', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(createApiClient().get('/a', { signal: controller.signal })).rejects.toBeInstanceOf(AbortedError);
+    await Promise.resolve();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('marks the tenant read-only once on DENY_TENANT_READ_ONLY', async () => {
+    const seen = vi.fn();
+    subscribeRuntime('read-only', seen);
+    handler = () => problem(403, { type: 'https://errors.company.com/platform/forbidden', errorCode: 'DENY_TENANT_READ_ONLY' });
+    const api = createApiClient();
+    await expect(api.post('/a')).rejects.toBeInstanceOf(ProblemError);
+    expect(getRuntime().readOnlyDenied).toBe(true);
+    await expect(api.put('/b')).rejects.toBeInstanceOf(ProblemError);
+    expect(seen).toHaveBeenCalledTimes(1);
+    handler = () => problem(403, { errorCode: 'DENY_MFA_STALE' });
+    resetRuntimeForTests();
+    config();
+    await api.post('/c').catch(() => {});
+    expect(getRuntime().readOnlyDenied).toBeFalsy();
   });
 });

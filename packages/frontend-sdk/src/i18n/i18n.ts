@@ -164,8 +164,15 @@ export async function setLocale(locale: string): Promise<void> {
   const chosen = negotiate(locale, s.supported);
   if (!chosen) throw new RangeError(`locale ${JSON.stringify(locale)} is not supported (${s.supported.join(', ')})`);
   const generation = ++s.generation;
-  await ensureLoaded([...s.loaders.keys()], chosen);
-  if (generation !== s.generation) return; // a later setLocale won
+  // A namespace registered while this runs is loaded by registerNamespace for the old locale
+  // only, so keep loading until every registered namespace has been tried for `chosen` (once
+  // each: a failing loader is not retried here).
+  const tried = new Set<string>();
+  for (let next = [...s.loaders.keys()]; next.length > 0; next = [...s.loaders.keys()].filter((ns) => !tried.has(ns))) {
+    for (const ns of next) tried.add(ns);
+    await ensureLoaded(next, chosen);
+    if (generation !== s.generation) return; // a later setLocale won
+  }
   s.locale = chosen;
   const root = globalThis.document?.documentElement;
   if (root) {

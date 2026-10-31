@@ -1,7 +1,7 @@
 // Regenerates the `exports` map of packages/frontend-sdk/package.json: one entry per implemented
 // subpath (src/<name>/index.ts exists) plus the throwing root "." (design doc §C1 "Build"), and the
 // SDK facts @platform/webpack-preset and @platform/eslint-plugin build on (src/generated/sdk.ts in
-// each: the subpaths and the share range). `--check` fails instead of writing when anything is stale.
+// each: the subpaths, the SDK version and the share range). `--check` fails instead of writing when anything is stale.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { REPO_ROOT, SDK_DIR, implementedSubpaths } from './lib/subpaths.ts';
@@ -17,9 +17,14 @@ export function buildExportsMap(subpaths: readonly string[]): ExportsMap {
   return map;
 }
 
-/** The range shells and remotes share the SDK under: `^<major>.0.0-0`, which also accepts that major's pre-releases (§C3 "Versioning"). */
+const SEMVER = /^(\d+)\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+/**
+ * The range the SDK is shared under by default (the shell's): `^<major>.0.0-0`, which also accepts that
+ * major's pre-releases (§C3 "Versioning"). Remotes tighten it to `^<SDK_VERSION>` (see the preset's sharedFor).
+ */
 export function shareRange(version: string): string {
-  const major = /^(\d+)\./.exec(version)?.[1];
+  const major = SEMVER.exec(version)?.[1];
   if (!major) throw new Error(`SDK version ${version} is not SemVer`);
   return `^${major}.0.0-0`;
 }
@@ -33,7 +38,13 @@ export function buildToolingConstants(subpaths: readonly string[], sdkVersion: s
     '/** The SDK subpaths a consumer may import (the exports map, without the throwing root). */',
     `export const SDK_SUBPATHS = ${JSON.stringify(subpaths)} as const;`,
     '',
-    '/** The range every shell and remote shares the SDK under. */',
+    '/**',
+    ' * The SDK version this release was built with: the SDK and the tooling packages share one version',
+    ' * (changesets `fixed`), so it is the SDK a remote built with this preset compiles against.',
+    ' */',
+    `export const SDK_VERSION = '${sdkVersion}';`,
+    '',
+    "/** The range the shell shares the SDK under (any release of the major); remotes require `^${SDK_VERSION}`. */",
     `export const SDK_SHARE_RANGE = '${shareRange(sdkVersion)}';`,
     '',
   ].join('\n');

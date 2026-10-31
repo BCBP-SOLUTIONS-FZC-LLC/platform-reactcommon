@@ -326,7 +326,7 @@ expect(p.logs.filter((l) => l.level === 'error')).toEqual([]);
 
 ### 11. Upgrading between alpha versions
 
-During `1.0.0-alpha.N`, a breaking change bumps `N`. Each one is listed in [CHANGELOG.md](CHANGELOG.md). Upgrade the shell and every remote together: they share the SDK as a strict singleton under `^1.0.0-0`. `1.0.0` is cut with the first environment, and SemVer is strict from then on.
+During `1.0.0-alpha.N`, a breaking change bumps `N`. Each one is listed in [CHANGELOG.md](CHANGELOG.md). Upgrade the shell first: it shares the SDK as a strict singleton under `^1.0.0-0`, and each remote requires the SDK version it was built against (a shell with an older SDK refuses the remote inside its boundary). `1.0.0` is cut with the first environment, and SemVer is strict from then on.
 
 ---
 
@@ -357,6 +357,7 @@ pnpm verify
 | `pnpm metrics:parity` | The SDK's metric checks vs gincommon's `metricslint` |
 | `pnpm examples:check` | CSP and sharing checks on the example builds (after `pnpm build`) |
 | `pnpm changeset` | Record a change to a published package |
+| `pnpm run version-packages` | Release PR only: `changeset version` + `exports:sync` |
 | `pnpm run ci` | Everything CI's quality and test gates run, with the coverage gate and the audit |
 
 ### Make-style commands
@@ -381,7 +382,7 @@ The same task names as platform-gincommon's Makefile, as `package.json` scripts.
 | `test-smoke` | `make test-smoke-image` | Build, pack the tarballs and run CI's smoke tests against them (needs npm registry access) |
 | `build` | `make build` | Packages, then the example builds |
 | `cover` / `cover-func` | `make cover` / `make cover-func` | Coverage HTML report (`coverage/index.html`) / per-file table |
-| `cover-check` | `make cover-check` | Coverage run + the ≥ 94% gate (CI's script) |
+| `cover-check` | `make cover-check` | Coverage run + the ≥ 98% gate (CI's script) |
 | `ci` | `make ci` | `mod-verify`, exports and docs checks, `lint`, `vet`, `cover-check`, `build`, example checks, API reports, `vuln-check` |
 | `metrics-lint` | `make metrics-lint` | Parity with gincommon's `metricslint`, and inventory drift |
 | `metrics-inventory` | `make metrics-inventory` | Regenerate `docs/observability/metric-registry.md` (`docs:sync`) |
@@ -468,7 +469,7 @@ gincommon's local stack (`make docker-up` in platform-gincommon) runs a collecto
 
 ### Coverage
 
-`Validate / Test` fails below **94%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`). It's 94.8% today. Don't lower the threshold.
+`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 99.2% today. Don't lower the threshold.
 
 ---
 
@@ -559,12 +560,12 @@ SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as publi
 
 | Version | Status | Notes |
 |---|---|---|
-| `1.0.0-alpha.N` | Current line | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes share the SDK under `^1.0.0-0` |
+| `1.0.0-alpha.N` | Current line | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`) |
 | `1.0.0` | Cut with the first end-to-end environment | Strict SemVer from then on |
 
 ### Cutting a release
 
-1. Open a release PR: `pnpm changeset version` bumps all three packages and consumes the changesets; rename `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) to `## [X.Y.Z] - YYYY-MM-DD` (the version it set) and add a new empty `[Unreleased]`. Commit the result, run `pnpm install` if the lockfile changes, and merge.
+1. Open a release PR: `pnpm run version-packages` bumps all three packages, consumes the changesets and regenerates the SDK facts (`exports:sync`: the version remotes require); rename `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) to `## [X.Y.Z] - YYYY-MM-DD` (the version it set) and add a new empty `[Unreleased]`. Commit the result, run `pnpm install` if the lockfile changes, and merge.
 2. Tag the merge commit `vX.Y.Z` (the version it set) and push the tag. `release.yml` does the rest:
    1. **Verify.** The tag must be reachable from `origin/main` (and a manual dispatch must start from `main` or the tag), all package versions must equal the tag, and `CHANGELOG.md` must have its section (`## [X.Y.Z]`; a pre-release tag may use its base version's section).
    2. **Gates.** The same gates as `ci.yml`, at the tag: tests, quality, contracts, package, Trivy, smoke, interop.
@@ -595,7 +596,7 @@ Six workflow files and one shared setup action. Shell logic lives in `.github/sc
   2. Then `trivy` (filesystem scan: runtime dependencies, secrets, config; CRITICAL/HIGH/UNKNOWN fails; SARIF; CycloneDX SBOM) and `smoke` (the tarballs installed into an empty consumer).
   3. Then `interop` (platform-interop-tests at a pinned SHA, pair 4 at this ref).
   4. Finally `pr-summary` (one updated PR comment, also on failure).
-- **`validate-test.yml`** (reusable): a frozen install, then `pnpm test:coverage`, then `coverage-gate.sh` (**≥ 94%**), then the coverage report is uploaded.
+- **`validate-test.yml`** (reusable): a frozen install, then `pnpm test:coverage`, then `coverage-gate.sh` (**≥ 98%**), then the coverage report is uploaded.
 - **`validate-quality.yml`** (reusable), in order:
   1. HTML-escaped-operator guard, action SHA pins, lockfile drift;
   2. exports and docs checks;

@@ -97,7 +97,9 @@ async function shareScope(): Promise<unknown> {
 const containers = new Map<string, Promise<Container>>();
 
 async function loadContainer(name: string, timeoutMs: number): Promise<Container> {
-  const entry = currentManifest()?.[name];
+  const manifest = currentManifest();
+  // Own entries only: 'constructor', 'toString' etc. would otherwise resolve from Object.prototype.
+  const entry = manifest && Object.prototype.hasOwnProperty.call(manifest, name) ? manifest[name] : undefined;
   if (!entry) throw new AttemptError('network', 'not in the remote manifest');
   // Checked again right before the <script> is created, whatever the manifest said.
   if (!isAllowedEntry(entry.entry)) throw new AttemptError('network', `entry ${entry.entry} is not an allowed origin`);
@@ -174,6 +176,8 @@ export async function loadRemote<T = unknown>(
     let lastError: AttemptError | undefined;
     for (let n = 0; n <= retries; n++) {
       try {
+        // Checked before loadContainer, so an aborted caller never injects the entry script.
+        if (o?.signal?.aborted) throw new AttemptError('aborted', 'aborted');
         let pending = containers.get(name);
         if (!pending) {
           pending = loadContainer(name, timeoutMs);

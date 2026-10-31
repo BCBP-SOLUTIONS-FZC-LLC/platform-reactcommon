@@ -22,6 +22,7 @@ export {
 export { getSessionId, newRequestId } from './correlation.ts';
 export { hasConsent, setConsentProvider, type ConsentCategory, type ConsentProvider } from './consent.ts';
 export { isSensitiveKey, sanitizeFields, sanitizeString } from './sanitize.ts';
+export { scrubSecrets } from './scrub.ts';
 
 /** Per-MFE scope: every log, span and metric from a remote is tagged with `mfe`. */
 export interface MfeScope {

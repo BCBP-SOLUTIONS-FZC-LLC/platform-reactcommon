@@ -3,8 +3,11 @@
 // subscribes and re-renders. Listeners live on the runtime, so every SDK copy on the page shares them.
 import { getRuntime } from './runtime.ts';
 
-/** i18n: locale or catalogs; flags: the provider; authz: authorizer or subject; read-only: a DENY_TENANT_READ_ONLY was seen. */
-export type RuntimeTopic = 'i18n' | 'flags' | 'authz' | 'read-only';
+/**
+ * i18n: locale or catalogs; flags: the provider; authz: authorizer or subject; read-only: a DENY_TENANT_READ_ONLY
+ * was seen; session: initializeAuth installed an identity provider (its own subscribe carries the state changes).
+ */
+export type RuntimeTopic = 'i18n' | 'flags' | 'authz' | 'read-only' | 'session';
 
 function listeners(topic: RuntimeTopic): Set<() => void> {
   const events = getRuntime().events;

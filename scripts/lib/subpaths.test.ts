@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildExportsMap } from '../sync-exports.ts';
+import { buildExportsMap, buildToolingConstants, shareRange } from '../sync-exports.ts';
 import { REPO_ROOT, SDK_DIR, allowedImports, implementedSubpaths, loadSubpathConfig, validateAreas, validateSubpathConfig } from './subpaths.ts';
 
 describe('subpaths.json', () => {
@@ -107,5 +107,26 @@ describe('exports map', () => {
   it('matches packages/frontend-sdk/package.json (pnpm exports:sync keeps them in step)', () => {
     const pkg = JSON.parse(readFileSync(join(SDK_DIR, 'package.json'), 'utf8')) as { exports: unknown };
     expect(pkg.exports).toEqual(buildExportsMap(implementedSubpaths()));
+  });
+});
+
+describe('tooling constants', () => {
+  it('carry the SDK version (what a remote requires) beside the shell share range', () => {
+    const text = buildToolingConstants(['core'], '1.5.2-rc.1');
+    expect(text).toContain("export const SDK_VERSION = '1.5.2-rc.1';");
+    expect(text).toContain("export const SDK_SHARE_RANGE = '^1.0.0-0';");
+  });
+
+  it('refuse a version that is not SemVer', () => {
+    for (const v of ['1.2', 'v1.2.3', "1.0.0'; evil()", '']) expect(() => shareRange(v), v).toThrow('is not SemVer');
+    expect(shareRange('2.3.4')).toBe('^2.0.0-0');
+  });
+
+  it('match the generated files (pnpm exports:sync keeps them in step)', () => {
+    const pkg = JSON.parse(readFileSync(join(SDK_DIR, 'package.json'), 'utf8')) as { version: string };
+    const want = buildToolingConstants(implementedSubpaths(), pkg.version);
+    for (const rel of ['packages/webpack-preset/src/generated/sdk.ts', 'packages/eslint-plugin/src/generated/sdk.ts']) {
+      expect(readFileSync(join(REPO_ROOT, rel), 'utf8'), rel).toBe(want);
+    }
   });
 });

@@ -1,5 +1,6 @@
 // Checks the example builds against design doc §C3 (run after `pnpm build`):
-// - the remote's container is window.tenders (the SDK's loadRemote rule) and it bundles no SDK code;
+// - the remote's container is window.tenders (the SDK's loadRemote rule), it bundles no SDK code and it
+//   takes react/jsx-runtime from the shared scope;
 // - no output can need eval (CSP script-src 'self'): no eval( and no new Function with a body. Zod's
 //   capability probe `new Function("")` stays in the bundle but never runs: the SDK sets jitless, which
 //   the probe checks first (test/config/schema-csp.test.ts proves no Function is constructed);
@@ -33,6 +34,8 @@ for (const [name, b] of [['shell', shell], ['remote-tenders', remote]] as const)
 check(remote.files.includes('remoteEntry.js'), 'remote-tenders: no remoteEntry.js');
 check(/\bvar tenders\b/.test(readFileSync(join(remoteDir, 'remoteEntry.js'), 'utf8')), 'remote-tenders: remoteEntry.js does not define window.tenders');
 check(!remote.js.includes('@platform/frontend-sdk:session-id'), 'remote-tenders: bundles SDK code (it must come from the shell)');
+// The remote's JSX must come from the shell's React (another major's elements fail to render).
+check(/"react\/jsx-runtime"/.test(readFileSync(join(remoteDir, 'remoteEntry.js'), 'utf8')), 'remote-tenders: does not consume react/jsx-runtime from the shared scope');
 check(shell.js.includes('@platform/frontend-sdk:session-id'), 'shell: does not bundle the SDK');
 const html = readFileSync(join(shellDir, 'index.html'), 'utf8');
 const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];

@@ -1,18 +1,10 @@
 // Log redaction (design doc §C1 /logging): sanitizeFields, then sanitizeString on every string
 // value, then scrubbing of JWT- and Bearer-shaped substrings, then the message the same way.
-import { sanitizeFields, sanitizeString } from '../core/index.ts';
+import { isSensitiveKey, sanitizeFields, sanitizeString, scrubSecrets } from '../core/index.ts';
+
+export { scrubSecrets } from '../core/index.ts';
 
 const REDACTED = '[REDACTED]';
-
-// A JWT starts with the base64url of '{"' ("eyJ"). Matched with one, two or three segments, so a
-// token cut short by the 256-byte limit is still caught.
-const JWT = /eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*){0,2}/g;
-const BEARER = /\b(Bearer)\s+[^\s"',;]+/gi;
-
-/** Replaces JWTs and `Bearer <token>` credentials inside free text. */
-export function scrubSecrets(s: string): string {
-  return s.replace(BEARER, `$1 ${REDACTED}`).replace(JWT, REDACTED);
-}
 
 /** sanitizeString (controls, 256 bytes) then scrubSecrets: what every logged string goes through. */
 export function cleanString(s: string): string {
@@ -21,6 +13,15 @@ export function cleanString(s: string): string {
 
 /** A log attribute value: OTLP AnyValue (primitives, arrays, maps). */
 export type LogValue = string | number | boolean | null | LogValue[] | { [k: string]: LogValue };
+
+function mapKey(k: unknown): string {
+  if (typeof k === 'string') return k;
+  try {
+    return cleanString(String(k));
+  } catch {
+    return cleanString(Object.prototype.toString.call(k)); // e.g. an object without toString
+  }
+}
 
 function toLogValue(v: unknown, seen: WeakSet<object>): LogValue | undefined {
   if (typeof v === 'string') return cleanString(v);
@@ -34,11 +35,18 @@ function toLogValue(v: unknown, seen: WeakSet<object>): LogValue | undefined {
     if (seen.has(v)) return '[Circular]';
     seen.add(v);
     let out: LogValue;
-    if (Array.isArray(v)) {
-      out = v.map((x) => toLogValue(x, seen) ?? null);
+    if (Array.isArray(v) || v instanceof Set) {
+      out = Array.from(v as Iterable<unknown>, (x) => toLogValue(x, seen) ?? null);
     } else {
+      // A Map logs as an object of its entries; a non-string key is stringified (and cleaned).
+      const entries = v instanceof Map ? Array.from(v as Map<unknown, unknown>, ([k, x]) => [mapKey(k), x] as const) : Object.entries(v);
       const o: Record<string, LogValue> = {};
-      for (const [k, x] of Object.entries(v)) {
+      for (const [k, x] of entries) {
+        // sanitizeFields (gincommon parity) passes class instances through; their keys are checked here.
+        if (isSensitiveKey(k)) {
+          o[k] = REDACTED;
+          continue;
+        }
         const lv = toLogValue(x, seen);
         if (lv !== undefined) o[k] = lv;
       }

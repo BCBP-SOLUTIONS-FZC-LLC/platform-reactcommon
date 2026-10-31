@@ -96,7 +96,7 @@ Review the diff: a contract change that alters public behaviour (a new problem t
 | Examples | `examples/*/test/` | The shell's IAM ports against the contract cases; the CloudFront CSP and Lambda |
 | Interop | CI `interop` job | platform-interop-tests pair 4 at a pinned SHA |
 
-- Statement coverage of `packages/*/src` must stay **≥ 94%** (`pnpm test:coverage`, gated in CI). Don't lower the threshold.
+- Statement coverage of `packages/*/src` must stay **≥ 98%** (`pnpm test:coverage`, gated in CI). Don't lower the threshold.
 - Don't break the canonical tests listed in the [README](README.md#canonical-tests-do-not-break) (OIDC refresh, header rules, redaction, problem parsing, CSP-safe config, dependency rules).
 - A security-relevant change (tokens, headers, redirects, storage, HTML) needs a test that would fail without it.
 - Run one test file or test name with `pnpm exec vitest run packages/frontend-sdk/test/http` or `pnpm exec vitest run -t "single-flight"`.
@@ -115,7 +115,7 @@ Give new public symbols a TSDoc comment; it ends up in the API report (api-extra
 ## Pull request checklist
 
 - [ ] `pnpm run ci` passes locally (`pnpm verify` + the coverage gate and the audit)
-- [ ] New behaviour is covered by tests in `packages/*/test/`; coverage stays ≥ 94%
+- [ ] New behaviour is covered by tests in `packages/*/test/`; coverage stays ≥ 98%
 - [ ] New public symbols have TSDoc comments, and `api/*.api.md` is updated (`pnpm api`)
 - [ ] A changeset (`pnpm changeset`) for a change to a published package
 - [ ] `CHANGELOG.md` `[Unreleased]` section updated (the *Changelog check* workflow requires both)
@@ -136,7 +136,7 @@ docs: describe the workspace switch in the LLD
 
 See **[VERSIONING.md § Maintainer release process](./VERSIONING.md#maintainer-release-process)** for the full steps. Short version:
 
-1. Open a release PR: `pnpm changeset version` (bumps all three packages, consumes the changesets), then move the `[Unreleased]` items to a new `## [X.Y.Z] - YYYY-MM-DD` section in `CHANGELOG.md`.
+1. Open a release PR: `pnpm run version-packages` (`changeset version`, which bumps all three packages and consumes the changesets, then `exports:sync`, which writes the new version into the generated SDK facts), then move the `[Unreleased]` items to a new `## [X.Y.Z] - YYYY-MM-DD` section in `CHANGELOG.md`.
 2. Run `pnpm install` if the lockfile changed, and `pnpm verify`. Merge as `chore(release): vX.Y.Z`.
 3. Create and push an annotated tag on the merge commit: `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`.
 4. `release.yml` verifies the tag, reruns every CI gate and creates the GitHub Release (tarballs, SBOM, signed checksums) with the CHANGELOG section as release notes.

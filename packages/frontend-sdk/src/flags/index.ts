@@ -33,8 +33,10 @@ export function runtimeConfigFlagProvider(): FlagProvider {
 /**
  * Runtime-config flags, plus the tenant's `featureFlags` (presence means true, as in the gateway's
  * x-feature-flags) and `read_only`. A runtime-config value wins, so a platform kill switch or
- * rollout setting can always turn a tenant feature off. Absent flags are undefined (the caller's
- * fallback applies), never false.
+ * rollout setting can always turn a tenant feature off. The exception is `read_only`, a restriction
+ * rather than a feature: it is true when the platform flag, the tenant's readOnly or the tenant flag
+ * says so, and a platform `false` never lifts a tenant's read-only state. Absent flags are undefined
+ * (the caller's fallback applies), never false.
  */
 export function sessionContextFlagProvider(ctx: { featureFlags: readonly string[]; readOnly: boolean }): FlagProvider {
   const tenantFlags = new Set(Array.isArray(ctx?.featureFlags) ? ctx.featureFlags.filter((f) => typeof f === 'string') : []);
@@ -42,8 +44,8 @@ export function sessionContextFlagProvider(ctx: { featureFlags: readonly string[
   return Object.freeze({
     get(key: string): FlagValue | undefined {
       const platform = configFlag(key);
+      if (key === 'read_only') return platform === true || readOnly || tenantFlags.has(key);
       if (platform !== undefined) return platform;
-      if (key === 'read_only') return readOnly || tenantFlags.has(key);
       return tenantFlags.has(key) ? true : undefined;
     },
     subscribe: NO_SUBSCRIPTION,

@@ -268,3 +268,57 @@ describe('gateway denials (iam-authz-enrichment deniedResponse, AE-42)', () => {
     expect(gatewayDenyCode(await parseProblemResponse(problemResponse({ status: 403 }, 403)))).toBeUndefined();
   });
 });
+
+describe('parseProblemResponse: unreadable bodies', () => {
+  const stream = (source: UnderlyingDefaultSource<Uint8Array>) =>
+    new Response(new ReadableStream<Uint8Array>(source), { status: 502, headers: { 'content-type': 'application/problem+json', 'x-request-id': 'rid' } });
+
+  it('treats a problem response with no body as unparsable: synthetic, with the request id', async () => {
+    const p = await parseProblemResponse(new Response(null, { status: 404, headers: { 'content-type': 'application/problem+json' } }), { requestId: 'sent' });
+    expect(p.synthetic).toBe(true);
+    expect(p.status).toBe(404);
+    expect(p.is(PlatformProblemTypes.NotFound)).toBe(true);
+    expect(p.requestId).toBe('sent');
+  });
+
+  it('falls back to a synthetic problem when reading the body fails mid-stream', async () => {
+    const enc = new TextEncoder();
+    let sent = false;
+    const res = stream({
+      pull(c) {
+        if (!sent) {
+          sent = true;
+          c.enqueue(enc.encode('{"status":502,"detail":"secret'));
+        } else c.error(new TypeError('connection reset'));
+      },
+    });
+    const p = await parseProblemResponse(res);
+    expect(p.synthetic).toBe(true);
+    expect(p.status).toBe(502);
+    expect(p.detail).toBeUndefined(); // the partial body is never surfaced
+    expect(p.requestId).toBe('rid');
+  });
+
+  it('still returns a synthetic problem when cancelling an oversized body fails', async () => {
+    const chunk = new Uint8Array(1024 * 1024 + 1).fill(0x20);
+    const res = stream({
+      start(c) {
+        c.enqueue(chunk);
+      },
+      cancel() {
+        throw new Error('cancel failed');
+      },
+    });
+    const p = await parseProblemResponse(res);
+    expect(p.synthetic).toBe(true);
+    expect(p.status).toBe(502);
+  });
+
+  it('still returns a synthetic problem when discarding a non-problem body fails', async () => {
+    const res = new Response('<html>', { status: 503, headers: { 'content-type': 'text/html' } });
+    res.body!.getReader(); // locked: cancel() rejects
+    const p = await parseProblemResponse(res);
+    expect(p.synthetic).toBe(true);
+    expect(p.is(PlatformProblemTypes.ServiceUnavailable)).toBe(true);
+  });
+});

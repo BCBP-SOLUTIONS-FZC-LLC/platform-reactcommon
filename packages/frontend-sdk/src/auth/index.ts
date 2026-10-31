@@ -6,6 +6,7 @@
  * @packageDocumentation
  */
 import type { RuntimeConfig } from '../config/index.ts';
+import { emitRuntime } from '../internal/events.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import type { IdentityProvider, SessionState, Workspace, WorkspaceResolver } from './types.ts';
 import { chooseWorkspace } from './workspace.ts';
@@ -46,12 +47,16 @@ export function initializeAuth(p: IdentityProvider): TokenSource {
   const rt = getRuntime();
   rt.identityProvider = p;
   rt.tokenSource = source;
+  emitRuntime('session'); // hooks rendered before this move from `loading` to the provider's state
   return source;
 }
 
+// One object, so React's useSyncExternalStore sees a stable snapshot before initializeAuth.
+const LOADING: SessionState = Object.freeze({ status: 'loading' });
+
 /** The current session; `loading` until initializeAuth has run and init() settled. */
 export function getSession(): SessionState {
-  return (getRuntime().identityProvider as IdentityProvider | undefined)?.getState() ?? { status: 'loading' };
+  return (getRuntime().identityProvider as IdentityProvider | undefined)?.getState() ?? LOADING;
 }
 
 /**
