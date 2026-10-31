@@ -3,7 +3,7 @@
 //   takes react/jsx-runtime from the shared scope;
 // - no output can need eval (CSP script-src 'self'): no eval( and no new Function with a body. Zod's
 //   capability probe `new Function("")` stays in the bundle but never runs: the SDK sets jitless, which
-//   the probe checks first (test/config/schema-csp.test.ts proves no Function is constructed);
+//   the probe checks first (test/unit/config/schema-csp.test.ts proves no Function is constructed);
 // - production source maps are emitted but never referenced (hidden-source-map);
 // - index.html loads only external scripts (no inline script).
 import { readFileSync, readdirSync } from 'node:fs';

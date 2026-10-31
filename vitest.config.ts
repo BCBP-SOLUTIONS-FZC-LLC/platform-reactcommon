@@ -13,7 +13,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['packages/*/test/**/*.test.{ts,tsx}', 'examples/*/test/**/*.test.{ts,tsx}', 'scripts/**/*.test.ts'],
+    include: ['test/{unit,integration,e2e}/**/*.test.{ts,tsx}', 'examples/*/test/**/*.test.{ts,tsx}', 'scripts/**/*.test.ts'],
     coverage: {
       provider: 'v8',
       // The published packages' sources: the coverage gate (.github/scripts/coverage-gate.sh)

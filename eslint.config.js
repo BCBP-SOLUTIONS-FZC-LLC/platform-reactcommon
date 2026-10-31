@@ -35,7 +35,7 @@ const packagePatternsFor = (owner) =>
     }));
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', '**/.build/**', '**/temp/**', '**/test/fixtures/**'] },
+  { ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', '**/.build/**', '**/temp/**', 'test/fixtures/boundaries/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

@@ -68,7 +68,7 @@ module.exports = {
   forbidden,
   options: {
     doNotFollow: { path: 'node_modules' },
-    exclude: { path: '^packages/[^/]+/(dist|coverage|test)/' },
+    exclude: { path: '^(packages/[^/]+/(dist|coverage)|test)/' },
     tsPreCompilationDeps: true,
     enhancedResolveOptions: { extensions: ['.ts', '.tsx', '.js'] },
   },
