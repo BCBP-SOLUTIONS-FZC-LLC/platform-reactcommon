@@ -216,6 +216,14 @@ export async function withSpan<T>(
   }
 }
 
+/**
+ * Used by /http: `fn` bound to the trace context active now, so a span it starts after an await still
+ * has the caller's span as its parent (the browser has no async context propagation).
+ */
+export function bindTraceContext<F extends (...args: never[]) => unknown>(fn: F): F {
+  return otelContext.bind(otelContext.active(), fn);
+}
+
 /** The active span's trace id (32 lower-hex), or undefined when there is none or it is invalid. */
 export function currentTraceId(): string | undefined {
   const c = trace.getActiveSpan()?.spanContext();

@@ -32,9 +32,15 @@ packages/
     contracts/              ← Generated from pinned backend commits (never edited)
     api/<subpath>.api.md    ← api-extractor report: the reviewed public API
     subpaths.json           ← Subpaths, layers, functional areas, allowed imports (single source)
-    test/<subpath>/         ← Tests, one folder per subpath, not beside production code
-  webpack-preset/           ← platformShared, sharedFor, platformWebpackConfig (+ test/)
-  eslint-plugin/            ← Consumer lint rules (src/rules.ts, test/rules.test.ts)
+  webpack-preset/           ← platformShared, sharedFor, platformWebpackConfig
+  eslint-plugin/            ← Consumer lint rules (src/rules.ts)
+test/                       ← All tests, not beside production code (as platform-gincommon)
+  unit/<subpath>/           ← One folder per SDK subpath; unit/sdk, unit/webpack-preset, unit/eslint-plugin
+  integration/              ← Several subpaths wired together, in-process
+  e2e/                      ← The reference shell and remote booted end to end, in-process
+  smoke/                    ← The served example builds, or a deployed shell (SMOKE_BASE_URL)
+  fixtures/                 ← Shared fakes and helpers
+  testenv/                  ← Loads .env; sets OBSERVABILITY_DOMAIN, ENVIRONMENT defaults
 examples/                   ← shell, remote-tenders, cloudfront (built and checked in CI; not deployed)
 scripts/                    ← exports, contracts, docs, API reports, metrics parity, example checks
 .githooks/pre-commit        ← Local commit gates (`pnpm run install-hooks`)
@@ -55,7 +61,7 @@ A subpath imports only lower subpaths that it lists in `imports`, and only throu
 1. Add the entry to `packages/frontend-sdk/subpaths.json`: `name`, `layer`, `area` (one of the seven functional areas) and the `imports` it needs.
 2. Implement it in `packages/frontend-sdk/src/<name>/index.ts`. Only what that file exports is public; put helpers in other files of the folder or in `src/internal/`.
 3. Run `pnpm exports:sync`. It regenerates the exports map and the SDK facts in `@platform/webpack-preset` (the shared list) and `@platform/eslint-plugin`. The build and the API reports pick the subpath up automatically.
-4. Add tests in `packages/frontend-sdk/test/<name>/`.
+4. Add tests in `test/unit/<name>/` (and to `test/integration` if it changes how subpaths work together).
 5. Run `pnpm build && pnpm api` and commit `api/<name>.api.md`.
 6. Run `pnpm docs:sync` (dependency graph, area pages), and describe the subpath in the design doc, the LLD and its `docs/areas/` page.
 
@@ -70,7 +76,7 @@ Adding an export to an existing subpath is steps 2, 4 and 5.
 ## Adding a lint rule
 
 1. Implement it in `packages/eslint-plugin/src/rules.ts` with the `rule(...)` helper, and register it in `src/index.ts`.
-2. Add valid and invalid cases to `packages/eslint-plugin/test/rules.test.ts`.
+2. Add valid and invalid cases to `test/unit/eslint-plugin/rules.test.ts`.
 3. Decide whether it joins `configs.recommended`: a rule added there is a **MAJOR** change for consumers ([VERSIONING.md](VERSIONING.md)).
 4. If it relies on SDK facts (subpaths, forbidden headers), read them from the generated `src/generated/` files (`sdk.ts`, `forbidden-headers.ts`) rather than copying them.
 
@@ -90,16 +96,19 @@ Review the diff: a contract change that alters public behaviour (a new problem t
 
 | Kind | Location | Notes |
 |------|----------|-------|
-| Unit | `packages/*/test/` | Vitest + jsdom; no network. Use fakes (the Keycloak fake, `mockApi`) and fake timers |
-| Contract | `packages/frontend-sdk/test/` (fixtures from `contracts/`) | Identity, redaction and problem fixtures shared with Go and Python |
-| Build | `packages/webpack-preset/test/`, `pnpm examples:check` | Real webpack builds: container globals, no SDK in remotes, no `eval` |
+| Unit | `test/unit/<subpath>/` | Vitest + jsdom; no network. Use fakes (`test/fixtures`: the Keycloak fake, `mockApi`) and fake timers |
+| Integration | `test/integration/` | Several subpaths wired together in-process: bootstrap, auth + http + telemetry, consent, MFE |
+| E2E | `test/e2e/` | The reference shell and remote booted end to end in-process |
+| Smoke | `test/smoke/` | Optional locally (`pnpm run test-smoke`, after `pnpm build`); the example builds served as CloudFront does, or a deployed shell at `SMOKE_BASE_URL` |
+| Contract | `test/unit/` (fixtures from `contracts/`) | Identity, redaction and problem fixtures shared with Go and Python |
+| Build | `test/unit/webpack-preset/`, `pnpm examples:check` | Real webpack builds: container globals, no SDK in remotes, no `eval` |
 | Examples | `examples/*/test/` | The shell's IAM ports against the contract cases; the CloudFront CSP and Lambda |
 | Interop | CI `interop` job | platform-interop-tests pair 4 at a pinned SHA |
 
 - Statement coverage of `packages/*/src` must stay **≥ 98%** (`pnpm test:coverage`, gated in CI). Don't lower the threshold.
 - Don't break the canonical tests listed in the [README](README.md#canonical-tests-do-not-break) (OIDC refresh, header rules, redaction, problem parsing, CSP-safe config, dependency rules).
 - A security-relevant change (tokens, headers, redirects, storage, HTML) needs a test that would fail without it.
-- Run one test file or test name with `pnpm exec vitest run packages/frontend-sdk/test/http` or `pnpm exec vitest run -t "single-flight"`.
+- Run one test file or test name with `pnpm exec vitest run test/unit/http` or `pnpm exec vitest run -t "single-flight"`.
 
 ## Linting and API reports
 

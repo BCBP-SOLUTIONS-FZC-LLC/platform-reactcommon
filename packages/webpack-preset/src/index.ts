@@ -106,6 +106,12 @@ export function platformWebpackConfig(o: PresetOptions): Configuration {
   if (o.role !== 'shell' && o.role !== 'remote') throw new TypeError(`role must be 'shell' or 'remote', got ${JSON.stringify(o.role)}`);
   if (o.mode !== 'production' && o.mode !== 'development') throw new TypeError(`mode must be 'production' or 'development'`);
   const prod = o.mode === 'production';
+  const shell = o.role === 'shell';
+  // The shell is served from the site root, and index.html is returned for every deep link (the SPA
+  // rewrite): its scripts must load from '/', never relative to /t/acme/… or /auth/callback. Its hashed
+  // bundles go under assets/, the immutable CloudFront behavior. A remote's chunks load relative to its
+  // remoteEntry.js, wherever the manifest points ('auto').
+  const js = prod ? '[name].[contenthash].js' : '[name].js';
   const mf =
     o.role === 'remote'
       ? {
@@ -122,9 +128,9 @@ export function platformWebpackConfig(o: PresetOptions): Configuration {
     // No eval-based devtool in any mode (CSP script-src 'self'); production maps are uploaded privately, never served.
     devtool: prod ? 'hidden-source-map' : 'cheap-module-source-map',
     output: {
-      publicPath: 'auto',
-      filename: prod ? '[name].[contenthash].js' : '[name].js',
-      chunkFilename: prod ? '[name].[contenthash].js' : '[name].js',
+      publicPath: shell ? '/' : 'auto',
+      filename: shell ? `assets/${js}` : js,
+      chunkFilename: shell ? `assets/${js}` : js,
       assetModuleFilename: prod ? 'assets/[name].[contenthash][ext]' : 'assets/[name][ext]',
       // require-trusted-types-for 'script': webpack's script URLs go through this policy.
       trustedTypes: { policyName: 'platform-webpack' },

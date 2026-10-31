@@ -143,9 +143,12 @@ Fixed before the first release, after a security and production-readiness review
 - `/flags`: `read_only` is true when the platform or the tenant says so.
 - Release PRs run `pnpm run version-packages` (`changeset version` + `exports:sync`).
 - The coverage gate is 98% of statements (as platform-gincommon); 1100+ tests.
+- Tests live under `test/` as in platform-gincommon: `unit/<subpath>`, `integration`, `e2e` (the reference shell and remote booted end to end), `smoke` (the served builds, or a deployed shell with `SMOKE_BASE_URL`), `fixtures`, `testenv`.
 
 ### Fixed
 
+- `@platform/webpack-preset`: the shell loads its scripts from `/` (`publicPath: '/'`, bundles under `assets/`); with `'auto'`, `index.html` served for a deep link or `/auth/callback` asked for its scripts under that route, so the shell never started there (found by the new `test/smoke`).
+- `/http`: a deduplicated GET started inside `withSpan` continues the caller's trace (`/tracing` adds `bindTraceContext`); `/react`: `MFEErrorBoundary` logs an API error with its `request_id` (both found by the new `test/integration`).
 - `/http` + `useApi`: a GET made right after every subscriber of a shared GET aborted no longer joins the dead request (`useApi` stayed `loading` under React StrictMode); failures while reading a body are `TimeoutError` / `AbortedError` / `NetworkError`; works without `AbortSignal.any` (Safari < 17.4); each subscriber of a deduplicated GET gets its own copy of `data`.
 - `/auth`, `/react`: `getSession()` returns one stable `loading` object before `initializeAuth` (React looped); hooks keep stable subscriptions; `useSession` follows a provider installed after its first render; the first recorded sign-in keeps a draft saved before the redirect.
 - `/tracing`: a hidden page sends the newest spans first in one keepalive request (a closing tab keeps them), then flushes the rest; `pagehide` sends what fits one keepalive request and counts the rest (`droppedOnUnload`); the sampler description matches Go's `%g`.

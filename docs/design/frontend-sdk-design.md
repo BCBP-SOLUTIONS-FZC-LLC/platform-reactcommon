@@ -242,6 +242,8 @@ export function getTracer(scope: string): Tracer;          // no-op tracer befor
 export function withSpan<T>(name: string, fn: (s: Span) => T | Promise<T>,
   attrs?: Record<string, string | number | boolean>): Promise<T>;
 export function currentTraceId(): string | undefined;      // 32 lower-hex, undefined if none/invalid
+/** Used by /http: fn bound to the trace context active now (a span started after an await keeps its parent). */
+export function bindTraceContext<F extends (...args: never[]) => unknown>(fn: F): F;
 /** Used by /http only; consumers never set propagation headers themselves. */
 export function injectTraceHeaders(url: URL, headers: Headers): void;
 ```
@@ -1154,7 +1156,10 @@ export const platformShared = {
 
 The preset also sets `output.trustedTypes: { policyName: 'platform-webpack' }`,
 `output.crossOriginLoading: false` (same origin), devtool `hidden-source-map` (maps uploaded
-privately and not served), no `eval` devtools in any mode, `publicPath: 'auto'`, and content hashing.
+privately and not served), no `eval` devtools in any mode, and content hashing. The shell gets
+`publicPath: '/'` with its bundles under `assets/`: `index.html` is served for every deep link (the SPA
+rewrite), so a relative script URL would resolve under `/t/acme/…` or `/auth/callback` and fail. A remote
+keeps `publicPath: 'auto'`: its chunks load relative to its `remoteEntry.js`.
 
 **Versioning.** The SDK is not started at `0.x`. A caret range on `0.x` pins the minor version
 (`^0.3.0` means below `0.4.0`), so with `strictVersion` every minor release would break every remote.

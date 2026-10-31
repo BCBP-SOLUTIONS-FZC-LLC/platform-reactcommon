@@ -114,13 +114,23 @@ describe('containerName', () => {
 describe('platformWebpackConfig', () => {
   it('sets CSP-safe output for both modes', () => {
     for (const mode of ['production', 'development'] as const) {
-      const c = platformWebpackConfig({ role: 'shell', mode });
-      expect(String(c.devtool)).not.toMatch(/eval/);
-      expect(c.output).toMatchObject({ publicPath: 'auto', trustedTypes: { policyName: 'platform-webpack' }, crossOriginLoading: false });
+      for (const role of ['shell', 'remote'] as const) {
+        const c = platformWebpackConfig({ role, mode, name: 'tenders' });
+        expect(String(c.devtool)).not.toMatch(/eval/);
+        expect(c.output).toMatchObject({ trustedTypes: { policyName: 'platform-webpack' }, crossOriginLoading: false });
+      }
     }
     const prod = platformWebpackConfig({ role: 'shell', mode: 'production' });
     expect(prod.devtool).toBe('hidden-source-map');
     expect(prod.output?.filename).toContain('[contenthash]');
+  });
+
+  it('loads the shell from the site root (deep links and /auth/callback), a remote relative to its remoteEntry.js', () => {
+    // index.html is served for every deep link: a relative script src would resolve under /t/acme/… and 403.
+    const shell = platformWebpackConfig({ role: 'shell', mode: 'production' });
+    expect(shell.output).toMatchObject({ publicPath: '/', filename: 'assets/[name].[contenthash].js', chunkFilename: 'assets/[name].[contenthash].js' });
+    const remote = platformWebpackConfig({ role: 'remote', name: 'tenders', mode: 'production' });
+    expect(remote.output).toMatchObject({ publicPath: 'auto', filename: '[name].[contenthash].js', chunkFilename: '[name].[contenthash].js' });
   });
 
   it('refuses an unknown role or mode', () => {
@@ -131,7 +141,7 @@ describe('platformWebpackConfig', () => {
   it('development output has readable names and no content hashes', () => {
     const dev = platformWebpackConfig({ role: 'shell', mode: 'development' });
     expect(dev.devtool).toBe('cheap-module-source-map');
-    expect(dev.output).toMatchObject({ filename: '[name].js', chunkFilename: '[name].js', assetModuleFilename: 'assets/[name][ext]', uniqueName: 'shell' });
+    expect(dev.output).toMatchObject({ filename: 'assets/[name].js', chunkFilename: 'assets/[name].js', assetModuleFilename: 'assets/[name][ext]', uniqueName: 'shell' });
     expect(dev.optimization).toEqual({ moduleIds: 'deterministic', chunkIds: 'deterministic' });
   });
 
@@ -244,7 +254,7 @@ describe('a real build', () => {
     const out = join(dir, 'shell-dist');
     const preset = platformWebpackConfig({ role: 'shell', mode: 'development' });
     await compile({ ...preset, context: dir, entry: { main: './shell.js' }, output: { ...preset.output, path: out } });
-    expect(readdirSync(out)).toContain('main.js');
-    expect(readFileSync(join(out, 'main.js'), 'utf8')).not.toMatch(/\beval\(/);
+    expect(readdirSync(join(out, 'assets'))).toContain('main.js'); // the shell's bundles live under assets/
+    expect(readFileSync(join(out, 'assets', 'main.js'), 'utf8')).not.toMatch(/\beval\(/);
   });
 });

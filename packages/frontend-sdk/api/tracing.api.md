@@ -5,6 +5,9 @@
 ```ts
 
 // @public
+export function bindTraceContext<F extends (...args: never[]) => unknown>(fn: F): F;
+
+// @public
 export function currentTraceId(): string | undefined;
 
 // @public

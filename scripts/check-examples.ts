@@ -6,7 +6,7 @@
 //   the probe checks first (test/unit/config/schema-csp.test.ts proves no Function is constructed);
 // - production source maps are emitted but never referenced (hidden-source-map);
 // - index.html loads only external scripts (no inline script).
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO_ROOT } from './lib/subpaths.ts';
 
@@ -15,8 +15,9 @@ const check = (ok: boolean, what: string) => {
   if (!ok) failures.push(what);
 };
 
+/** Every file under `dir` (the shell's bundles are under assets/), as paths relative to it. */
 function bundle(dir: string): { files: string[]; js: string } {
-  const files = readdirSync(dir);
+  const files = (readdirSync(dir, { recursive: true }) as string[]).filter((f) => statSync(join(dir, f)).isFile());
   const js = files.filter((f) => f.endsWith('.js')).map((f) => readFileSync(join(dir, f), 'utf8')).join('\n');
   return { files, js };
 }

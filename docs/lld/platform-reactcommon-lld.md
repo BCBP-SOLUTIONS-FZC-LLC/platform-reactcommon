@@ -112,9 +112,9 @@ platform-reactcommon/
       contracts/                generated, committed (never edited)
       api/                      api-extractor report per subpath
       subpaths.json             subpaths, layers, allowed imports (single source)
-      test/<subpath>/           Vitest
     webpack-preset/           @platform/webpack-preset (src/generated/sdk.ts generated)
     eslint-plugin/            @platform/eslint-plugin  (src/generated/{sdk,forbidden-headers}.ts generated)
+  test/                       unit/<subpath>, integration, e2e, smoke, fixtures, testenv (as platform-gincommon)
   examples/shell, examples/remote-tenders, examples/cloudfront
   scripts/                    sync-contracts, sync-exports, sync-docs, api-report, metrics-parity,
                               check-examples (pure logic in scripts/lib, unit-tested)
@@ -657,10 +657,10 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 
 | Export | Behaviour |
 |---|---|
-| `platformShared` | `react`, `react-dom` (pins from the preset's `package.json`, equal to the SDK's peer ranges), `@opentelemetry/api` `~1.10.0`, `@platform/frontend-sdk` and every subpath except `/testing` under `^<major>.0.0-0`: all `singleton`, `strictVersion` |
-| `sharedFor('shell' \| 'remote')` | shell: `eager: false`; remote: the SDK with `import: false` |
+| `platformShared` | `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, `react-dom`, `react-dom/client` (pins from the preset's `package.json`, equal to the SDK's peer ranges), `@opentelemetry/api` `~1.10.0`, `@platform/frontend-sdk` and every subpath except `/testing` under `^<major>.0.0-0`: all `singleton`, `strictVersion` |
+| `sharedFor('shell' \| 'remote')` | shell: `eager: false`; remote: the SDK with `import: false` and `requiredVersion: ^<the SDK version it was built against>` |
 | `containerName(remote)` | name with `-` → `_`; refuses `shell` and invalid names (the same rule as `loadRemote`) |
-| `platformWebpackConfig({ role, name?, exposes?, mode })` | Module Federation plugin (remote: `var` library named `containerName`, `remoteEntry.js`); `publicPath: 'auto'`; content hashes in production; `trustedTypes: { policyName: 'platform-webpack' }`; `crossOriginLoading: false`; `environment.globalThis: true`; devtool `hidden-source-map` (production) / `cheap-module-source-map`, never eval |
+| `platformWebpackConfig({ role, name?, exposes?, mode })` | Module Federation plugin (remote: `var` library named `containerName`, `remoteEntry.js`); shell: `publicPath: '/'` and bundles under `assets/` (index.html is served for every deep link, so its scripts load from the root; `/assets/*` is the immutable behavior), remote: `publicPath: 'auto'` (chunks relative to its `remoteEntry.js`); content hashes in production; `trustedTypes: { policyName: 'platform-webpack' }`; `crossOriginLoading: false`; `environment.globalThis: true`; devtool `hidden-source-map` (production) / `cheap-module-source-map`, never eval |
 
 The SDK subpaths and share range come from `src/generated/sdk.ts`, which `pnpm exports:sync` generates from `subpaths.json`.
 
