@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { expect, type Page, type Request, type Response } from '@playwright/test';
 import { STACK } from './stack-constants.ts';
 
-export const STATE = join(import.meta.dirname, '.state');
+export const STATE = join(import.meta.dirname, '..', '..', '.state');
 export type StackUser = (typeof STACK.users)[keyof typeof STACK.users];
 
 /** SDK storage keys (packages/frontend-sdk/src/auth/oidc.ts). */
@@ -100,6 +100,21 @@ export function decodeJwt(jwt: string): Record<string, unknown> {
   return JSON.parse(Buffer.from(jwt.split('.')[1]!, 'base64url').toString('utf8')) as Record<string, unknown>;
 }
 
+/**
+ * Runs a test navigation (goto, reload) and runs it once more when one the app started itself (a
+ * prompt=none round trip, a redirect after a refresh) interrupted it: Chromium, Firefox and WebKit word
+ * that differently.
+ */
+export async function navigateOnce(page: Page, nav: () => Promise<unknown>): Promise<void> {
+  try {
+    await nav();
+  } catch (e) {
+    if (!/interrupted by another navigation|NS_BINDING_ABORTED|net::ERR_ABORTED|Frame load interrupted/.test(String(e))) throw e;
+    await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+    await nav();
+  }
+}
+
 /** Polls `fn` until it returns a value (not undefined/false) or the timeout passes. */
 export async function eventually<T>(fn: () => T | undefined | false | Promise<T | undefined | false>, timeoutMs = 30_000, what = 'condition'): Promise<T> {
   const end = Date.now() + timeoutMs;
@@ -169,7 +184,7 @@ export function containerLog(service: string, sinceIso?: string): string {
   return execFileSync('docker', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-export interface EnvoyAccess { path: string; status: string; request_id: string; traceparent: string; upstream_x_tenant_id: string; upstream_x_user_id: string; upstream_x_tenant_roles: string; sub: string; details: string; response_content_type: string; client_ip: string; xff: string }
+export interface EnvoyAccess { path: string; status: number; request_id: string; traceparent: string; upstream_x_tenant_id: string; upstream_x_user_id: string; upstream_x_tenant_roles: string; sub: string; details: string; response_content_type: string; client_ip: string; xff: string }
 
 export function envoyAccess(sinceIso?: string): EnvoyAccess[] {
   return containerLog('envoy', sinceIso).split('\n').flatMap((l) => {

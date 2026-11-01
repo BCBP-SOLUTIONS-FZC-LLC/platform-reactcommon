@@ -1,6 +1,7 @@
 # The integrated, production-like stack for test/stack/e2e.spec.ts (docs/e2e/integrated-deployment-report.md).
-# Run through `pnpm run stack-up` / `stack-down` (scripts/stack-up.sh): the configs it mounts are rendered
-# into .state by scripts/prepare.mjs, and the IAM images need a private-module token passed as a BuildKit
+# Do not run `docker compose up` directly: start it with `pnpm run stack-up` and remove it with
+# `pnpm run stack-down` (test/stack/scripts). The configs it mounts are rendered into .state (gitignored)
+# by test/stack/scripts/prepare.mjs, and the IAM images need a private-module token passed as a BuildKit
 # secret from the environment (never a file).
 #
 # Host ports (127.0.0.1 unless noted): STACK_HTTPS_PORT (default 443, all interfaces) the viewer entry
@@ -52,7 +53,7 @@ services:
       REMOTE_VERSION: ${REMOTE_VERSION}
       DEPLOY_SET_CACHE_CONTROL: ${DEPLOY_SET_CACHE_CONTROL:-true}
     volumes:
-      - ./floci/deploy-web.sh:/deploy/deploy-web.sh:ro
+      - ./docker/floci/deploy-web.sh:/deploy/deploy-web.sh:ro
       - ./.state:/work
     depends_on:
       floci: { condition: service_healthy }
@@ -65,7 +66,7 @@ services:
     command: ["--config", "/etc/otelcol/config.yaml"]
     user: "0:0"
     volumes:
-      - ./otel/collector.yaml:/etc/otelcol/config.yaml:ro
+      - ./docker/otel/collector.yaml:/etc/otelcol/config.yaml:ro
       - ./.state/otel:/out
 
   # ── Identity ─────────────────────────────────────────────────────────────────────────────────
@@ -190,7 +191,7 @@ services:
       PGPASSWORD: devpassword
     entrypoint: ["sh", "-c", "for i in $$(seq 1 120); do [ \"$$(psql -h postgres -U org_membership_app -d org_membership -tAc \"select to_regclass('public.tenant_roles') is not null and to_regclass('public.trial_signup_ledger') is not null\")\" = t ] && exec psql -v ON_ERROR_STOP=1 -h postgres -U org_membership_app -d org_membership -f /seed.sql; sleep 1; done; echo 'schema never appeared'; exit 1"]
     volumes:
-      - ./org-membership/seed.sql:/seed.sql:ro
+      - ./docker/org-membership/seed.sql:/seed.sql:ro
     depends_on:
       postgres: { condition: service_healthy }
       org-membership: { condition: service_started }
@@ -235,12 +236,12 @@ services:
   # platform-interop-tests' go-probe http-serve (real gincommon) as the "tenders" API.
   go-probe:
     build:
-      context: ./go-probe
+      context: ./docker/go-probe
       additional_contexts:
-        probe: ${SHARED_ROOT:-../../../..}/platform-interop-tests/go-probe
-        gincommon: ${SHARED_ROOT:-../../../..}/go/platform-gincommon
-        events: ${SHARED_ROOT:-../../../..}/go/platform-events
-        pgcommon: ${SHARED_ROOT:-../../../..}/go/platform-pgcommon
+        probe: ${SHARED_ROOT:-../..}/platform-interop-tests/go-probe
+        gincommon: ${SHARED_ROOT:-../..}/go/platform-gincommon
+        events: ${SHARED_ROOT:-../..}/go/platform-events
+        pgcommon: ${SHARED_ROOT:-../..}/go/platform-pgcommon
     image: reactcommon-e2e/go-probe:local
     environment:
       OBSERVABILITY_DOMAIN: documents
@@ -271,7 +272,7 @@ services:
     environment:
       PUBLIC_PORT: ${STACK_HTTPS_PORT:-443}
     volumes:
-      - ./edge:/edge:ro
+      - ./docker/edge:/edge:ro
       - ./.state:/state:ro
       - ./.state/logs:/logs
     depends_on:

@@ -13,7 +13,7 @@
 #   5. Writes what the edge shim needs to /state/cloudfront (the distribution config as floci holds it,
 #      the function code as published, the response headers policy).
 #
-# Inputs (mounted): /work (test/stack/.state: web builds, lambda zip, generated policy), /state (same dir).
+# Inputs (mounted): /work (.state: web builds, lambda zip, generated policy), /state (same dir).
 set -euo pipefail
 
 export AWS_DEFAULT_REGION=ap-south-1 AWS_REGION=ap-south-1

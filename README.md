@@ -394,7 +394,7 @@ The same task names as platform-gincommon's Makefile, as `package.json` scripts.
 | `metrics-inventory` | `make metrics-inventory` | Regenerate `docs/observability/metric-registry.md` (`docs:sync`) |
 | `clean` | `make clean` | Remove `coverage/`, `dist-packages/`, every `dist/` and api-extractor's `temp/` |
 
-Not carried over: `run` and `docker-*` (there's no server and no local stack here; the [observability section](#against-a-local-collector) uses gincommon's), `godoc` (the API reports in `packages/frontend-sdk/api/` are the reference), `pin-base-images` (no Dockerfile), and `race`/`test-ci` (no race detector in JavaScript).
+Not carried over: `run` and `docker-*` (there's no server here, and the root `docker-compose.yml` is the `test/stack` harness, started with `stack-up` / `stack-down`; the [observability section](#against-a-local-collector) uses gincommon's), `godoc` (the API reports in `packages/frontend-sdk/api/` are the reference), `pin-base-images` (no Dockerfile), and `race`/`test-ci` (no race detector in JavaScript).
 
 ### Running a single test
 
@@ -467,7 +467,8 @@ test/
   e2e/                   the reference shell and remote booted end to end in-process (sign-in, remote, logout)
   smoke/                 the example builds served as CloudFront serves them, or a deployed shell (SMOKE_BASE_URL)
   browser/               Playwright: the SDK in Chromium, Firefox and WebKit under the production CSP (test/browser/README.md)
-  stack/                 Playwright against a production-like stack (docs/e2e/integrated-deployment-report.md)
+  stack/                 Playwright against the production-like stack in docker-compose.yml and docker/
+                         (docs/e2e/integrated-deployment-report.md)
   fixtures/              shared fakes and helpers (Keycloak, render, parity cases, the boundaries tree)
   testenv/               loads .env and sets defaults (OBSERVABILITY_DOMAIN, ENVIRONMENT, SMOKE_BASE_URL)
 ```

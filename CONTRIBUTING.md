@@ -45,6 +45,8 @@ test/                       ← All tests, not beside production code (as platfo
   testenv/                  ← Loads .env; sets OBSERVABILITY_DOMAIN, ENVIRONMENT defaults
 examples/                   ← shell, remote-tenders, cloudfront (built and checked in CI; not deployed)
 scripts/                    ← exports, contracts, docs, API reports, metrics parity, example checks
+docker-compose.yml          ← The production-like stack for test/stack (start with `pnpm run stack-up`, not `docker compose up`)
+docker/                     ← Its configs: edge shim, Envoy, floci deploy, go-probe, org-membership seed, Collector
 .githooks/pre-commit        ← Local commit gates (`pnpm run install-hooks`)
 docs/                       ← design · architecture · lld · areas · observability · problem-details
 ```
@@ -106,7 +108,7 @@ Review the diff: a contract change that alters public behaviour (a new problem t
 | Build | `test/unit/webpack-preset/`, `pnpm examples:check` | Real webpack builds: container globals, no SDK in remotes, no `eval` |
 | Examples | `examples/*/test/` | The shell's IAM ports against the contract cases; the CloudFront CSP and Lambda |
 | Browser | `test/browser/` | Playwright in Chromium, Firefox and WebKit (`pnpm run test-browser`): keepalive and tab close, page-lifecycle order, `AbortSignal.any`, Trusted Types, the production CSP. Known SDK bugs are `test.fail` in `known-bugs.ts` |
-| Stack | `test/stack/` | The example shell against a production-like deployment (`pnpm run stack-up`, then `pnpm run test-stack`, then `pnpm run stack-down`; needs Docker and `gh auth token` for the IAM images). Local only, not in CI. Findings: `docs/e2e/integrated-deployment-report.md` |
+| Stack | `test/stack/` | The example shell against a production-like deployment (`pnpm run stack-up`, then `pnpm run test-stack`, then `pnpm run stack-down`; needs Docker and `gh auth token` for the IAM images). The stack is `docker-compose.yml` with its configs in `docker/`. Local only, not in CI. Findings: `docs/e2e/integrated-deployment-report.md` |
 | Interop | CI `interop` job | platform-interop-tests pair 4 at a pinned SHA |
 
 - Statement coverage of `packages/*/src` must stay **≥ 98%** (`pnpm test:coverage`, gated in CI). Don't lower the threshold.

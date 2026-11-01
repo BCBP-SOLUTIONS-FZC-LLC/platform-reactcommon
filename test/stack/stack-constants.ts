@@ -1,4 +1,4 @@
-// The integrated stack's fixed values, shared by scripts/prepare.mjs (configs), the compose file (through
+// The integrated stack's fixed values, shared by scripts/prepare.mjs (configs), docker-compose.yml (through
 // .state/stack.env) and e2e.spec.ts. Erasable TypeScript only: Node runs it with type stripping.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';

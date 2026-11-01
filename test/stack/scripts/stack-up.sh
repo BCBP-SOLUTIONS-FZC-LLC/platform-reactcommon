@@ -5,11 +5,11 @@
 # Usage: stack-up.sh [--skip-build]   (--skip-build reuses .state/web from the last run)
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-STACK="$(cd "$HERE/.." && pwd)"
-cd "$STACK"
+ROOT="$(cd "$HERE/../../.." && pwd)"
+cd "$ROOT"
 
 node "$HERE/prepare.mjs" "$@"
-COMPOSE=(docker compose -f "$STACK/compose.yml" --env-file "$STACK/.state/stack.env")
+COMPOSE=(docker compose -f "$ROOT/docker-compose.yml" --env-file "$ROOT/.state/stack.env")
 
 if [ -z "${GO_PRIVATE_TOKEN:-}" ]; then
   GO_PRIVATE_TOKEN="$(gh auth token 2>/dev/null || true)"
@@ -20,14 +20,14 @@ export GO_PRIVATE_TOKEN
 unset GO_PRIVATE_TOKEN
 
 # Collector output and edge logs start empty on every stack-up.
-rm -f "$STACK/.state/otel/"*.jsonl "$STACK/.state/logs/"*.jsonl "$STACK/.state/cloudfront/distribution.json"
+rm -f "$ROOT/.state/otel/"*.jsonl "$ROOT/.state/logs/"*.jsonl "$ROOT/.state/cloudfront/distribution.json"
 GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up -d --wait --wait-timeout 600 \
   floci otel-collector keycloak valkey postgres pgbouncer org-membership authz-enrichment go-probe envoy
 GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up --no-deps org-membership-seed web-deploy
 GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up -d --wait --wait-timeout 120 edge
 
 # Ready when the shell, the gateway and the IdP answer through the viewer entry.
-port=$(grep '^STACK_HTTPS_PORT=' "$STACK/.state/stack.env" | cut -d"'" -f2)
+port=$(grep '^STACK_HTTPS_PORT=' "$ROOT/.state/stack.env" | cut -d"'" -f2)
 for i in $(seq 1 60); do
   if curl -skf --resolve "app.localtest.me:$port:127.0.0.1" "https://app.localtest.me:$port/" -o /dev/null \
     && curl -skf --resolve "app.localtest.me:$port:127.0.0.1" "https://app.localtest.me:$port/api/v1/public/tenants/resolve?identifier=acme" -o /dev/null \

@@ -1,4 +1,4 @@
-// The viewer's single HTTPS entry for the integrated stack (test/stack): the floci-gap shim.
+// The viewer's single HTTPS entry for the integrated stack (docker-compose.yml, test/stack): the floci-gap shim.
 //
 //   https://auth.<domain>  → Keycloak (as the ALB in front of it would: TLS here, X-Forwarded-* to Keycloak)
 //   https://app.<domain>   → "CloudFront", from the distribution config floci holds (.state/cloudfront):

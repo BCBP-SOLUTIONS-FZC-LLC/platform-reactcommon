@@ -1,4 +1,4 @@
-// The real example shell against the integrated stack (test/stack/compose.yml): Keycloak, Envoy with the
+// The real example shell against the integrated stack (docker-compose.yml): Keycloak, Envoy with the
 // real iam-authz-enrichment and iam-org-membership, go-probe (real gincommon), floci CloudFront/S3/Lambda
 // behind the edge shim, the OTel Collector. Findings are numbered in docs/e2e/integrated-deployment-report.md;
 // a test kept failing on purpose says `test.fail(…, 'Issue N: …')` (or `E-N` for an emulator limitation).
@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import {
   cspViolations, decodeJwt, docker, STATE, deployed, edgeLog, envoyAccess, eventually, keycloakLogin, kcAdmin, logRecords,
-  signInFromScratch, SIGNED_OUT_KEY, spans, traceIdOf, Traffic, watchCsp,
+  navigateOnce, signInFromScratch, SIGNED_OUT_KEY, spans, traceIdOf, Traffic, watchCsp,
 } from './helpers.ts';
 import { STACK } from './stack-constants.ts';
 
@@ -51,9 +51,10 @@ test.describe('sign-in through PUB-1, Keycloak and the gateway', () => {
     expect(body.departments).toEqual([expect.objectContaining({ id: STACK.departmentId })]);
     expect(page.url()).toBe(`${STACK.appOrigin}/t/acme/`);
 
-    // The gateway's view of the same request: the enriched identity went upstream.
+    // The gateway's view of the same request: the enriched identity went upstream. The SDK's retry after
+    // a 503 reuses the x-request-id, so take the line of the attempt that succeeded.
     const reqId = ctx.request.headers()['x-request-id'];
-    const line = await eventually(() => envoyAccess().find((l) => l.path === '/api/v1/me/session-context' && l.request_id === reqId), 15_000, 'envoy access line with the browser request id');
+    const line = await eventually(() => envoyAccess().find((l) => l.path === '/api/v1/me/session-context' && l.request_id === reqId && l.status === 200), 15_000, 'envoy access line with the browser request id');
     expect(line.upstream_x_tenant_id).toBe(STACK.tenants.acme.id);
     expect(line.upstream_x_user_id).toBe(alice.id);
     expect(await cspViolations(page)).toEqual([]);
@@ -349,7 +350,7 @@ test.describe('sign-out and the shared device', () => {
     // Exactly what IdentityProvider.logout({ global: true }) navigates to (oidc.ts).
     const params = new URLSearchParams({ id_token_hint: idToken, client_id: 'tender-web', post_logout_redirect_uri: `${STACK.appOrigin}/` });
     await page.evaluate((k) => localStorage.setItem(k, String(Date.now())), SIGNED_OUT_KEY); // logout() sets this before navigating
-    await page.goto(`${STACK.issuer('tenant-acme')}/protocol/openid-connect/logout?${params}`, { waitUntil: 'commit' });
+    await navigateOnce(page, () => page.goto(`${STACK.issuer('tenant-acme')}/protocol/openid-connect/logout?${params}`, { waitUntil: 'commit' }));
     await page.waitForURL(`${STACK.appOrigin}/`);
     await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible();
     // SSO is gone: a sign-in now shows the credential form (prompt=login, and no session to reuse anyway).
@@ -364,7 +365,7 @@ test.describe('sign-out and the shared device', () => {
     // logout() (local) is unreachable from the example (Issue 6): reproduce its persistent effect, the
     // signed-out mark, and reload. Keycloak's SSO session for alice is still alive.
     await page.evaluate((k) => localStorage.setItem(k, String(Date.now())), SIGNED_OUT_KEY);
-    await page.reload({ waitUntil: 'commit' });
+    await navigateOnce(page, () => page.reload({ waitUntil: 'commit' }));
     await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible();
     await page.getByRole('button', { name: 'Sign in' }).click();
     await page.waitForURL((u) => u.host === AUTH_HOST);

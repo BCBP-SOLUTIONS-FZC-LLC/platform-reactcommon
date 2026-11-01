@@ -1,5 +1,5 @@
 // The integrated-deployment suite (docs/e2e/integrated-deployment-report.md): the real example shell in
-// Chromium, Firefox and WebKit against the stack of test/stack/compose.yml (Keycloak, Envoy + the real IAM
+// Chromium, Firefox and WebKit against the stack of docker-compose.yml (Keycloak, Envoy + the real IAM
 // services, floci CloudFront/S3/Lambda + the edge shim, the OTel Collector).
 //
 //   pnpm run stack-up          # once; builds and starts everything (several minutes the first time)

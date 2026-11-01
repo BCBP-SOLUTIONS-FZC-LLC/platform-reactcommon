@@ -5,7 +5,7 @@
 #               receiver listens on /otel/v1/{traces,logs,metrics}, not the default /v1/*.
 # otlp          OTLP gRPC (Envoy, Go services) and OTLP/HTTP on the default paths (the /csp-report Lambda).
 #
-# Everything is written as OTLP JSON lines under /out (test/stack/.state/otel), which the e2e suite reads.
+# Everything is written as OTLP JSON lines under /out (.state/otel), which the e2e suite reads.
 receivers:
   otlp/browser:
     protocols:

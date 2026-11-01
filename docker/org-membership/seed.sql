@@ -1,4 +1,4 @@
--- Seed for the real iam-org-membership in the integrated stack (test/stack). Runs after the service
+-- Seed for the real iam-org-membership in the integrated stack (docker-compose.yml). Runs after the service
 -- has migrated its schema (compose: org-membership-seed). Idempotent. The ids are the ones in
 -- test/stack/stack-constants.ts and the Keycloak user ids (the membership user_id is the Keycloak sub).
 --

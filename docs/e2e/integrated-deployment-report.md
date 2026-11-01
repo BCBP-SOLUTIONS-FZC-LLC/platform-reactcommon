@@ -6,7 +6,7 @@ distribution on an AWS emulator, and an OpenTelemetry Collector. This report lis
 only once these parts ran together. Unit, integration, smoke and the single-origin browser suites
 (`test/browser`) did not find any of them.
 
-- Stack: `test/stack/compose.yml` (compose project `reactcommon-e2e`)
+- Stack: `docker-compose.yml` (compose project `reactcommon-e2e`)
 - Suite: `test/stack/e2e.spec.ts`, config `test/stack/playwright.config.ts`
 - Run date: 2026-10-31. Repository: `test/layout` at `5c9645e` (plus this change).
 
@@ -55,12 +55,12 @@ flowchart LR
 | `/config/runtime.json` | Real file, this environment's values (`idpOrigin https://auth.localtest.me`, `sampleRatio 1`) | `scripts/prepare.mjs` |
 | Keycloak | **Real** | `quay.io/keycloak/keycloak:26.8.1`, `start`, `KC_HOSTNAME=https://auth.localtest.me`, `KC_PROXY_HEADERS=xforwarded` |
 | Realms `tenant-acme`, `trial` | Built from IAM `realm-template.json` plus what `iam-realm-provisioner` adds (tender-web redirect, web origin and post-logout URIs, the `tenant_id` mapper and admin-only user-profile attribute on `trial`) | `iam-realm-provisioner@6ed5bb9` |
-| Envoy | **Real**. The config is written for this run from IAM HLD v1.58 §4.3, §8.2.7, §8.3, §11.1 and the `iam-authz-enrichment` README sketch. No checked-in gateway config exists. | `envoyproxy/envoy:v1.40.2`, `test/stack/envoy/envoy.template.yaml` |
+| Envoy | **Real**. The config is written for this run from IAM HLD v1.58 §4.3, §8.2.7, §8.3, §11.1 and the `iam-authz-enrichment` README sketch. No checked-in gateway config exists. | `envoyproxy/envoy:v1.40.2`, `docker/envoy/envoy.template.yaml` |
 | iam-authz-enrichment | **Real**, built from its Dockerfile (GitHub token passed as a BuildKit secret) | `4bea2ea` |
-| iam-org-membership | **Real**: PUB-1, P-35, I-8 with Postgres + PgBouncer + Valkey + floci. Seeded by `test/stack/org-membership/seed.sql` | `3d17d87` |
+| iam-org-membership | **Real**: PUB-1, P-35, I-8 with Postgres + PgBouncer + Valkey + floci. Seeded by `docker/org-membership/seed.sql` | `3d17d87` |
 | "Tenders" API | **Real gincommon**: platform-interop-tests `go-probe http-serve`. Envoy maps `/api/tenders/{id}` to its `/errors/tenders/{id}` (404 `TENDER_NOT_FOUND` problem+json) and `/api/v1/probe/*` to `/whoami`, `/echo` | `platform-interop-tests@93e3481`, `platform-gincommon@98957b8` (v2) |
 | S3, CloudFront (API + S3 data plane), Lambda, Secrets Manager, WAFv2 API, SNS/SQS/Glue | **Emulated**: floci | `floci/floci:2.1.0-compat` |
-| CloudFront Functions execution, custom origins | **Shim** (`test/stack/edge/server.mjs`). See §6. | node:22-alpine |
+| CloudFront Functions execution, custom origins | **Shim** (`docker/edge/server.mjs`). See §6. | node:22-alpine |
 | OTel Collector | **Real**, with file exporters (`.state/otel/*.jsonl`) | `otel/opentelemetry-collector-contrib:0.164.0` |
 | Valkey, Postgres, PgBouncer | Real | `valkey/valkey:8-alpine`, `postgres:17-alpine`, `edoburu/pgbouncer:latest` |
 | Not deployed | iam-catalog-admin, iam-tender-acl, iam-realm-provisioner (its realm output is reproduced statically), user profile, audit log, Billing | — |
@@ -93,7 +93,7 @@ The `tenant-acme` access tokens last 60 s, so the refresh lineage is exercised i
 pnpm install && pnpm build          # the SDK dist is bundled into the Lambda and the shell
 pnpm run test-browser-install       # once
 gh auth login                        # stack-up reads `gh auth token` for the IAM images' private Go modules
-pnpm run stack-up                    # renders test/stack/.state, builds images, starts, deploys, waits
+pnpm run stack-up                    # renders .state, builds images, starts, deploys, waits
 pnpm run test-stack                  # chromium, firefox, webkit, then the `gateway` project
 pnpm run stack-down                  # containers, network, volumes and floci's Lambda containers; --purge also removes images and .state
 ```
@@ -347,7 +347,7 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 - **Issuer and hostname:** With `KC_HOSTNAME=https://auth.localtest.me` and `KC_PROXY_HEADERS=xforwarded`, the issuer is identical for the browser, the `iss` callback parameter (RFC 9207, checked by the SDK) and Envoy. Envoy fetches JWKS from the internal `http://keycloak:8080` URL, and the issuer still matches.
 - **CORS:** Keycloak's token endpoint CORS (web origin `https://app.localtest.me`) works in all three engines. `/api`, `/otel` and `/csp-report` are same-origin, so neither the gateway nor the Collector needs CORS.
 - **Cookies across hosts:** Silent `prompt=none` restore (top-level navigation to `auth.`) works in WebKit (ITP) as well as Chromium and Firefox. No third-party cookie is needed.
-- **Collector path:** CloudFront cannot strip `/otel` (an origin path only prepends). The Collector's OTLP/HTTP receiver must use `traces_url_path: /otel/v1/traces` etc., as `test/stack/otel/collector.yaml` does. JSON content type and beacons are accepted.
+- **Collector path:** CloudFront cannot strip `/otel` (an origin path only prepends). The Collector's OTLP/HTTP receiver must use `traces_url_path: /otel/v1/traces` etc., as `docker/otel/collector.yaml` does. JSON content type and beacons are accepted.
 - **No browser spans without consent:** The example CMP grants only `essential` and has no consent UI, so browser spans never leave the page. Correlation works through the `traceparent` header: Envoy, authz-enrichment, org-membership and go-probe spans carry the browser's trace id. Essential error logs arrive.
 - **Strip-list placement:** The HLD strip-list must run *before* jwt_authn/ext_authz. Envoy's route-level `request_headers_to_remove` runs in the router and would also strip the enriched values. The stack uses the `header_mutation` HTTP filter first (test 2).
 - **Per-IP rate limit:** Per-IP limits need `xff_num_trusted_hops: 1` (CloudFront appends the viewer IP). A viewer-forged `X-Forwarded-For` does not buy a new bucket (test 21). HLD's 20/IP/hour shared by an office behind one NAT is very tight for identifier-first login; the stack uses 20/IP/minute.
@@ -388,7 +388,7 @@ floci *did* reproduce:
 - Secrets Manager.
 - The IAM services' SNS/SQS/Glue topology.
 
-The shim (`test/stack/edge/server.mjs`, about 200 lines) has one test-only hook. When the request carries cookie
+The shim (`docker/edge/server.mjs`, about 200 lines) has one test-only hook. When the request carries cookie
 `e2e-csp-fix=tt-allow-duplicates`, it appends `'allow-duplicates'` to the CSP, so the Issue 1 fix can be tried
 without redeploying the policy. It never caches, compresses or enforces WAF.
 

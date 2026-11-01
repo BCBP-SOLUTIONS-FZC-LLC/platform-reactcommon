@@ -1,6 +1,7 @@
-// Host-side half of `pnpm run stack-up` (test/stack, docs/e2e/integrated-deployment-report.md):
+// Host-side half of `pnpm run stack-up` (test/stack, docker-compose.yml, docs/e2e/integrated-deployment-report.md):
 // builds the web artefacts the deploy uploads and renders every environment-specific config into
-// test/stack/.state (gitignored). Nothing here talks to Docker; the containers read .state.
+// .state at the repository root (gitignored). Nothing here talks to Docker; the containers
+// (docker-compose.yml) read .state.
 //
 //   .state/web/shell/          the example shell, built for this environment (PLATFORM_ENVIRONMENT=staging)
 //   .state/web/remote/         the tenders remote
@@ -22,9 +23,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { STACK } from '../stack-constants.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const STACK_DIR = join(HERE, '..');
-const ROOT = join(STACK_DIR, '..', '..');
-const STATE = join(STACK_DIR, '.state');
+const ROOT = join(HERE, '..', '..', '..');
+const STATE = join(ROOT, '.state');
 const IAM_ROOT = process.env.IAM_ROOT ?? join(ROOT, '..', '..', '..', 'XPertPMS', 'IAM');
 const skipBuild = process.argv.includes('--skip-build');
 
@@ -219,7 +219,7 @@ function userProfile() {
 
 // ── 4. Envoy ────────────────────────────────────────────────────────────────────────────────
 function envoyYaml() {
-  const tpl = readFileSync(join(STACK_DIR, 'envoy/envoy.template.yaml'), 'utf8');
+  const tpl = readFileSync(join(ROOT, 'docker/envoy/envoy.template.yaml'), 'utf8');
   const vars = {
     ACME_ISSUER: STACK.issuer('tenant-acme'),
     TRIAL_ISSUER: STACK.issuer('trial'),
@@ -260,7 +260,7 @@ function composeEnv() {
     REALM_TENANT_MAP_SEED: JSON.stringify({ [STACK.issuer('tenant-acme')]: STACK.tenants.acme.id }),
     REMOTE_VERSION: STACK.remoteVersion,
     SHELL_VERSION: STACK.shellVersion,
-    IAM_ROOT: relative(STACK_DIR, IAM_ROOT),
+    IAM_ROOT: relative(ROOT, IAM_ROOT),
   };
   write('stack.env', Object.entries(env).map(([k, v]) => `${k}='${String(v).replace(/'/g, "'\\''")}'`).join('\n') + '\n');
 }
