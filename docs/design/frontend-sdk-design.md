@@ -681,7 +681,8 @@ export function getSession(): SessionState;
 ```
 
 Rules: tokens are held in a closure only, never in storage or a global. Silent refresh uses the
-refresh-token grant at `exp − 60 s ± jitter`. Access tokens live 5 minutes; the client session (refresh
+refresh-token grant at `exp − min(60 s, lifetime / 3)`, with jitter of at most half that lead, so a
+short-lived token is refreshed no sooner than half its lifetime after it was issued. Access tokens live 5 minutes; the client session (refresh
 token) lasts 8 h idle / 12 h max, and the SSO session 12 h / 24 h (HLD §11.3, set on `tender-web` by RP #41).
 So `idleTimeoutMs` must not exceed 8 h.
 

@@ -26,6 +26,8 @@ const PENDING_TTL_MS = 10 * 60_000;
 const SKEW_S = 60;
 const REFRESH_LEAD_MS = 60_000;
 const REFRESH_JITTER_MS = 10_000;
+/** How long a page whose refresh a navigation away cancelled waits before restoring, in case it stays. */
+const LEAVING_GRACE_MS = 10_000;
 const TOKEN_TIMEOUT_MS = 15_000;
 const ACTIVITY_WRITE_MS = 5_000;
 const IDLE_CHECK_MS = 15_000;
@@ -49,6 +51,8 @@ interface Tokens {
   refresh: string | undefined;
   /** Epoch ms. */
   expiresAt: number;
+  /** The access token's lifetime (expires_in), ms. */
+  lifetimeMs: number;
   /** Epoch ms of the refresh token's own expiry (refresh_expires_in), when the server said. */
   refreshExpiresAt: number | undefined;
   /** The first ID token's sub and nonce: refreshed ID tokens must keep them. */
@@ -315,8 +319,13 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   function scheduleRefresh(): void {
     clearTimeout(refreshTimer);
     if (!tokens) return;
-    const jitter = (internals.random() * 2 - 1) * REFRESH_JITTER_MS;
-    const delay = Math.max(0, tokens.expiresAt - REFRESH_LEAD_MS + jitter - internals.now());
+    // A minute before expiry, but never more than a third of the token's lifetime, with jitter of at most
+    // half the lead: a token is refreshed no sooner than half its lifetime after it was issued, however
+    // short the realm's access-token lifespan. (With a fixed 60 s lead, a 60 s token was due for refresh
+    // as soon as it arrived, and the tab refreshed many times a second.)
+    const lead = Math.min(REFRESH_LEAD_MS, tokens.lifetimeMs / 3);
+    const jitter = (internals.random() * 2 - 1) * Math.min(REFRESH_JITTER_MS, lead / 2);
+    const delay = Math.max(0, tokens.expiresAt - lead + jitter - internals.now());
     refreshTimer = setTimeout(() => void refresh(), delay);
   }
 
@@ -379,6 +388,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       // Keycloak rotates on every refresh; a response without one leaves the current token in place.
       refresh: typeof body.refresh_token === 'string' && body.refresh_token !== '' ? body.refresh_token : previous?.refresh,
       expiresAt: now + expiresIn * 1000,
+      lifetimeMs: expiresIn * 1000,
       refreshExpiresAt: refreshIn !== undefined ? now + refreshIn * 1000 : previous?.refreshExpiresAt,
       sub: sub!,
       nonce,
@@ -505,8 +515,11 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     }
   }
 
-  /** The refresh outcome was ambiguous: the token may have rotated. Drop the lineage and start a new one. */
-  function restoreLineage(): void {
+  /**
+   * The refresh outcome was ambiguous: the token may have rotated. Drop the lineage and start a new one,
+   * after `deferMs` when given (a page that is navigating away never gets there).
+   */
+  function restoreLineage(deferMs = 0): void {
     const w = workspace;
     dropTokens();
     if (!w) return;
@@ -517,6 +530,10 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
         if (!started) expire({ serverEnded: false, idle: false });
       });
     };
+    if (deferMs > 0) {
+      setTimeout(go, deferMs);
+      return;
+    }
     if (isOnline()) {
       go();
       return;
@@ -530,6 +547,28 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   }
 
   // --- refresh -------------------------------------------------------------------------------
+  /**
+   * Notes whether the page starts leaving (beforeunload, pagehide) until stop(). Listening only while a
+   * request is in flight: a standing beforeunload listener keeps Firefox from keeping the page in its
+   * back/forward cache.
+   */
+  function watchLeaving(): { started(): boolean; stop(): void } {
+    const target = globalThis as { addEventListener?: typeof addEventListener; removeEventListener?: typeof removeEventListener };
+    let left = false;
+    const onLeave = () => {
+      left = true;
+    };
+    target.addEventListener?.('beforeunload', onLeave);
+    target.addEventListener?.('pagehide', onLeave);
+    return {
+      started: () => left,
+      stop: () => {
+        target.removeEventListener?.('beforeunload', onLeave);
+        target.removeEventListener?.('pagehide', onLeave);
+      },
+    };
+  }
+
   async function doRefresh(): Promise<boolean> {
     const t = tokens;
     const w = workspace;
@@ -551,14 +590,25 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     }
     let res: Response;
     let body: TokenResponse;
+    const leaving = watchLeaving();
     try {
       res = await tokenRequest(w.realm, { grant_type: 'refresh_token', refresh_token: t.refresh, client_id: cfg.clientId });
       body = (await res.json().catch(() => ({}))) as TokenResponse;
     } catch (e) {
       if (tokens !== t) return false;
+      if (leaving.started()) {
+        // The browser cancelled the request because the page is navigating away (WebKit does so as the
+        // navigation starts). Restoring now would send this page to the IdP and replace the user's
+        // navigation; the next page restores its own session. Only a page that stays restores.
+        log().info('token refresh cancelled by a navigation away', { error: e });
+        restoreLineage(LEAVING_GRACE_MS);
+        return false;
+      }
       log().warn('token refresh outcome unknown: restoring the session', { error: e });
       restoreLineage();
       return false;
+    } finally {
+      leaving.stop();
     }
     if (tokens !== t) return false; // logged out or switched meanwhile: discard the answer
     if (res.ok) {

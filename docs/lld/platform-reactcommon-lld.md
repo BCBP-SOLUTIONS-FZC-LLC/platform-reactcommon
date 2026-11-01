@@ -467,13 +467,14 @@ A silent restore runs only when all of these hold: no callback; no signed-out ma
 The loop guard is set, then the page does one top-level redirect with `prompt=none` back to the current URL; `init()` never settles. A successful callback clears the guard. With no restore, the state is `anonymous`: reason `signed-out` when the mark is set, else `none`.
 
 ### 8.5 Refresh
-- **When:** a timer at `expiresAt − 60 s ± 10 s`, `getAccessToken()` within 5 s of expiry, or `/http`'s 401 path.
+- **When:** a timer at `expiresAt − lead ± jitter` (lead `min(60 s, lifetime / 3)`, jitter at most `min(10 s, lead / 2)`: a 300 s token at 230–250 s, a 60 s token at 30–50 s), `getAccessToken()` within 5 s of expiry, or `/http`'s 401 path.
 - **Single-flight per tab.**
 - **Offline before sending:** keep the token and retry on `online`.
 - **Refresh token past `refresh_expires_in`:** `expired { serverEnded: false }` without sending.
 - **200:** rotate (a response without `refresh_token` keeps the current one); refreshed ID tokens must keep `sub`, and their `nonce` if present.
 - **`invalid_grant`:** `expired`, with `serverEnded = now < refreshExpiresAt`.
 - **Anything else that may have reached Keycloak:** network error after send, timeout, other errors, an invalid answer. The lineage is dropped, the page waits for `online`, runs `beforeRedirect('restore')`, then does a `prompt=none` redirect. A token that might already be rotated is never re-sent.
+- **Cancelled by a navigation away:** `beforeunload` or `pagehide` fired while the request was in flight (listened to only then: a standing `beforeunload` listener keeps Firefox from using its back/forward cache). The lineage is dropped, but the restore waits 10 s, which an unloading page never reaches; a page that stays restores then. Restoring at once would send the leaving page to the IdP and replace the user's navigation.
 
 ### 8.6 Idle timeout
 Activity events (`pointerdown`, `keydown`, `wheel`, `touchstart`, `scroll`, capture and passive) write the last-activity time to localStorage, at most every 5 s. Every 15 s (or `idleTimeoutMs` when shorter), each tab compares that shared time with `idleTimeoutMs` (1 min–8 h). Once it's exceeded, the tab rotates the session id and moves to `expired { idle: true }`; `signInAgain` then uses `prompt=login`. Every tab idles out together.
@@ -593,6 +594,7 @@ CSP violations after bootstrap are logged by `installGlobalErrorHandlers` (direc
 | `/auth` | warn | `token refresh outcome unknown: restoring the session` · `token refresh failed: restoring the session` | ambiguous refresh outcome |
 | `/auth` | error | `token refresh answer rejected: restoring the session` · `token refresh failed` | invalid refresh answer; unexpected exception |
 | `/auth` | info | `session ended` | `invalid_grant` (`server_ended`) |
+| `/auth` | info | `token refresh cancelled by a navigation away` | the refresh request failed after `beforeunload`/`pagehide` |
 | `/auth` | warn / error | `workspace resolve failed` · `workspace resolve rejected: realm does not fit the slug` · `workspace not cached: slug and realm do not match` | PUB-1 and cache checks |
 | `/auth` | error | `session listener failed` · `beforeRedirect listener failed` | a listener threw |
 

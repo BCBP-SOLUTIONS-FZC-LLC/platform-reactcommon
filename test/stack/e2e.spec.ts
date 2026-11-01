@@ -295,12 +295,13 @@ test.describe('token refresh against Keycloak (rotation, revokeRefreshToken=true
     const t = new Traffic(page);
     await signInFromScratch(page, alice, 'acme');
     const start = Date.now();
-    await page.waitForTimeout(45_000);
+    await page.waitForTimeout(55_000);
     const n = t.tokenCalls.filter((c) => c.grant === 'refresh_token').length;
     test.info().annotations.push({ type: 'observation', description: `${n} refreshes in ${Math.round((Date.now() - start) / 1000)} s` });
-    // REFRESH_LEAD_MS (60 s) ≥ the token lifetime: every refresh is scheduled immediately (0–10 s jitter).
-    test.fail(n > 2, `Issue 4: ${n} refreshes in 45 s with a ${STACK.acmeAccessTokenLifespan} s token`);
-    expect(n).toBeLessThanOrEqual(2);
+    // Issue 4 (fixed): the lead is at most a third of the lifetime and the jitter half the lead, so a
+    // 60 s token is refreshed 30–50 s after it was issued: exactly once in the first 55 s, and it worked.
+    expect(n).toBe(1);
+    expect(t.tokenCalls.find((c) => c.grant === 'refresh_token')?.status).toBe(200);
   });
 
   test('two tabs of one browser: each keeps its own refresh lineage', async ({ page, context }) => {

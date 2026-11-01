@@ -4,7 +4,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { expect, type Page, type Request, type Response, test } from '@playwright/test';
+import { expect, type Page, type Request, type Response } from '@playwright/test';
 import { STACK } from './stack-constants.ts';
 
 export const STATE = join(import.meta.dirname, '..', '..', '.state');
@@ -117,21 +117,14 @@ export async function navigateOnce(page: Page, nav: () => Promise<unknown>): Pro
 
 /**
  * A full page load of a deep link in a signed-in tab. The SDK's prompt=none round trip comes back to it
- * (WebKit reports the goto as interrupted). Issue 19: a refresh in flight when the navigation starts is
- * aborted, and the old page's restore (prompt=none, back to the old URL) replaces the navigation; then
- * this records it and loads the deep link once more.
+ * (WebKit reports the goto as interrupted). It must arrive: Issue 19 (fixed) was the old page's restore,
+ * after a refresh the navigation cancelled, replacing the navigation and landing on the old URL.
  */
 export async function gotoDeepLink(page: Page, path: string): Promise<void> {
-  const go = () =>
-    page.goto(path, { waitUntil: 'commit' }).catch((e: Error) => {
-      if (!/interrupted by another navigation|NS_BINDING_ABORTED/.test(e.message)) throw e;
-    });
-  await go();
-  const arrived = await page.waitForURL((u) => u.pathname === path, { timeout: 15_000 }).then(() => true, () => false);
-  if (arrived) return;
-  test.info().annotations.push({ type: 'issue', description: `Issue 19: an aborted refresh's restore replaced the navigation to ${path} (landed on ${new URL(page.url()).pathname}); loaded it again` });
-  await go();
-  await page.waitForURL((u) => u.pathname === path);
+  await page.goto(path, { waitUntil: 'commit' }).catch((e: Error) => {
+    if (!/interrupted by another navigation|NS_BINDING_ABORTED/.test(e.message)) throw e;
+  });
+  await page.waitForURL((u) => u.pathname === path, { timeout: 15_000 });
 }
 
 /** Polls `fn` until it returns a value (not undefined/false) or the timeout passes. */

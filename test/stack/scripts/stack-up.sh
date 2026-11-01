@@ -19,8 +19,11 @@ export GO_PRIVATE_TOKEN
 "${COMPOSE[@]}" build
 unset GO_PRIVATE_TOKEN
 
-# Collector output and edge logs start empty on every stack-up.
-rm -f "$ROOT/.state/otel/"*.jsonl "$ROOT/.state/logs/"*.jsonl "$ROOT/.state/cloudfront/distribution.json"
+# Collector output and edge logs start empty on every stack-up. Truncated in place, not deleted: the
+# Collector failed to create a file deleted moments before over Docker Desktop's file sharing
+# ("open /out/metrics.jsonl: no such file or directory").
+rm -f "$ROOT/.state/logs/"*.jsonl "$ROOT/.state/cloudfront/distribution.json"
+for f in traces logs metrics; do : > "$ROOT/.state/otel/$f.jsonl"; done
 GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up -d --wait --wait-timeout 600 \
   floci otel-collector keycloak valkey postgres pgbouncer org-membership authz-enrichment go-probe envoy
 GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up --no-deps org-membership-seed web-deploy

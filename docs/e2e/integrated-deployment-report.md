@@ -130,7 +130,7 @@ The emulator rows `E-n` are in §6.
 | 9 | gincommon problem through Envoy keeps `traceId` and `x-request-id` | ✅ | ✅ | ✅ |
 | 10 | Cold AuthZ cache: first request within the ext_authz budget | ✅/⚠️ Issue 12 (timing) | ✅ | ✅ |
 | 11 | Refresh lineage in one tab: rotation, no reuse error | ✅ | ✅ | ✅ |
-| 12 | Refresh cadence with a 60 s token | ⚠️ Issue 4 | ⚠️ Issue 4 | ⚠️ Issue 4 |
+| 12 | Refresh cadence with a 60 s token: exactly one refresh (200) in the first 55 s | ✅ (Issue 4 fixed) | ✅ | ✅ |
 | 13 | Two tabs, two refresh lineages in one Keycloak session (`revokeRefreshToken=true`) | ✅ | ✅ | ✅ |
 | 14 | Example offers a sign-out control | ⚠️ Issue 6 | ⚠️ Issue 6 | ⚠️ Issue 6 |
 | 15 | Global logout: end-session with the SDK's exact parameters → back to `/`, "You are signed out", SSO gone | ✅ | ✅ | ✅ |
@@ -205,6 +205,8 @@ Issue 18 makes this hard to diagnose: the logged error has no `cause`.
 - **Suggested fix:** Add `local_reply_config` mappers that render `application/problem+json` (`platform/unauthorized`, `platform/forbidden`, `platform/too-many-requests`) with `x-request-id`. Set the jwt_authn `WWW-Authenticate` realm explicitly, or strip it.
 
 ### Issue 4 — Refresh storm when the access token lives ≤ 60 s
+
+- **Status: fixed.** `scheduleRefresh` (`auth/oidc.ts`) uses a lead of `min(60 s, lifetime / 3)` and jitter of at most `min(10 s, lead / 2)`, so a token is refreshed no sooner than half its lifetime after it was issued (a 60 s token: 30–50 s; a 300 s token: unchanged, 230–250 s). A separate minimum interval is not needed: each new token reschedules from its own lifetime. Tests: `test/unit/auth/oidc-edges.test.ts` (a 60 s token over 10 minutes, at the earliest, middle and latest jitter: one refresh every 30, 40 or 50 s; the old code never stopped refreshing) and stack test 12.
 
 - **Symptom:** 9–29 (Chromium), 15 (Firefox) and 11–23 (WebKit) `refresh_token` grants in 45 s with a 60 s token.
 - **Root cause:** `oidc.ts` schedules the refresh at `expiresAt − REFRESH_LEAD_MS (60 s) ± 10 s`. When `expires_in ≤ 60`, every refresh is due at once. Keycloak's template uses 300 s, but realm admins can shorten it, and the provisioner does not pin it.
@@ -347,6 +349,8 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 - **Suggested fix:** Serialise `error.cause` (`exception.cause.*`, sanitised) in `getLogger().error`.
 
 ### Issue 19 — An aborted refresh hijacks the user's navigation (found once remotes loaded)
+
+- **Status: fixed.** While its refresh request is in flight, `doRefresh` listens for `beforeunload` and `pagehide` (only then: a standing `beforeunload` listener keeps Firefox from using its back/forward cache). If the request fails after one of them fired, the page is leaving: the tokens are dropped and the restore waits 10 s, which a page that unloads never reaches. A page that stays (a cancelled navigation, a download) restores then, and a logout meanwhile cancels it. Tests: `test/unit/auth/oidc-edges.test.ts` (no redirect after `beforeunload` or `pagehide`; restore after 10 s for a page that stays; logout cancels it; a `beforeunload` before the request does not count; listeners removed), `test/browser/navigation.spec.ts` (in Chromium, Firefox and WebKit a leaving page **does** see its in-flight request rejected, for an address-bar and a link navigation, and always after `beforeunload`: so the bug was possible in every engine, and the signal the fix uses is always there first), and the stack's `gotoDeepLink`, which now fails instead of retrying when a navigation is replaced.
 
 - **Symptom:** In a signed-in tab, a full navigation (a link, a typed URL, a reload of a deep link) sometimes lands back on the page being left (`/t/acme/`) after a `prompt=none` round trip, instead of on the new URL. Seen in WebKit (1 of 6 repeated runs of stack test 4) and in Firefox (twice in one full run, tests 3 and 4).
 - **Evidence (Playwright trace):** four `refresh_token` grants in 400 ms after sign-in (Issue 4). One is in flight when the navigation to `/t/acme/tenders/1/edit` starts; WebKit aborts it (status −1) together with the navigation's own request; 14 ms later the **old** page navigates to `…/openid-connect/auth?prompt=none` with the old URL as its return URL.
