@@ -97,7 +97,7 @@ HPA references: none. The web tier is static content on S3 and CloudFront, with 
 
 ## 5. Interim visibility: logs and traces
 
-Until the metrics are bound, can logs and traces alone run the web tier? **Partly.** They are enough to diagnose any single failure and to alert on hard failures. They are not enough for SLOs, latency, user-experience performance, or failures that only the browser sees.
+Until the metrics are bound, can logs and traces alone run the web tier? **For failures, yes; for SLOs and performance, no.** Every failure mode below now leaves the page without consent and can be alerted on by count; the three log gaps found in this assessment are fixed (see Gaps). They are not enough for ratio SLOs, latency or page speed (web vitals), which need the metrics.
 
 The evidence comes from the integrated E2E run ([`docs/e2e/integrated-deployment-report.md`](../e2e/integrated-deployment-report.md)) and the real-browser suite (`test/browser`):
 - **Errors without consent:** with only `essential` consent, error logs reached the Collector, including `remote failed to load` with `mfe` and `reason`.
@@ -110,7 +110,7 @@ What leaves the page depends on consent:
 | Signal | Without `telemetry` consent | With it |
 |---|---|---|
 | `error` logs | ✅ always | ✅ |
-| `warn` logs marked essential (identity header dropped, CSP violation) | ✅ always | ✅ |
+| `warn` logs marked essential (identity header dropped, CSP violation, API call with no response, chunk-load reload, sign-in and session warnings) | ✅ always | ✅ |
 | other `warn` and `info` logs | ✗ | ✅ (≥ `telemetry.logLevel`) |
 | spans | ✗ | ✅, sampled at `telemetry.sampleRatio` (default 10%) |
 | backend spans continuing the browser's trace | ✅ (`traceparent` is sent either way) | ✅ |
@@ -121,21 +121,21 @@ What leaves the page depends on consent:
 |---|---|---|
 | Is a remote failing to load, and why? | `remote failed to load` (error: `mfe`, `reason`), `remote dropped from the manifest` (error) | ✅ for detection and cause. No denominator, so a ratio and an SLO aren't possible; alert on counts |
 | Are pages crashing? | `uncaught error`, `unhandled promise rejection`, `remote failed to render` (error, with `mfe` and the stack) | ✅ counts and stacks; no rate per page view |
-| Did a deploy break chunk loading? | nothing: the page reloads once and logs nothing | ✗ **Gap 1** |
-| Are API calls failing for users? | backend 5xx: ✅ in the services' own logs and metrics. Timeouts and network failures the server never saw: only in sampled, consented spans | ⚠️ **Gap 2** |
+| Did a deploy break chunk loading? | `chunk load failed: reloading` (essential warn, `version`, the chunk in `exception.message`) | ✅ (gap 1, fixed) |
+| Are API calls failing for users? | backend 5xx: ✅ in the services' own logs and metrics. Timeouts and network failures the server never saw: `api call got no response` (essential warn: `route`, `reason`, `request_id`, `mfe`; ≤ 10 a minute per page, `suppressed` counts the rest; offline is not logged) | ✅ by count (gap 2, fixed); no ratio without a call count |
 | How slow are API calls for users? | sampled, consented `HTTP <method>` spans (`url.template`, status); the server's own latency | ⚠️ diagnosis only, no client-side percentiles |
 | How fast do pages render (LCP, INP, CLS)? | nothing | ✗ **Gap 3**, until the vitals metrics ship |
-| Are sessions ending or sign-ins failing? | errors ✅ (`sign-in callback rejected`, `token refresh failed`). But `session ended` (info), `sign-in failed`, `workspace resolve failed` and the refresh-restore warnings need consent | ⚠️ **Gap 4**: the runbooks' "Session ended spike" and part of "Sign-in failures" see only consenting users |
+| Are sessions ending or sign-ins failing? | errors ✅ (`sign-in callback rejected`, `token refresh failed`); essential warnings: `session ended` when Keycloak ended a live session, `sign-in failed`, `sign-in callback ignored`, `workspace resolve failed`, the refresh-restore warnings | ✅ (gap 4, fixed). A routine end (lifetime unknown) stays an info log |
 | CSP violations? | essential warning in the page, and the `/csp-report` Lambda for violations before boot | ✅ |
 | Trace one user's problem end to end? | `traceId`/`requestId` on the problem and in the logs, and the backend spans | ✅ |
 
-### Gaps, and what would close them before ratification
+### Gaps
 
-Each of these is a small SDK change that adds or reclassifies log lines. No new metric names are involved, so none needs governance.
+Three of the four gaps are closed in the SDK; none needed governance, because they add or reclassify log lines and use no metric names. `test/integration/essential-logs.test.ts` boots the SDK with only `essential` consent, as the example shell does, and asserts each line below leaves the page while routine events stay consent-gated.
 
-1. **Chunk-load reloads are invisible.** Log an essential warning `chunk load failed: reloading` (`mfe`, the chunk's origin) before the reload.
-2. **Client-only API failures (timeout, network) are invisible without consent.** Log an essential warning per failed call (`route`, `reason`, `request_id`), rate-limited per page so an offline device does not flood the pipeline.
-3. **No vitals.** No interim substitute; this needs the metrics.
-4. **Session and sign-in warnings need consent.** Mark `session ended`, `sign-in failed` and `token refresh outcome unknown` as essential: they are operational, not analytics.
+1. **Chunk-load reloads:** fixed. An essential warning `chunk load failed: reloading` (`version`, the chunk in `exception.message`) is logged before the reload, and the reload's page hide sends it.
+2. **Client-only API failures (timeout, network):** fixed. An essential warning `api call got no response` per failed call (`method`, `route` template, `reason`, `request_id`, `mfe`). It is capped at 10 a minute per page, and the next one after the window carries `suppressed`, so a flaky connection cannot flood the pipeline. Offline failures, caller aborts and HTTP error answers are not logged: the server logs its own answers.
+3. **No vitals:** open. No interim substitute exists; this needs the metrics.
+4. **Session and sign-in warnings:** fixed. `sign-in failed`, `sign-in callback ignored`, `workspace resolve failed` and both refresh-restore warnings are essential, and so is `session ended` when Keycloak ended a live session. A routine end is still an info log.
 
-With 1, 2 and 4, logs alone could alert on every failure mode in the table above by counts; only ratios and latency would wait for the metrics. Alert on counts of those log lines per `service` and `mfe` (for example in Loki: `sum by (mfe, reason) (count_over_time({service_name="web-app"} |= "remote failed to load" [5m]))`, assuming the Collector exports to Loki with native OTLP).
+So logs alone can now alert on every failure mode in the table above by counts. Only ratios, latency and page speed wait for the metrics. Alert on counts of those log lines per `service` and `mfe`, for example in Loki: `sum by (mfe, reason) (count_over_time({service_name="web-app"} |= "remote failed to load" [5m]))`, assuming the Collector exports to Loki with native OTLP.

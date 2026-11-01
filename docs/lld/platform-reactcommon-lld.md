@@ -579,23 +579,25 @@ CSP violations after bootstrap are logged by `installGlobalErrorHandlers` (direc
 | Subpath | Level | Message | When |
 |---|---|---|---|
 | `/http` | warn (essential) | `dropped a forbidden request header` | an identity header was set by the caller (prod; dev throws) |
+| `/http` | warn (essential) | `api call got no response` | a call ended with no HTTP answer: `reason` timeout, or network while online (`method`, `route` template, `request_id`, `mfe`). At most 10 a minute per page; the next one after the window carries `suppressed` |
 | `/mfe` | error | `remote dropped from the manifest` | an invalid manifest entry (`remote`, `reason`) |
 | `/mfe` | error | `remote failed to load` | `loadRemote` failed, not aborted (`reason`) |
+| `/mfe` | warn (essential) | `chunk load failed: reloading` | a chunk of the running build is gone; logged before the one reload per version (`version`, `exception.*`) |
 | `/react` | error | `remote failed to render` | a render error in an `MFEErrorBoundary` |
 | `/react` | warn | `remote showed an error` | an API error reached a boundary |
 | `/react` | error | `uncaught error` · `unhandled promise rejection` | global handlers |
 | `/react` | warn (essential) | `content security policy violation` | `securitypolicyviolation` (`violated_directive`, `blocked_uri` origin, `disposition`) |
-| `/auth` | warn | `sign-in callback ignored: unknown or expired state` | callback without a valid record |
+| `/auth` | warn (essential) | `sign-in callback ignored: unknown or expired state` | callback without a valid record |
 | `/auth` | error | `sign-in callback rejected: iss does not match the realm` | RFC 9207 check failed |
 | `/auth` | error | `sign-in callback rejected` | exchange or ID-token check failed |
-| `/auth` | warn | `sign-in failed` | `?error=` on an interactive login |
+| `/auth` | warn (essential) | `sign-in failed` | `?error=` on an interactive login |
 | `/auth` | error | `silent sign-in could not start` | restore redirect could not be prepared |
 | `/auth` | error | `trial ID token has no valid tenant_id: storage stays anonymous` | trial token without `tenant_id` |
-| `/auth` | warn | `token refresh outcome unknown: restoring the session` · `token refresh failed: restoring the session` | ambiguous refresh outcome |
+| `/auth` | warn (essential) | `token refresh outcome unknown: restoring the session` · `token refresh failed: restoring the session` | ambiguous refresh outcome |
 | `/auth` | error | `token refresh answer rejected: restoring the session` · `token refresh failed` | invalid refresh answer; unexpected exception |
-| `/auth` | info | `session ended` | `invalid_grant` (`server_ended`) |
+| `/auth` | warn (essential) / info | `session ended` | `invalid_grant`: warn when Keycloak ended a live session (`server_ended: true`), info when the refresh token's lifetime is unknown (`server_ended: false`) |
 | `/auth` | info | `token refresh cancelled by a navigation away` | the refresh request failed after `beforeunload`/`pagehide` |
-| `/auth` | warn / error | `workspace resolve failed` · `workspace resolve rejected: realm does not fit the slug` · `workspace not cached: slug and realm do not match` | PUB-1 and cache checks |
+| `/auth` | warn (essential) / error | `workspace resolve failed` · `workspace resolve rejected: realm does not fit the slug` · `workspace not cached: slug and realm do not match` | PUB-1 and cache checks |
 | `/auth` | error | `session listener failed` · `beforeRedirect listener failed` | a listener threw |
 
 ### 11.2 Metrics (Tier 1, proposed)

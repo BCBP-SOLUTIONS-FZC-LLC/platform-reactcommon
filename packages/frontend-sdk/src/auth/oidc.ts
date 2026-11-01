@@ -604,7 +604,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
         restoreLineage(LEAVING_GRACE_MS);
         return false;
       }
-      log().warn('token refresh outcome unknown: restoring the session', { error: e });
+      log().warn('token refresh outcome unknown: restoring the session', { error: e, essential: true });
       restoreLineage();
       return false;
     } finally {
@@ -625,11 +625,14 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     }
     if (body?.error === 'invalid_grant') {
       const serverEnded = t.refreshExpiresAt !== undefined && internals.now() < t.refreshExpiresAt;
-      log().info('session ended', { server_ended: serverEnded });
+      // Keycloak ending a live session (revocation, conversion, reuse detection) is operational and
+      // essential; a refresh token simply past its lifetime is routine and needs consent.
+      if (serverEnded) log().warn('session ended', { server_ended: true, essential: true });
+      else log().info('session ended', { server_ended: false });
       expire({ serverEnded, idle: false });
       return false;
     }
-    log().warn('token refresh failed: restoring the session', { status: res.status, error_code: typeof body?.error === 'string' ? body.error : undefined });
+    log().warn('token refresh failed: restoring the session', { status: res.status, error_code: typeof body?.error === 'string' ? body.error : undefined, essential: true });
     restoreLineage();
     return false;
   }
@@ -652,7 +655,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     const record = takePending(params.get('state'), now);
     purgePending(now);
     if (!record) {
-      log().warn('sign-in callback ignored: unknown or expired state');
+      log().warn('sign-in callback ignored: unknown or expired state', { essential: true });
       replaceUrl('/');
       return undefined; // the restore path continues as if there were no callback
     }
@@ -670,7 +673,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     const error = params.get('error');
     if (error !== null) {
       if (SILENT_ERRORS.has(error) && record.reason === 'restore') return anonymous('login-required');
-      log().warn('sign-in failed', { error_code: error.slice(0, 64), reason: record.reason });
+      log().warn('sign-in failed', { error_code: error.slice(0, 64), reason: record.reason, essential: true });
       return anonymous('none');
     }
     const code = params.get('code');

@@ -152,6 +152,7 @@ Fixed before the first release, after a security and production-readiness review
 
 ### Fixed
 
+- Operational failures are visible without telemetry consent (`docs/observability/tier1-ratification.md` §5): `/http` logs an essential warning `api call got no response` for timeouts and network failures (rate-limited, offline and aborts excluded), `/mfe` logs `chunk load failed: reloading` before the reload, and `/auth`'s sign-in, workspace-resolve, refresh-restore and live-session-ended warnings are essential.
 - No remote could load in production (both found by the integrated E2E run, `docs/e2e/integrated-deployment-report.md`, Issues 1 and 2):
   - CSP: the shell's and every remote's webpack runtime create the `platform-webpack` Trusted Types policy, so `trusted-types` now carries `'allow-duplicates'` (`examples/cloudfront/csp.mjs`, `response-headers-policy.json`);
   - `@platform/webpack-preset`: the shell provides every SDK subpath in the share scope (`ProvideSdkPlugin`, lazily), not only those it imports itself; a remote using one the shell never imports (such as `/problem`) failed with "Shared module … doesn't exist in shared scope". `pnpm examples:check` asserts it on the built shell.

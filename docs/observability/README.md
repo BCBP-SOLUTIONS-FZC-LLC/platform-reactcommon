@@ -116,7 +116,7 @@ The `ParentBased` sampler uses **Go's `TraceIDRatioBased` algorithm** for roots 
 
 | Category | Allows |
 |---|---|
-| `essential` (always granted) | `error` logs and `warn` logs marked `essential: true` (forbidden header dropped, CSP violation) |
+| `essential` (always granted) | `error` logs and the `warn` logs marked `essential: true`: operational events with no personal data (forbidden header dropped, CSP violation, API call with no response, chunk-load reload, sign-in and session warnings; [LLD §11.1](../lld/platform-reactcommon-lld.md#111-log-event-catalogue)) |
 | `telemetry` | all logs at or above `telemetry.logLevel`, spans, metrics |
 | `analytics` | nothing in the SDK today (reserved for product analytics) |
 

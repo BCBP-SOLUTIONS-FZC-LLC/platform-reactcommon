@@ -108,7 +108,7 @@ export async function chooseWorkspace(o: {
     resolved = await o.resolver.resolve(slug, o.signal);
   } catch (e) {
     if (o.signal?.aborted) throw e;
-    getLogger().warn('workspace resolve failed', { slug, error: e, cached: cached !== undefined });
+    getLogger().warn('workspace resolve failed', { slug, error: e, cached: cached !== undefined, essential: true });
     return cached;
   }
   if (!resolved) return undefined; // not found: the identifier screen, even when an old entry is cached

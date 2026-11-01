@@ -27,7 +27,7 @@ Also check the `/mfe` error `remote dropped from the manifest`. It names an entr
 
 **Status:** proposed (warning; the backend's own SLOs page for their 5xx). **Fires when:** more than 7.2% of browser API calls end in a 5xx, a timeout or a network failure in both the last hour and the last 5 minutes (14.4× the 99.5% monthly SLO), with at least one call a second.
 
-**Signal:** `platform_web_http_client_duration_seconds_count{status_class="5xx"}` by `route`, `mfe`, compared with the server's `platform_http_requests_total` for the same route; calls the server never saw are in `platform_web_http_client_failures_total{reason}`. **Today:** backend 5xx are in the services' own logs and metrics; client-only failures (timeout, network) are visible only in sampled, consented `HTTP <method>` spans and, when a remote shows them, in its boundary's `remote showed an error` warning (consented). See the gaps in [tier1-ratification.md](tier1-ratification.md#interim-visibility-logs-and-traces).
+**Signal:** `platform_web_http_client_duration_seconds_count{status_class="5xx"}` by `route`, `mfe`, compared with the server's `platform_http_requests_total` for the same route; calls the server never saw are in `platform_web_http_client_failures_total{reason}`. **Today:** backend 5xx are in the services' own logs and metrics; client-only failures are the essential warning `api call got no response` (`route`, `reason` timeout or network, `request_id`, `mfe`; at most 10 a minute per page, `suppressed` counts the rest).
 
 | Client vs server | Meaning |
 |---|---|
@@ -39,7 +39,7 @@ Correlate a single failure with the `requestId` / `traceId` the error boundary s
 
 ## PlatformWebChunkLoadErrors
 
-**Status:** proposed (warning). **Fires when:** chunk-load errors exceed 0.01/s for 10 minutes (`platform_web_errors_total{source="chunk_load"}`). **Today:** nothing: the page reloads once per version, by design, and logs nothing for it (a gap: [tier1-ratification.md](tier1-ratification.md#interim-visibility-logs-and-traces)).
+**Status:** proposed (warning). **Fires when:** chunk-load errors exceed 0.01/s for 10 minutes (`platform_web_errors_total{source="chunk_load"}`). **Today:** the essential warning `chunk load failed: reloading` (`version`, the chunk in `exception.message`), logged before the page reloads once per version.
 
 **Cause:** a tab still running the old build requested chunks a deploy removed, or a deploy is still uploading. **Action:** check that `/remotes/*` and `/assets/*` are versioned and never overwritten or deleted early, and that `/version.json` is written **last**. A sustained rate after a deploy means files were deleted too early.
 
@@ -64,7 +64,7 @@ Correlate a single failure with the `requestId` / `traceId` the error boundary s
 ## Session ended spike
 
 **Signal (logs today):**
-- `/auth` `session ended` with `server_ended: true`;
+- `/auth` `session ended` with `server_ended: true` (an essential warning, so it is seen without consent);
 - the shell's session-ended dialog;
 - many users at once.
 
