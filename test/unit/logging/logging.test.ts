@@ -294,6 +294,31 @@ describe('errors', () => {
     expect(a).not.toHaveProperty('error');
   });
 
+  it('serializeError adds the cause chain (Issue 18): three deep at most, cleaned, cycles and non-errors handled', () => {
+    const root = new TypeError('Shared module @bcbp-solutions-fzc-llc/frontend-sdk/problem doesn\'t exist in shared scope default');
+    const mid = new Error('module ./EditTender failed to evaluate', { cause: root });
+    const top = new Error('remote failed', { cause: mid });
+    expect(serializeError(top).cause).toBe(
+      "Error: module ./EditTender failed to evaluate ← TypeError: Shared module @bcbp-solutions-fzc-llc/frontend-sdk/problem doesn't exist in shared scope default",
+    );
+    expect(serializeError(new Error('no cause')).cause).toBeUndefined();
+    const deep = new Error('0', { cause: new Error('1', { cause: new Error('2', { cause: new Error('3', { cause: new Error('4') }) }) }) });
+    expect(serializeError(deep).cause).toBe('Error: 1 ← Error: 2 ← Error: 3');
+    const a = new Error('a');
+    const b = new Error('b', { cause: a });
+    (a as { cause?: unknown }).cause = b;
+    expect(serializeError(a).cause).toBe('Error: b');
+    expect(serializeError(new Error('x', { cause: { code: 7 } })).cause).toBe('object: {"code":7}');
+    expect(serializeError(new Error('x', { cause: 'bad\u0007 thing' })).cause).toBe('string: bad thing');
+    expect(serializeError(new Error('x', { cause: new Error('y'.repeat(5000)) })).cause!.length).toBeLessThanOrEqual(1024);
+  });
+
+  it('a logged error carries its cause as exception.cause, redacted like the message', async () => {
+    start();
+    getLogger().error('remote failed to load', { error: new Error('outer', { cause: new Error(`token ${JWT} refused`) }) });
+    expect(attrsOf((await sent())[0]!)['exception.cause']).toBe('Error: token [REDACTED] refused');
+  });
+
   it('serializeError handles non-errors and caps the stack', () => {
     expect(serializeError('boom')).toEqual({ name: 'string', message: 'boom' });
     expect(serializeError({ code: 7 })).toEqual({ name: 'object', message: '{"code":7}' });
@@ -507,10 +532,11 @@ describe('transport', () => {
     }
   });
 
-  it('splits beacons over 60 KiB', async () => {
-    const target = new EventTarget();
+  it('on page hidden, splits beacons over 60 KiB', async () => {
+    const target = Object.assign(new EventTarget(), { visibilityState: 'visible' });
     vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
     vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
+    vi.stubGlobal('document', target);
     let count = 0;
     vi.stubGlobal('navigator', {
       sendBeacon: (_url: string, data: Blob) => {
@@ -521,8 +547,41 @@ describe('transport', () => {
     });
     start({ flushMs: 60_000, batchSize: 512 });
     for (let i = 0; i < 400; i++) getLogger().info('x'.repeat(250), { i });
-    target.dispatchEvent(new Event('pagehide'));
+    target.visibilityState = 'hidden';
+    target.dispatchEvent(new Event('visibilitychange'));
     expect(count).toBeGreaterThan(1);
     expect(loggingStats()!.exported).toBe(400);
+  });
+
+  it('on pagehide with no budget left, or a refused beacon, every record goes back for fetch', async () => {
+    const records = (n: number) => {
+      start({ flushMs: 60_000, batchSize: 512 });
+      for (let i = 0; i < n; i++) getLogger().info(`r${i}`);
+      return (getRuntime().logging as { processor: { drainOnUnload(b: number): number } }).processor;
+    };
+    vi.stubGlobal('navigator', { sendBeacon: () => true });
+    expect(records(3).drainOnUnload(0)).toBe(0); // the spans' turn never comes before the logs', but a 0 budget is handled
+    await vi.waitFor(() => expect(loggingStats()!.exported).toBe(3));
+    await shutdownLogging();
+    vi.stubGlobal('navigator', { sendBeacon: () => false });
+    expect(records(2).drainOnUnload(60 * 1024)).toBe(0);
+    await vi.waitFor(() => expect(loggingStats()!.exported).toBe(2));
+  });
+
+  it('on pagehide, the newest records that fit the page budget go in one beacon; the rest go back for fetch', async () => {
+    const target = new EventTarget();
+    vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
+    vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
+    const beacons: Blob[] = [];
+    vi.stubGlobal('navigator', { sendBeacon: (_u: string, data: Blob) => (beacons.push(data), true) });
+    start({ flushMs: 60_000, batchSize: 512 });
+    for (let i = 0; i < 400; i++) getLogger().info(`r${i} ${'x'.repeat(250)}`);
+    target.dispatchEvent(new Event('pagehide'));
+    expect(beacons).toHaveLength(1);
+    expect(beacons[0]!.size).toBeLessThanOrEqual(60 * 1024);
+    const bodies = ((JSON.parse(await beacons[0]!.text()) as { resourceLogs: { scopeLogs: { logRecords: { body: { stringValue: string } }[] }[] }[] }).resourceLogs[0]!.scopeLogs[0]!.logRecords).map((r) => r.body.stringValue.split(' ')[0]);
+    expect(bodies.at(-1)).toBe('r399'); // the newest
+    expect(bodies).toEqual(Array.from({ length: bodies.length }, (_, i) => `r${400 - bodies.length + i}`));
+    await vi.waitFor(() => expect(loggingStats()!.exported).toBe(400)); // the older ones by fetch
   });
 });

@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `/react`: `useSignOut()` (local by default, `{ global: true }` also ends the SSO session), backed by an optional `signOut` in `PlatformProvider`'s shell value. `/auth`: the `anonymous` reason `device-clock`.
+
 - **Publication to GitHub Packages** (`VERSIONING.md`, *Consume a release* and *Publishing*):
   - `release.yml`'s `npm-publish` job publishes the gated tarballs, after every gate and before the GitHub Release, from the protected `npm` environment. It runs only after their `SHA256SUMS` check, attaches a build-provenance attestation per tarball, and is idempotent: a version is never overwritten, and the registry's integrity is checked after publishing;
   - `pnpm publish:check` (the `package` job in CI and at release) validates the packed manifests and derives the dist-tag (`alpha`, `rc`, `latest`);
@@ -161,6 +163,22 @@ Fixed before the first release, after a security and production-readiness review
 - Tests live under `test/` as in platform-gincommon: `unit/<subpath>`, `integration`, `e2e` (the reference shell and remote booted end to end), `smoke` (the served builds, or a deployed shell with `SMOKE_BASE_URL`), `fixtures`, `testenv`, `browser` (Playwright in Chromium, Firefox and WebKit under the production CSP; CI job `browser`), and `stack` (the example shell in the three browsers against a production-like deployment: Keycloak, Envoy with the real IAM services, the distribution on floci and an OTel Collector; `pnpm run stack-up`, `test-stack`, `stack-down`; local only). The issues it found are in `docs/e2e/integrated-deployment-report.md`.
 
 ### Fixed
+
+- Production-readiness review, round 4 (`docs/e2e/integrated-deployment-report.md`, `test/browser/README.md`):
+  - **`/csp-report` Lambda** (Issue 11): it threw on every invocation, because the runtime calls `handler(event, context)` and `context` landed in `deps`. `handler(event)` is now the entry point and `handle(event, deps)` the logic.
+  - **Integrity roots:**
+    - the webpack preset pins the shell's entry in `index.html` (`integrity` and `crossorigin` on every `<script src>` the build's HTML loads), checked again before the build is reported;
+    - `/mfe` drops a manifest entry without `integrity` outside local, dev and test.
+  - **`/auth` device clock** (Issue 8): ID-token times are judged on the provider's clock (its `iat` at receipt), so a device a few minutes off signs in with short tokens. Beyond 10 minutes the session is `anonymous` with the new reason `device-clock`, which the example shell explains.
+  - **Telemetry on tab close** (known browser bugs 1 and 2): one `pagehide` budget for the page (`src/internal/unload.ts`): logs first, then the newest spans that fit. Spans are sent inside the listener (`sendBeacon`, else `fetch` keepalive), no longer after the OTLP exporter's `await`.
+  - **`sanitizeHtml`** (known browser bug 3): no CSP reports in Chromium for hostile input. A pre-pass removes handler and style attributes and `<style>` elements before DOMPurify parses.
+  - **`/http`** (known browser bug 4): never the native `AbortSignal.any`, which loses aborts in WebKit. The by-hand combination releases its listeners when the call ends.
+  - **`/auth`:** a restore deferred by a navigation away waits for the network if the page is offline by then.
+  - **`/logging`** (Issue 18): logged errors carry `exception.cause`.
+  - **Example shell** (Issues 6, 7): a Sign out control (`useSignOut`), and the signed-out screen after a sign-out here or in another tab, with the app unmounted rather than left under the dialog (a shared device).
+  - **CloudFront deploy steps** (Issue 15): `--cache-control` on every upload.
+  - **Release:** `npm-publish` refuses to publish unless the `npm` environment requires reviewers.
+  - **Contracts:** the `iam-org-membership` pin moves to `98cf517` (#47). The two interop fixtures are regenerated, because the scope rename had edited their copied comments.
 
 - `@bcbp-solutions-fzc-llc/webpack-preset`: `ProvideSdkPlugin` no longer runs in child compilations (HtmlWebpackPlugin's), which had emitted a second, unused copy of every provided SDK chunk into the shell's build (16 extra files, about 1.5 MB with maps, outside the integrity map).
 

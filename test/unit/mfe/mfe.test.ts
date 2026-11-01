@@ -102,6 +102,25 @@ describe('loadManifest', () => {
     expect(errorLog).toHaveBeenCalledTimes(9);
   });
 
+  it.each([
+    ['dev', true],
+    ['test', true],
+    ['local', true],
+    ['staging', false],
+    ['prod', false],
+  ])('a remote without integrity: %s keeps it %s (the root of its chain of trust)', async (environment, kept) => {
+    resetRuntimeForTests();
+    initializeCore({ serviceName: 'web-app', domain: 'tender_management', environment });
+    vi.stubGlobal('fetch', respond({ plain: { entry: '/remotes/plain/1.0.0/remoteEntry.js', version: '1.0.0', ownerDomain: 'iam' }, pinned: { ...manifestBody['iam-admin'] } }));
+    expect(Object.keys(await loadManifest())).toEqual(kept ? ['plain', 'pinned'] : ['pinned']);
+  });
+
+  it('before initializeCore (environment unknown), integrity is required', async () => {
+    resetRuntimeForTests();
+    vi.stubGlobal('fetch', respond({ plain: { entry: '/remotes/plain/1.0.0/remoteEntry.js', version: '1.0.0', ownerDomain: 'iam' } }));
+    expect(Object.keys(await loadManifest())).toEqual([]);
+  });
+
   it('accepts entries from configured remote origins', async () => {
     resetRuntimeForTests();
     initializeCore({ serviceName: 'web-app', domain: 'tender_management', environment: 'dev' });

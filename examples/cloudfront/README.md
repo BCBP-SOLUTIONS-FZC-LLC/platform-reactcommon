@@ -20,7 +20,7 @@ platform's infrastructure repository owns the distribution; it takes these files
 | `/config/runtime.json` | S3 | TTL 0, honour `Cache-Control: no-cache` + ETag | — | security headers | One object per environment (see `examples/shell/public/config/runtime.json`) |
 | `/version.json` | S3 | as above | — | security headers | Written **last** by the deploy |
 | `/remotes/manifest.json` | S3 | as above | — | security headers | Written after every remote has uploaded |
-| `/remotes/*` | S3 | CachingOptimized, `max-age=31536000, immutable` | — | security headers | `/remotes/<name>/<version>/…`, never overwritten |
+| `/remotes/*` | S3 | CachingOptimized | — | security headers | `/remotes/<name>/<version>/…`, never overwritten; objects carry `Cache-Control: public, max-age=31536000, immutable` (see *Deploy order*) |
 | `/assets/*` | S3 | CachingOptimized, immutable | — | security headers | Content-hashed |
 | `Default (*)` | S3 | `no-cache` | — | security headers | `spa-rewrite.js` on viewer request. **No** custom 403/404 → `index.html` error responses: they would turn `/api/*` 404s into HTML |
 
@@ -33,6 +33,28 @@ platform's infrastructure repository owns the distribution; it takes these files
    The `integrity` (sha384 of the uploaded `remoteEntry.js`) is the root of the chain of trust: `remoteEntry.js` carries the sha384 of each of the remote's chunks (`@bcbp-solutions-fzc-llc/webpack-preset`'s `ChunkIntegrityPlugin`), and the browser refuses a chunk that doesn't match. Never rewrite a file after the build (no minify-on-upload, no injected banners), or every load of it fails. A remote on **another origin** must also send `Access-Control-Allow-Origin` for the shell's origin on its `.js` files: an integrity-checked cross-origin script is fetched with CORS.
 3. Upload the shell (`examples/shell/dist`): hashed files first, `index.html` last.
 4. Write `/version.json` (`{ "version": "<shell build version>" }`), which tells open tabs an update exists.
+
+**`Cache-Control` is set on every object at upload.** A CloudFront cache policy sets only the *edge* TTL:
+it never adds a `Cache-Control` header to the viewer response. Without object metadata browsers fall back
+to heuristic caching, so a stale `index.html` or manifest can outlive a deploy, and hashed files are never
+cached for long (docs/e2e/integrated-deployment-report.md, Issue 15). The same steps as commands
+(`$BUCKET`, `$NAME`, `$VERSION`):
+
+```bash
+IMMUTABLE='public, max-age=31536000, immutable'   # content-hashed or versioned: never changes
+NO_CACHE='no-cache'                               # revalidated on every load (ETag)
+
+# 1. The remote, under its version (never overwrite one), without source maps.
+aws s3 cp --recursive remote-dist/ "s3://$BUCKET/remotes/$NAME/$VERSION/" --exclude '*.map' --cache-control "$IMMUTABLE"
+# 2. The manifest, after every remote is up.
+aws s3 cp manifest.json "s3://$BUCKET/remotes/manifest.json" --content-type application/json --cache-control "$NO_CACHE"
+# 3. The shell: hashed files first, then the per-environment config, index.html last.
+aws s3 cp --recursive shell-dist/assets/ "s3://$BUCKET/assets/" --exclude '*.map' --cache-control "$IMMUTABLE"
+aws s3 cp runtime.json "s3://$BUCKET/config/runtime.json" --content-type application/json --cache-control "$NO_CACHE"
+aws s3 cp shell-dist/index.html "s3://$BUCKET/index.html" --content-type 'text/html; charset=utf-8' --cache-control "$NO_CACHE"
+# 4. Last: tells open tabs a new version exists.
+aws s3 cp version.json "s3://$BUCKET/version.json" --content-type application/json --cache-control "$NO_CACHE"
+```
 
 Source maps (`*.map`) are emitted by the build (`hidden-source-map`) and never referenced. Upload them
 to the error-tracking store, never to S3 behind the distribution.

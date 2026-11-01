@@ -108,7 +108,7 @@ The 17 subpaths fall into seven functional areas, each with its own page in [`do
 
 | Subpath / package | Main exports |
 |---|---|
-| `/react` | `PlatformProvider`, `useSession`, `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useApi`, `useApiClient`, `useT`, `useLocale`, `useFeatureFlag`, `useHasPermission`, `Can`, `useStepUp`, `useReadOnly`, `useRouteTemplate`, `useBeforeAuthRedirect`, `useOnlineStatus`, `useAppUpdate`, `useSwitchWorkspace`, `MFEErrorBoundary`, `RemoteBoundary`, `installGlobalErrorHandlers` |
+| `/react` | `PlatformProvider`, `useSession`, `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useApi`, `useApiClient`, `useT`, `useLocale`, `useFeatureFlag`, `useHasPermission`, `Can`, `useStepUp`, `useReadOnly`, `useRouteTemplate`, `useBeforeAuthRedirect`, `useOnlineStatus`, `useAppUpdate`, `useSwitchWorkspace`, `useSignOut`, `MFEErrorBoundary`, `RemoteBoundary`, `installGlobalErrorHandlers` |
 | `/testing` (dev only) | `createTestPlatform`, `mockApi`, `mockProblem`, `renderMetricInventory` |
 | `@bcbp-solutions-fzc-llc/eslint-plugin` | `configs.recommended`; rules `no-sdk-root-import`, `no-sdk-deep-import`, `no-identity-headers`, `no-raw-storage`, `no-unsafe-html`, `no-runtime-css-in-js`, `api-route-template` |
 

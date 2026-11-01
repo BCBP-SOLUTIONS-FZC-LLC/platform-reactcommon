@@ -172,13 +172,21 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** AbortSignal.any where the browser has it (Safari < 17.4 doesn't); otherwise the same by hand. */
-function anySignal(a: AbortSignal, b: AbortSignal): AbortSignal {
-  if (typeof AbortSignal.any === 'function') return AbortSignal.any([a, b]);
+/**
+ * A signal that aborts when `a` or `b` does, and a release that detaches it. Never the native
+ * AbortSignal.any: WebKit's loses the source's abort while the page collects garbage, so a caller's
+ * abort and the deadline next to a caller signal never reached fetch (test/browser http.spec.ts). By
+ * hand instead, with listeners that release() removes once the call is over (body read included), so
+ * a long-lived caller signal does not collect one listener per call.
+ */
+export function anySignal(a: AbortSignal, b: AbortSignal): { signal: AbortSignal; release: () => void } {
   const c = new AbortController();
-  const stop = (s: AbortSignal) => () => {
+  const release = () => {
     a.removeEventListener('abort', onA);
     b.removeEventListener('abort', onB);
+  };
+  const stop = (s: AbortSignal) => () => {
+    release();
     c.abort(s.reason);
   };
   const onA = stop(a);
@@ -189,7 +197,7 @@ function anySignal(a: AbortSignal, b: AbortSignal): AbortSignal {
     a.addEventListener('abort', onA, { once: true });
     b.addEventListener('abort', onB, { once: true });
   }
-  return c.signal;
+  return { signal: c.signal, release };
 }
 
 /** A failure while the request or its body was in flight, as the SDK's error type. */
@@ -219,6 +227,8 @@ interface Call {
   span: Span;
   /** The current attempt's deadline: it still applies while the body is read. */
   deadline?: { signal: AbortSignal; ms: number };
+  /** Detaches the current attempt's combined signal from the caller's; called when the call ends. */
+  release?: (() => void) | undefined;
 }
 
 const STANDARD_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'CONNECT', 'TRACE']);
@@ -319,7 +329,10 @@ async function attempt(call: Call, token: string | undefined): Promise<Response>
   const timeoutMs = o.timeoutMs ?? tryGetConfig()?.api.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeout = AbortSignal.timeout(timeoutMs);
   call.deadline = { signal: timeout, ms: timeoutMs };
-  const signal = o.signal ? anySignal(o.signal, timeout) : timeout;
+  call.release?.();
+  const combined = o.signal ? anySignal(o.signal, timeout) : undefined;
+  call.release = combined?.release;
+  const signal = combined?.signal ?? timeout;
   try {
     return await fetch(url, { method, headers, signal, ...(body === undefined ? {} : { body }) });
   } catch (e) {
@@ -414,6 +427,7 @@ async function execute<T>(call: Call): Promise<ApiResponse<T>> {
     }
     throw e;
   } finally {
+    call.release?.();
     call.span.end();
   }
 }

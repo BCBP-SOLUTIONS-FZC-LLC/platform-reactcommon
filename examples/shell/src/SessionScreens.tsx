@@ -16,6 +16,22 @@ export function showSignedOut(signIn: () => Promise<void>): void {
   );
 }
 
+/**
+ * The sign-in was refused because the device clock is far off (reason 'device-clock'): another
+ * attempt would fail the same way until the user sets it. No automatic retry.
+ */
+export function showDeviceClock(signIn: () => Promise<void>): void {
+  showScreen(
+    <div role="alertdialog" aria-labelledby="clock-title">
+      <h1 id="clock-title">Check your device's clock</h1>
+      <p>We couldn't sign you in because this device's date or time is wrong. Set it to update automatically, then try again.</p>
+      <button type="button" onClick={() => void signIn()}>
+        Try again
+      </button>
+    </div>,
+  );
+}
+
 /** Expired during use. serverEnded covers trial → paid conversion ("your workspace has moved"). */
 export function showSessionEnded(s: Extract<SessionState, { status: 'expired' }>, signIn: () => Promise<void>): void {
   const text = s.serverEnded

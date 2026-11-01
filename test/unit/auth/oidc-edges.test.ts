@@ -436,6 +436,20 @@ describe('refresh edge cases', () => {
       expect(new URL(page.assigned[0]!).searchParams.get('prompt')).toBe('none');
     });
 
+    it('a page that stays but is offline by then waits for the network before restoring', async () => {
+      const page = new FakePage('/t/acme/');
+      const { idp } = await signIn(page);
+      cancelledByNavigation(page, 'beforeunload');
+      await idp.refresh();
+      page.online = false;
+      await vi.advanceTimersByTimeAsync(10_000);
+      await flush();
+      expect(page.assigned).toEqual([]); // no redirect to the browser's offline error page
+      page.goOnline();
+      await flush(() => page.assigned.length > 0);
+      expect(new URL(page.assigned[0]!).searchParams.get('prompt')).toBe('none');
+    });
+
     it('a logout during the grace period cancels the restore', async () => {
       const page = new FakePage('/t/acme/');
       const { idp } = await signIn(page);

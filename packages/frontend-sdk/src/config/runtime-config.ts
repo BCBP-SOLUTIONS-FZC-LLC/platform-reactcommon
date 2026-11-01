@@ -1,6 +1,7 @@
 // Loading and holding the runtime config (design doc §C1 /config, §C2 step 3). The config lives
 // on the PlatformRuntime, so every copy of the SDK on the page sees the one the shell set.
 import { NotInitializedError, getIdentity } from '../core/index.ts';
+import { isLocalEnvironment } from '../internal/environments.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { RuntimeConfigSchema, isLocalHttpOrigin, type RuntimeConfig } from './schema.ts';
 
@@ -32,12 +33,10 @@ function deepFreeze<T>(value: T): T {
  * environment is local, dev or test (CI and integration runs against local servers); anywhere else (or before initializeCore) a leftover dev entry
  * would weaken a deployed config, so it is an issue.
  */
-/** Environments whose pages may talk to http servers on a local host; staging and prod never do. */
-const LOCAL_HTTP_ENVIRONMENTS: ReadonlySet<string> = new Set(['local', 'dev', 'test']);
 
 function environmentIssues(c: RuntimeConfig): { path: string; message: string }[] {
   const env = getIdentity()?.environment;
-  if (env !== undefined && LOCAL_HTTP_ENVIRONMENTS.has(env)) return [];
+  if (isLocalEnvironment(env)) return [];
   const origins: [string, string][] = [
     ['auth.idpOrigin', c.auth.idpOrigin],
     ...c.api.propagationAllowlist.map((o, i): [string, string] => [`api.propagationAllowlist.${i}`, o]),

@@ -199,7 +199,7 @@ describe('callback', () => {
     ['azp', { azp: 'other-client' }],
     ['nonce', { nonce: 'replayed' }],
     ['exp', { exp: Math.floor(Date.parse('2026-10-30T09:58:00Z') / 1000) }],
-    ['iat', { iat: Math.floor(Date.parse('2026-10-30T10:02:00Z') / 1000) }],
+    ['iat', { iat: 'yesterday' }],
     ['iss', { iss: `${IDP}/realms/tenant-globex` }],
   ])('rejects an ID token with a bad %s and keeps no token', async (_name, claims) => {
     const page = new FakePage('/');
@@ -209,10 +209,44 @@ describe('callback', () => {
     expect(getRuntime().storageNamespace).toBe('anon');
   });
 
-  it('accepts exp and iat within 60 s of skew', async () => {
-    const now = Math.floor(Date.now() / 1000);
-    const { state } = await signIn(new FakePage('/'), ACME, { claims: { exp: now - 30, iat: now + 30 } });
-    expect(state.status).toBe('authenticated');
+  // docs/e2e report, Issue 8: token times are judged on the provider's clock (iat at receipt), so a
+  // device clock a few minutes off no longer refuses a short-lived token; far off, the user is told.
+  describe('the device clock (Issue 8)', () => {
+    const at = (offsetS: number, lifetimeS: number) => {
+      const iat = Math.floor(Date.now() / 1000) - offsetS; // the provider's clock: the device is offsetS ahead
+      return { iat, exp: iat + lifetimeS };
+    };
+
+    it.each([
+      ['3 minutes ahead, 60 s token', 180, 60],
+      ['9 minutes behind, 60 s token', -540, 60],
+      ['exact, 60 s token', 0, 60],
+    ])('signs in with the device clock %s', async (_n, offset, lifetime) => {
+      const { state } = await signIn(new FakePage('/'), ACME, { claims: at(offset, lifetime) });
+      expect(state.status).toBe('authenticated');
+    });
+
+    it('more than 10 minutes off: anonymous with reason device-clock, an error log naming the offset, no token', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { idp, state } = await signIn(new FakePage('/'), ACME, { claims: at(1_200, 300) });
+      expect(state).toEqual({ status: 'anonymous', reason: 'device-clock' });
+      expect(await idp.getAccessToken()).toBeUndefined();
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining('the device clock is off'), expect.objectContaining({ clock_offset_s: 1_200 }));
+    });
+
+    it('still refuses a token whose exp precedes its iat (beyond 60 s)', async () => {
+      const iat = Math.floor(Date.now() / 1000);
+      const { state } = await signIn(new FakePage('/'), ACME, { claims: { iat, exp: iat - 120 } });
+      expect(state).toEqual({ status: 'anonymous', reason: 'none' });
+    });
+
+    it('step-up freshness (auth_time) is judged on the provider\'s clock too', async () => {
+      // The device is 5 minutes ahead; the user authenticated 1 minute ago in the provider's time.
+      const c = at(300, 300);
+      const { idp } = await signIn(new FakePage('/'), ACME, { claims: { ...c, auth_time: c.iat - 60 } });
+      expect(idp.needsStepUp(120)).toBe(false); // on the device clock alone it would be 6 minutes: true
+      expect(idp.needsStepUp(30)).toBe(true);
+    });
   });
 
   it('uses a code once: a replayed callback is ignored and its parameters stripped', async () => {

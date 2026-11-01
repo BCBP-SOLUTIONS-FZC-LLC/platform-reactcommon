@@ -80,9 +80,6 @@ async function buildWeb() {
   rmSync(join(STATE, 'lambda/csp-report.zip'), { force: true });
   execFileSync('zip', ['-q', '-j', join(STATE, 'lambda/csp-report.zip'), out]);
   // The suggested fix for the (event, context) issue, as a wrapper next to the unchanged bundle.
-  writeFileSync(join(dirname(out), 'fixed.mjs'), "import { handler as handle } from './index.mjs';\nexport const handler = (event) => handle(event);\n");
-  rmSync(join(STATE, 'lambda/csp-report-fixed.zip'), { force: true });
-  execFileSync('zip', ['-q', '-j', join(STATE, 'lambda/csp-report-fixed.zip'), out, join(dirname(out), 'fixed.mjs')]);
 }
 
 // ── 2. runtime.json, CSP and the CloudFront inputs ─────────────────────────────────────────────
@@ -136,15 +133,20 @@ function realm(name, o) {
   web.webOrigins = [STACK.appOrigin];
   web.attributes = { ...web.attributes, 'post.logout.redirect.uris': STACK.postLogoutRedirectUris.join('##') };
   web.protocolMappers = [...(o.mappers ?? [])];
-  if (STACK.audienceMapper) {
-    // Envoy's jwt_authn checks aud (IAM HLD §8.3 step 3). Keycloak puts the client in azp, not aud, of an
-    // access token: an audience mapper is required (report issue: "access token aud").
-    web.protocolMappers.push({
-      name: 'tender-web-audience',
-      protocol: 'openid-connect',
-      protocolMapper: 'oidc-audience-mapper',
-      config: { 'included.client.audience': 'tender-web', 'access.token.claim': 'true', 'id.token.claim': 'false', 'introspection.token.claim': 'true' },
-    });
+  // Every public client gets the audience mapper iam-realm-provisioner adds at realm creation and converges
+  // on the shared trial realm (RP #48, RP-D21, withAudienceMappers): its own client ID in the access
+  // token's aud, which Envoy's jwt_authn checks (HLD §8.3 step 3; report Issue 13, fixed upstream).
+  for (const c of r.clients) {
+    if (!c.publicClient) continue;
+    c.protocolMappers = [
+      ...(c.protocolMappers ?? []),
+      {
+        name: 'audience',
+        protocol: 'openid-connect',
+        protocolMapper: 'oidc-audience-mapper',
+        config: { 'included.client.audience': c.clientId, 'access.token.claim': 'true', 'id.token.claim': 'false', 'introspection.token.claim': 'true' },
+      },
+    ];
   }
   r.users = o.users.map((u) => ({
     id: u.id,
@@ -277,7 +279,7 @@ certificate();
 composeEnv();
 for (const d of ['otel', 'logs']) mkdirSync(join(STATE, d), { recursive: true });
 // The Lambda zip and the web builds are copied as-is; make sure they exist even with --skip-build.
-for (const f of ['web/shell/index.html', 'web/remote/remoteEntry.js', 'lambda/csp-report.zip', 'lambda/csp-report-fixed.zip']) {
+for (const f of ['web/shell/index.html', 'web/remote/remoteEntry.js', 'lambda/csp-report.zip']) {
   if (!existsSync(join(STATE, f))) throw new Error(`.state/${f} is missing: run without --skip-build`);
 }
 log(`done: ${STATE}`);

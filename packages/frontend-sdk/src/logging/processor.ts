@@ -65,7 +65,38 @@ export class DropOldestLogProcessor implements LogRecordProcessor {
     return [];
   }
 
-  /** Page hidden or unloading: queued records go by beacon; what the browser refuses, by fetch. */
+  /**
+   * Page unloading (pagehide, through src/internal/unload.ts), first in the page's keepalive budget:
+   * the newest queued records that fit `budget` go in one beacon; the rest, and anything the browser
+   * refuses, go back to the queue for fetch. Returns the bytes the beacon took.
+   */
+  drainOnUnload(budget: number): number {
+    const queue = this.batcher.takeAll();
+    const max = Math.min(budget, BEACON_MAX_BYTES);
+    const size = (n: number) => {
+      try {
+        return JsonLogsSerializer.serializeRequest(queue.slice(queue.length - n))?.byteLength ?? Infinity;
+      } catch {
+        return Infinity;
+      }
+    };
+    let lo = 0;
+    let hi = queue.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (size(mid) <= max) lo = mid;
+      else hi = mid - 1;
+    }
+    const batch = queue.slice(queue.length - lo);
+    const rest = [...queue.slice(0, queue.length - lo), ...this.beacon(batch)];
+    if (rest.length > 0) {
+      this.batcher.requeue(rest);
+      void this.batcher.flush();
+    }
+    return rest.length === queue.length || lo === 0 ? 0 : size(lo);
+  }
+
+  /** Page hidden (it may come back): queued records go by beacon; what the browser refuses, by fetch. */
   drainOnHide(): void {
     const rest = this.beacon(this.batcher.takeAll());
     if (rest.length > 0) {

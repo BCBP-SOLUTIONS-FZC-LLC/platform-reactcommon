@@ -24,6 +24,21 @@ export const CHANNEL_NAME = 'platform-auth';
 
 const PENDING_TTL_MS = 10 * 60_000;
 const SKEW_S = 60;
+/**
+ * How far the device's clock may be from the identity provider's. An ID token comes straight from the
+ * token endpoint, so its iat is the provider's clock at receipt: the difference is the device's offset,
+ * and token times are judged on the provider's clock. Laptops drift by minutes; beyond this the clock
+ * is wrong, and the user is told so (reason 'device-clock') instead of landing back on sign-in.
+ */
+const MAX_CLOCK_OFFSET_S = 600;
+
+/** The device clock is too far off the provider's to judge the tokens. */
+class DeviceClockError extends Error {
+  override readonly name = 'DeviceClockError';
+  constructor(readonly offsetSeconds: number) {
+    super(`the device clock is ${Math.abs(Math.round(offsetSeconds))} s ${offsetSeconds > 0 ? 'ahead of' : 'behind'} the identity provider's`);
+  }
+}
 const REFRESH_LEAD_MS = 60_000;
 const REFRESH_JITTER_MS = 10_000;
 /** How long a page whose refresh a navigation away cancelled waits before restoring, in case it stays. */
@@ -243,6 +258,8 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   let tokens: Tokens | undefined;
   let workspace: Workspace | undefined;
   let user: SessionUser | undefined;
+  /** Device clock minus the provider's, in seconds, from the last accepted ID token (auth_time checks). */
+  let clockOffsetS = 0;
   let inflight: Promise<boolean> | undefined;
   let restoring = false;
   let initPromise: Promise<Settled> | undefined;
@@ -374,7 +391,9 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     if (idToken) {
       const claims = jwtPayload(idToken);
       const problem = idTokenProblem(claims, w, nonce, previous?.sub);
+      if (problem === 'device-clock') throw new DeviceClockError(internals.now() / 1000 - (claims!.iat as number));
       if (problem) throw new Error(`ID token rejected: ${problem}`);
+      clockOffsetS = internals.now() / 1000 - (claims!.iat as number);
       sub = claims!.sub as string;
       user = userFrom(claims!, w.trial);
     } else if (!previous) {
@@ -398,15 +417,18 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   /** Why the ID token's claims fail OIDC Core §3.1.3.7 (signature excepted), or undefined. */
   function idTokenProblem(c: Record<string, unknown> | undefined, w: Workspace, nonce: string, sub?: string): string | undefined {
     if (!c) return 'not a JWT';
-    const now = internals.now() / 1000;
     if (c.iss !== issuer(w.realm)) return 'iss';
     const aud = Array.isArray(c.aud) ? c.aud : [c.aud];
     if (!aud.includes(cfg.clientId)) return 'aud';
     if (c.azp !== undefined && c.azp !== cfg.clientId) return 'azp';
     // Refreshed ID tokens may omit the nonce; when present it must be the original one.
     if (c.nonce !== nonce && !(sub !== undefined && c.nonce === undefined)) return 'nonce';
+    if (typeof c.iat !== 'number' || !Number.isFinite(c.iat)) return 'iat';
+    // Judged on the provider's clock: iat is its time at receipt (the token just came from it).
+    const offset = internals.now() / 1000 - c.iat;
+    if (Math.abs(offset) > MAX_CLOCK_OFFSET_S) return 'device-clock';
+    const now = c.iat;
     if (typeof c.exp !== 'number' || c.exp + SKEW_S < now) return 'exp';
-    if (typeof c.iat !== 'number' || c.iat - SKEW_S > now) return 'iat';
     if (typeof c.sub !== 'string' || c.sub === '') return 'sub';
     if (sub !== undefined && c.sub !== sub) return 'sub changed';
     return undefined;
@@ -530,20 +552,22 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
         if (!started) expire({ serverEnded: false, idle: false });
       });
     };
-    if (deferMs > 0) {
-      setTimeout(go, deferMs);
-      return;
-    }
-    if (isOnline()) {
-      go();
-      return;
-    }
-    stopOnline = subscribeOnline((online) => {
-      if (!online) return;
-      stopOnline?.();
-      stopOnline = undefined;
-      go();
-    });
+    // Offline, the redirect would land on the browser's error page: wait for the network.
+    const whenOnline = () => {
+      if (!restoring) return;
+      if (isOnline()) {
+        go();
+        return;
+      }
+      stopOnline = subscribeOnline((online) => {
+        if (!online) return;
+        stopOnline?.();
+        stopOnline = undefined;
+        go();
+      });
+    };
+    if (deferMs > 0) setTimeout(whenOnline, deferMs);
+    else whenOnline();
   }
 
   // --- refresh -------------------------------------------------------------------------------
@@ -661,7 +685,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     }
     replaceUrl(safeReturnUrl(record.returnUrl));
     const w = record.workspace;
-    const anonymous = (reason: 'none' | 'login-required'): Settled => {
+    const anonymous = (reason: 'none' | 'login-required' | 'device-clock'): Settled => {
       const s = { status: 'anonymous', reason, ...(reason === 'login-required' ? { workspace: w } : {}) } as const;
       setState(s);
       return s;
@@ -696,6 +720,10 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     } catch (e) {
       tokens = undefined;
       user = undefined;
+      if (e instanceof DeviceClockError) {
+        log().error('sign-in callback rejected: the device clock is off', { clock_offset_s: Math.round(e.offsetSeconds) });
+        return anonymous('device-clock');
+      }
       log().error('sign-in callback rejected', { error: e });
       return anonymous('none');
     }
@@ -788,7 +816,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     needsStepUp(maxAgeSeconds) {
       const authTime = state.status === 'authenticated' ? state.user.authTime : undefined;
       if (authTime === undefined || typeof maxAgeSeconds !== 'number' || !Number.isFinite(maxAgeSeconds)) return false;
-      return internals.now() / 1000 - authTime > maxAgeSeconds;
+      return internals.now() / 1000 - clockOffsetS - authTime > maxAgeSeconds; // on the provider's clock
     },
 
     subscribe(l) {

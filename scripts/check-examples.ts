@@ -73,6 +73,12 @@ for (const [name, scriptDir, isEntry] of [
 const html = readFileSync(join(shellDir, 'index.html'), 'utf8');
 const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
 check(scripts.length > 0 && scripts.every(([, attrs, body]) => /\bsrc=/.test(attrs!) && body!.trim() === ''), 'shell: index.html has an inline script');
+// The entry index.html loads is pinned with its sha384 (ChunkIntegrityPlugin): the root of the shell's chain.
+for (const [, attrs] of scripts) {
+  const src = /\bsrc="?([^" >]+)/.exec(attrs!)?.[1] ?? '';
+  const want = `sha384-${createHash('sha384').update(readFileSync(join(shellDir, src.replace(/^\//, '')))).digest('base64')}`;
+  check(attrs!.includes(`integrity="${want}"`) && /crossorigin="anonymous"/.test(attrs!), `shell: index.html loads ${src} without its integrity`);
+}
 check(readdirSync(join(shellDir, 'config')).includes('runtime.json'), 'shell: config/runtime.json not copied');
 
 if (failures.length > 0) {

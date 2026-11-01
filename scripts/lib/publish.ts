@@ -30,7 +30,7 @@ export function publishProblems(manifests: readonly Manifest[]): string[] {
     const dir = m.name ? PACKAGES[m.name] : undefined;
     if (!dir) problems.push(`${id}: not one of ${Object.keys(PACKAGES).join(', ')} (GitHub Packages needs the ${SCOPE} scope)`);
     if (m.private) problems.push(`${id}: private: true would refuse the publish`);
-    if (!m.license) problems.push(`${id}: no license field (UNLICENSED for this private code)`);
+    if (!m.license) problems.push(`${id}: no license field (UNLICENSED until a license is chosen: VERSIONING.md)`);
     const repo = typeof m.repository === 'string' ? { url: m.repository } : (m.repository ?? {});
     if (repo.url !== REPOSITORY) problems.push(`${id}: repository.url must be ${REPOSITORY}, so GitHub links the package to this repository`);
     if (dir && repo.directory !== dir) problems.push(`${id}: repository.directory must be ${dir}`);

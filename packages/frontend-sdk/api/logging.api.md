@@ -33,11 +33,12 @@ export interface Logger {
 // @public (undocumented)
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
-// @public
+// @public (undocumented)
 export function serializeError(e: unknown): {
     name: string;
     message: string;
     stack?: string;
+    cause?: string;
 };
 
 // @public

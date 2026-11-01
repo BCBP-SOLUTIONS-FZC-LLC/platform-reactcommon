@@ -28,6 +28,7 @@ import {
   useSession,
   useSessionContext,
   useStepUp,
+  useSignOut,
   useSwitchWorkspace,
   useT,
   useWorkspace,
@@ -134,6 +135,33 @@ describe('session hooks', () => {
     expect(container.textContent).toBe('Shell User|acme|starter');
     await switchTo!('globex');
     expect(shell.switchWorkspace).toHaveBeenCalledWith('globex');
+  });
+
+  const minimalShell: ShellContextValue = { locale: 'en', switchWorkspace: async () => {} };
+
+  it('useSignOut calls the shell\'s signOut, local by default and global on request', async () => {
+    const signOut = vi.fn(async () => {});
+    let out!: ReturnType<typeof useSignOut>;
+    function P() {
+      out = useSignOut();
+      return null;
+    }
+    await render(<PlatformProvider shell={{ ...minimalShell, signOut }}><P /></PlatformProvider>);
+    await out();
+    await out({ global: true });
+    expect(signOut.mock.calls).toEqual([[undefined], [{ global: true }]]);
+  });
+
+  it('useSignOut rejects without a shell, or with one that provides no signOut', async () => {
+    let out!: ReturnType<typeof useSignOut>;
+    function P() {
+      out = useSignOut();
+      return null;
+    }
+    await render(<P />);
+    await expect(out()).rejects.toThrow('useSignOut needs a shell that provides signOut');
+    await render(<PlatformProvider shell={minimalShell}><P /></PlatformProvider>);
+    await expect(out()).rejects.toThrow('useSignOut needs a shell that provides signOut');
   });
 
   it('useSwitchWorkspace without a shell rejects', async () => {

@@ -128,9 +128,9 @@ The same tarballs are attached to the GitHub Release, with Cosign-signed `checks
 4. **Then the GitHub Release** (`publish`), as before. The irreversible registry step comes first, as platform-fastapicommon's PyPI publish does.
 
 **One-time setup** (repository admin):
-- Create the environment **`npm`** (*Settings → Environments*) with required reviewers. `npm-publish` waits for an approval there.
+- Create the environment **`npm`** (*Settings → Environments*) with required reviewers. `npm-publish` waits for an approval there, and refuses to publish if the environment has no required reviewers (`.github/scripts/check-npm-environment.sh`): a job that names a missing environment gets an unprotected one created on the spot, so without that check the gate would silently disappear.
 - After the first publish, on each package's page (*Package settings*), check that it is linked to this repository (from `repository` in `package.json`), and grant *Actions access* to the repositories that consume it.
-- Packages inherit the repository's visibility (private). Deleting a version is possible in the UI, but never reuse its number.
+- Packages linked to a repository inherit its visibility. **This repository is public, so the packages are public too**: anyone with a GitHub token can install them (GitHub Packages always asks for one). Their `license` is `UNLICENSED`; decide on a license (platform-fastapicommon publishes as Apache-2.0) or make the repository private before the first release. Deleting a version is possible in the UI, but never reuse its number.
 
 Run locally: `pnpm build && bash .github/scripts/pack-packages.sh && pnpm publish:check`. `.github/scripts/npm-publish.sh` takes `DRY_RUN=1`, or `NPM_REGISTRY=<a local registry>` (it was exercised against Verdaccio: a first publish, an idempotent re-run, and a refused different tarball under the same version).
 

@@ -110,6 +110,21 @@ export function useLocale(): { locale: string; dir: 'ltr' | 'rtl' } {
   return useMemo(() => ({ locale, dir: directionOf(locale) }), [locale]);
 }
 
+/**
+ * Signs the user out, from any component (shell or remote): local by default, so the next sign-in on
+ * this device asks for credentials; `{ global: true }` also ends the identity provider's session.
+ */
+export function useSignOut(): (o?: { global?: boolean }) => Promise<void> {
+  const shell = useShell();
+  return useCallback(
+    (o?: { global?: boolean }) => {
+      if (!shell?.signOut) return Promise.reject(new Error('useSignOut needs a shell that provides signOut (PlatformProvider)'));
+      return shell.signOut(o);
+    },
+    [shell],
+  );
+}
+
 export function useSwitchWorkspace(): (identifierOrSlug: string) => Promise<void> {
   const shell = useShell();
   return useCallback(

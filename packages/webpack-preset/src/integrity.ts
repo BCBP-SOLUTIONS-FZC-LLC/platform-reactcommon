@@ -1,12 +1,13 @@
 /**
- * Subresource Integrity for lazily loaded chunks. The remote manifest pins remoteEntry.js with an
- * integrity hash, and index.html pins the shell's entry; everything those entries load later (a remote's
- * exposed modules, shared-module fallbacks, the shell's split chunks) would otherwise run unchecked.
+ * Subresource Integrity for every script a build emits. The remote manifest pins remoteEntry.js with an
+ * integrity hash (the SDK requires one outside local, dev and test); this plugin pins the shell's entry
+ * in its index.html (every <script src> the build's HTML references) and every chunk the entries load
+ * later (a remote's exposed modules, shared-module fallbacks, the shell's split chunks).
  *
  * Each runtime chunk (the shell's main bundle, a remote's remoteEntry.js) carries a map of chunk id →
  * sha384 integrity of every lazily loadable JS chunk of its build, and webpack's script loader sets
  * script.integrity from it. A tampered or swapped chunk is refused by the browser, and the load fails as a
- * chunk-load error. The chain of trust: manifest (or index.html) → entry → chunks.
+ * chunk-load error. The chain of trust: manifest (remote) or index.html (shell) → entry → chunks.
  *
  * Built on webpack's own hooks rather than webpack-subresource-integrity, whose Module Federation support
  * is broken and unmaintained (waysact/webpack-subresource-integrity#176, #220, #230).
@@ -38,10 +39,46 @@ const createScriptCode = (require: string) =>
 
 /** The lazily loadable JS file of a chunk; undefined for chunks loaded as entries or without JS. */
 function lazyScript(chunk: Chunk): string | undefined {
-  if (chunk.hasRuntime()) return undefined; // an entry: pinned by index.html or the remote manifest
+  if (chunk.hasRuntime()) return undefined; // an entry: pinned in the build's HTML, or by the remote manifest
   const js = [...chunk.files].filter((f) => f.endsWith('.js'));
   if (js.length > 1) throw new Error(`chunk ${String(chunk.id)} has ${js.length} JS files (${js.join(', ')}); integrity expects one`);
   return js[0];
+}
+
+const SCRIPT_TAG = /<script\b[^>]*>/gi;
+const SRC = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+
+/** The emitted asset a script src names (publicPath stripped), or undefined for another URL. */
+function assetOf(compilation: Compilation, src: string): string | undefined {
+  const path = src.replace(/[?#].*$/, '');
+  const pp = compilation.outputOptions.publicPath;
+  const prefix = typeof pp === 'string' && pp !== 'auto' ? pp : '';
+  const name = prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path.replace(/^\.?\//, '');
+  return name.endsWith('.js') && compilation.getAsset(name) ? name : undefined;
+}
+
+/**
+ * Every <script src> in `html` that names an emitted script, with that script's integrity: the
+ * attribute added (with crossorigin, which a cross-origin integrity-checked script needs), or, once
+ * added, checked. Returns the HTML and the scripts whose attribute does not match.
+ */
+function pinScripts(compilation: Compilation, html: string, add: boolean): { html: string; wrong: string[] } {
+  const wrong: string[] = [];
+  const out = html.replace(SCRIPT_TAG, (tag) => {
+    const m = SRC.exec(tag);
+    const asset = m && assetOf(compilation, m[1] ?? m[2] ?? m[3] ?? '');
+    if (!asset) return tag;
+    const want = integrityOf(compilation.getAsset(asset)!.source.buffer());
+    const have = /\bintegrity\s*=\s*"([^"]*)"/i.exec(tag)?.[1];
+    if (!add) {
+      if (have !== want) wrong.push(asset);
+      return tag;
+    }
+    if (have !== undefined) return tag.replace(/\bintegrity\s*=\s*"[^"]*"/i, `integrity="${want}"`);
+    const cross = /\bcrossorigin\b/i.test(tag) ? '' : ' crossorigin="anonymous"';
+    return tag.replace(/\s*\/?>$/, (end) => ` integrity="${want}"${cross}${end}`);
+  });
+  return { html: out, wrong };
 }
 
 /** chunk id → integrity of every lazily loadable JS chunk, in chunk order (a stable key order). */
@@ -136,12 +173,28 @@ export class ChunkIntegrityPlugin {
         shipped = final;
       });
 
-      // Last: every chunk still matches the map the browser will enforce.
+      // The entries the build's HTML loads (the shell's index.html), once the scripts are final.
+      compilation.hooks.processAssets.tap({ name: NAME, stage: C.PROCESS_ASSETS_STAGE_OPTIMIZE_HASH + 2 }, () => {
+        for (const a of compilation.getAssets()) {
+          if (!a.name.endsWith('.html')) continue;
+          const { html } = pinScripts(compilation, a.source.source().toString(), true);
+          compilation.updateAsset(a.name, new webpack.sources.RawSource(html));
+        }
+      });
+
+      // Last: every chunk still matches the map the browser will enforce, and every pinned entry its tag.
       compilation.hooks.processAssets.tap({ name: NAME, stage: C.PROCESS_ASSETS_STAGE_REPORT - 1 }, () => {
-        if (shipped === undefined) return;
-        const map = JSON.parse(shipped) as Record<string, string>;
-        for (const [id, have] of lazyIntegrities(compilation)) {
-          if (map[String(id)] !== have) fail(`chunk ${String(id)} changed after its integrity was recorded; the browser would refuse it`);
+        if (shipped !== undefined) {
+          const map = JSON.parse(shipped) as Record<string, string>;
+          for (const [id, have] of lazyIntegrities(compilation)) {
+            if (map[String(id)] !== have) fail(`chunk ${String(id)} changed after its integrity was recorded; the browser would refuse it`);
+          }
+        }
+        for (const a of compilation.getAssets()) {
+          if (!a.name.endsWith('.html')) continue;
+          for (const s of pinScripts(compilation, a.source.source().toString(), false).wrong) {
+            fail(`${a.name} loads ${s} without its current integrity; the browser would refuse it`);
+          }
         }
       });
     });

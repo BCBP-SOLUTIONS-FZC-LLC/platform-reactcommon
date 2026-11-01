@@ -103,7 +103,7 @@ export type SessionState = {
 } | {
     readonly status: 'anonymous';
     readonly workspace?: Workspace;
-    readonly reason: 'none' | 'signed-out' | 'login-required';
+    readonly reason: 'none' | 'signed-out' | 'login-required' | 'device-clock';
 } | {
     readonly status: 'authenticated';
     readonly user: SessionUser;

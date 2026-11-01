@@ -85,9 +85,32 @@ function truncateBytes(s: string, max: number): string {
  * and fragments stripped, control characters other than newlines removed, at most 4 KiB).
  * Non-Error values become { name: their type, message: their text }.
  */
-export function serializeError(e: unknown): { name: string; message: string; stack?: string } {
+/** How many causes deep, and how long the joined chain may be. */
+const CAUSE_DEPTH = 3;
+const CAUSE_MAX_BYTES = 1024;
+
+/**
+ * The error's cause chain as "Type: message ← Type: message", each link cleaned like a message (a
+ * remote's "failed to evaluate" says nothing without the shared-module error under it). Cycles end it.
+ */
+function causeChain(e: Error): string | undefined {
+  const links: string[] = [];
+  const seen = new Set<unknown>([e]);
+  for (let c: unknown = e.cause; c !== undefined && c !== null && links.length < CAUSE_DEPTH && !seen.has(c); c = (c as { cause?: unknown }).cause) {
+    seen.add(c);
+    if (!(c instanceof Error)) {
+      const s = serializeError(c);
+      links.push(`${s.name}: ${s.message}`);
+      break;
+    }
+    links.push(`${cleanString(c.name || 'Error')}: ${cleanString(c.message)}`);
+  }
+  return links.length > 0 ? truncateBytes(links.join(' ← '), CAUSE_MAX_BYTES) : undefined;
+}
+
+export function serializeError(e: unknown): { name: string; message: string; stack?: string; cause?: string } {
   if (e instanceof Error) {
-    const out: { name: string; message: string; stack?: string } = {
+    const out: { name: string; message: string; stack?: string; cause?: string } = {
       name: cleanString(e.name || 'Error'),
       message: cleanString(e.message),
     };
@@ -95,6 +118,8 @@ export function serializeError(e: unknown): { name: string; message: string; sta
       const stack = scrubSecrets(e.stack.replace(URL_QUERY, '$1').replace(/[\p{Cc}\u2028\u2029](?<!\n)/gu, ''));
       out.stack = truncateBytes(stack, STACK_MAX_BYTES);
     }
+    const cause = causeChain(e);
+    if (cause) out.cause = cause;
     return out;
   }
   let text: string;

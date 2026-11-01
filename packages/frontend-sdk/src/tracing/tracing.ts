@@ -19,6 +19,7 @@ import { getRuntime } from '../internal/runtime.ts';
 import { collectorUrl, isExactOrigin } from '../internal/urls.ts';
 import { DEFAULT_QUEUE, DropOldestBatchSpanProcessor, EXPORTER_CONCURRENCY, type QueueOptions, type TracingStats } from './processor.ts';
 import { platformSampler } from './sampler.ts';
+import { onUnload } from '../internal/unload.ts';
 
 export interface TracingOptions {
   /** Same-origin path of the OTLP/HTTP collector, e.g. '/otel'; spans go to `${otlpBaseUrl}/v1/traces`. */
@@ -94,7 +95,7 @@ export function initializeTracing(o: TracingOptions): void {
   if (tryGetConfig()?.telemetry.enabled === false) return; // the runtime config's off switch
 
   const stats: TracingStats = { exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, droppedOnUnload: 0, exportFailures: 0 };
-  const processor = new DropOldestBatchSpanProcessor(exporterFactory(url), stats, queueOptions);
+  const processor = new DropOldestBatchSpanProcessor(exporterFactory(url), stats, queueOptions, url);
   const provider = new TracerProvider({
     // gincommon's resource (otel/setup.go). No service.instance.id: one per browser would explode cardinality.
     resource: resourceFromAttributes({
@@ -111,15 +112,14 @@ export function initializeTracing(o: TracingOptions): void {
   trace.setGlobalTracerProvider(provider);
 
   // Hidden (a tab switch; the page may come back): flush the whole queue through the Batcher, so
-  // nothing is dropped. Unloading: one keepalive request (the only kind that outlives the page).
-  const onPageHide = () => processor.drainOnUnload();
+  // nothing is dropped. Unloading: one keepalive request in what the logs left of the page's budget.
+  const stopUnload = onUnload({ priority: 1, send: (budget) => processor.drainOnUnload(budget) });
   const onVisibility = () => {
     if (globalThis.document?.visibilityState === 'hidden') processor.flushOnHidden();
   };
-  globalThis.addEventListener?.('pagehide', onPageHide);
   globalThis.document?.addEventListener?.('visibilitychange', onVisibility);
   const removeListeners = () => {
-    globalThis.removeEventListener?.('pagehide', onPageHide);
+    stopUnload();
     globalThis.document?.removeEventListener?.('visibilitychange', onVisibility);
   };
 

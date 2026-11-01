@@ -56,6 +56,9 @@ export interface ShellContextValue {
     context?: SessionContext | undefined;
     // (undocumented)
     locale: string;
+    signOut?: ((o?: {
+        global?: boolean;
+    }) => Promise<void>) | undefined;
     switchWorkspace(identifierOrSlug: string): Promise<void>;
     // (undocumented)
     user?: SessionUser | undefined;
@@ -112,6 +115,11 @@ export function useSession(): SessionState;
 
 // @public
 export function useSessionContext(): SessionContext | undefined;
+
+// @public
+export function useSignOut(): (o?: {
+    global?: boolean;
+}) => Promise<void>;
 
 // @public
 export function useStepUp(): {

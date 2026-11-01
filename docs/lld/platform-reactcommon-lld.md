@@ -589,6 +589,7 @@ CSP violations after bootstrap are logged by `installGlobalErrorHandlers` (direc
 | `/react` | warn (essential) | `content security policy violation` | `securitypolicyviolation` (`violated_directive`, `blocked_uri` origin, `disposition`) |
 | `/auth` | warn (essential) | `sign-in callback ignored: unknown or expired state` | callback without a valid record |
 | `/auth` | error | `sign-in callback rejected: iss does not match the realm` | RFC 9207 check failed |
+| `/auth` | error | `sign-in callback rejected: the device clock is off` | the ID token's `iat` is more than 10 minutes from the device clock (`clock_offset_s`); the session is `anonymous` with reason `device-clock` |
 | `/auth` | error | `sign-in callback rejected` | exchange or ID-token check failed |
 | `/auth` | warn (essential) | `sign-in failed` | `?error=` on an interactive login |
 | `/auth` | error | `silent sign-in could not start` | restore redirect could not be prepared |

@@ -62,9 +62,11 @@ export type SessionState =
       /**
        * 'signed-out': the signed-out mark is set, so never log in automatically.
        * 'login-required': a prompt=none attempt for `workspace` answered login_required, interaction_required or consent_required.
+       * 'device-clock': the sign-in was refused because the device's clock is more than 10 minutes off
+       *   the identity provider's; tell the user to set it (signing in again cannot succeed until then).
        * 'none': no session and no hint (first visit, rejected callback, loop guard).
        */
-      readonly reason: 'none' | 'signed-out' | 'login-required';
+      readonly reason: 'none' | 'signed-out' | 'login-required' | 'device-clock';
     }
   | { readonly status: 'authenticated'; readonly user: SessionUser; readonly workspace: Workspace; readonly expiresAt: number }
   | {

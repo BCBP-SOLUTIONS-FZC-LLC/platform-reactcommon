@@ -50,6 +50,8 @@ export class DropOldestBatchSpanProcessor implements SpanProcessor {
     private readonly exporter: SpanExporter,
     readonly stats: TracingStats,
     opts: QueueOptions = DEFAULT_QUEUE,
+    /** The collector's traces URL: on unload the spans go there directly (see drainOnUnload). */
+    private readonly unloadUrl?: string,
   ) {
     this.batcher = new Batcher(exportWith<ReadableSpan>(exporter), stats, {
       maxQueueSize: opts.maxQueueSize,
@@ -70,11 +72,11 @@ export class DropOldestBatchSpanProcessor implements SpanProcessor {
     this.batcher.add(span);
   }
 
-  /** The longest run of the newest spans in `queue` whose OTLP JSON body fits KEEPALIVE_MAX_BYTES. */
-  private newestThatFit(queue: ReadableSpan[]): ReadableSpan[] {
+  /** The longest run of the newest spans in `queue` whose OTLP JSON body fits `maxBytes`. */
+  private newestThatFit(queue: ReadableSpan[], maxBytes = KEEPALIVE_MAX_BYTES): ReadableSpan[] {
     const fits = (n: number) => {
       try {
-        return (JsonTraceSerializer.serializeRequest(queue.slice(queue.length - n))?.byteLength ?? Infinity) <= KEEPALIVE_MAX_BYTES;
+        return (JsonTraceSerializer.serializeRequest(queue.slice(queue.length - n))?.byteLength ?? Infinity) <= maxBytes;
       } catch {
         return false; // the exporter could not send it either; never throw from a pagehide listener
       }
@@ -110,16 +112,57 @@ export class DropOldestBatchSpanProcessor implements SpanProcessor {
   }
 
   /**
-   * Page unloading (pagehide): only a keepalive request outlives the page, and the browser's
-   * keepalive budget is 64 KiB per page, so one request carries the newest queued spans that fit
-   * (newest first, as the queue drops the oldest when it is full: the last interactions before the
-   * user left matter most) and the rest are counted in droppedOnUnload.
+   * Page unloading (pagehide, through src/internal/unload.ts): only a keepalive request outlives the
+   * page, within the `budget` the page's other senders left. One request carries the newest queued
+   * spans that fit (the last interactions before the user left matter most); the rest are counted in
+   * droppedOnUnload. The request starts here, synchronously, by sendBeacon (else fetch keepalive): the
+   * OTLP exporter awaits its headers before fetch, a microtask a closing tab may never run (known browser
+   * bug 2). Returns the body's bytes.
    */
-  drainOnUnload(): void {
+  drainOnUnload(budget: number = KEEPALIVE_MAX_BYTES): number {
     const queue = this.batcher.takeAll();
-    const batch = this.newestThatFit(queue);
+    const batch = this.newestThatFit(queue, Math.min(budget, KEEPALIVE_MAX_BYTES));
     this.stats.droppedOnUnload += queue.length - batch.length;
-    this.sendOne(batch);
+    if (batch.length === 0) return 0;
+    let body: Uint8Array | undefined;
+    try {
+      body = JsonTraceSerializer.serializeRequest(batch);
+    } catch {
+      body = undefined;
+    }
+    if (!body || !this.unloadUrl) {
+      this.sendOne(batch); // no direct transport: the exporter, as best it can
+      return body?.byteLength ?? 0;
+    }
+    // sendBeacon first: the unload transport browsers deliver most reliably (a closing Firefox or WebKit
+    // tab lost about 1 keepalive fetch in 10, never a beacon). fetch keepalive where it is refused.
+    try {
+      if (globalThis.navigator?.sendBeacon?.(this.unloadUrl, new Blob([body as BlobPart], { type: 'application/json' }))) {
+        this.stats.exported += batch.length;
+        return body.byteLength;
+      }
+    } catch {
+      // fall through to fetch
+    }
+    if (typeof globalThis.fetch !== 'function') {
+      this.stats.exportFailures++;
+      return 0;
+    }
+    let sent: Promise<Response>;
+    try {
+      sent = globalThis.fetch(this.unloadUrl, { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' }, body: body as BodyInit });
+    } catch {
+      this.stats.exportFailures++;
+      return 0;
+    }
+    void sent.then(
+      (res) => {
+        if (res.ok) this.stats.exported += batch.length;
+        else this.stats.exportFailures++;
+      },
+      () => this.stats.exportFailures++,
+    );
+    return body.byteLength;
   }
 
   /** One export outside the Batcher (a keepalive-sized batch), counted like the Batcher's. */

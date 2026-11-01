@@ -104,13 +104,15 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: org_membership_app
+      # As iam-org-membership's own compose since O&M #47: the superuser is a separate role; its
+      # init-db.sql creates the RLS-bound app role and the BYPASSRLS migrator, which runs the migrations.
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: devpassword
       POSTGRES_DB: org_membership
     volumes:
       - ${IAM_ROOT}/iam-org-membership/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U org_membership_app -d org_membership"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d org_membership"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -158,7 +160,7 @@ services:
       PG_MAX_CONNS: "20"
       PG_MIN_CONNS: "0"
       PG_BOUNCER_MODE: "true"
-      MIGRATION_DATABASE_URL: postgres://org_membership_app:devpassword@postgres:5432/org_membership?sslmode=disable
+      MIGRATION_DATABASE_URL: postgres://org_membership_migrator:devpassword@postgres:5432/org_membership?sslmode=disable
       VALKEY_URL: valkey:6379
       SNS_TOPIC_MEMBERSHIP_ARN: arn:aws:sns:ap-south-1:000000000000:iam-membership-events
       SNS_TOPIC_TENANT_ARN: arn:aws:sns:ap-south-1:000000000000:iam-tenant-events

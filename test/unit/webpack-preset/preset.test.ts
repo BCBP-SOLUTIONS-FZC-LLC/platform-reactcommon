@@ -440,6 +440,37 @@ describe('a real build', () => {
     await expect(compile({ ...preset, context: root, entry: {}, output: { ...preset.output, path: join(root, 'dist') }, plugins: [...preset.plugins!, mutate] })).rejects.toThrow(error);
   });
 
+  it('production: the shell\'s index.html loads its entry with the entry\'s sha384 and crossorigin; a later rewrite fails the build', async () => {
+    const HtmlWebpackPlugin = createRequire(join(import.meta.dirname, '../../../examples/shell/package.json'))('html-webpack-plugin') as new (o: object) => webpack.WebpackPluginInstance;
+    const root = mkdtempSync(join(dir, 'sri-html-'));
+    fakeSdk(root);
+    writeFileSync(join(root, 'shell.js'), "import('./bootstrap.js');\n");
+    writeFileSync(join(root, 'bootstrap.js'), 'export const ready = 1;\n');
+    writeFileSync(join(root, 'index.html'), '<!doctype html><html><head></head><body></body></html>\n');
+    const preset = platformWebpackConfig({ role: 'shell', mode: 'production' });
+    const build = (out: string, extra: webpack.WebpackPluginInstance[] = []) =>
+      compile({
+        ...preset,
+        context: root,
+        entry: { main: './shell.js' },
+        output: { ...preset.output, path: out },
+        plugins: [...preset.plugins!, new HtmlWebpackPlugin({ template: './index.html', inject: 'body', scriptLoading: 'defer' }), ...extra],
+      });
+    const out = join(root, 'dist');
+    await build(out);
+    const html = readFileSync(join(out, 'index.html'), 'utf8');
+    const tag = /<script[^>]*>/.exec(html)![0];
+    const src = /src="?([^" >]+)/.exec(tag)![1]!;
+    expect(tag).toContain(`integrity="${integrityOf(readFileSync(join(out, src)))}"`);
+    expect(tag).toContain('crossorigin="anonymous"');
+
+    const rewriteEntry = atStage(S.PROCESS_ASSETS_STAGE_REPORT - 2, (c) => {
+      const main = c.getAssets().find((a) => /^assets\/main\..*\.js$/.test(a.name))!;
+      c.updateAsset(main.name, new webpack.sources.RawSource(`${main.source.source().toString()}\n;`));
+    });
+    await expect(build(join(root, 'dist2'), [rewriteEntry])).rejects.toThrow(/index\.html loads assets\/main\.\S+\.js without its current integrity/);
+  });
+
   it('development: no integrity map and no integrity attribute (hot reload rewrites chunks)', async () => {
     const root = mkdtempSync(join(dir, 'sri-dev-'));
     writeFileSync(join(root, 'Edit.js'), "export default () => 'edit';\n");

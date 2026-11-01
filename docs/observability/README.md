@@ -97,6 +97,7 @@ Recorded through an internal instrument port by `/http`, `/mfe` and `/react`, so
 | `mfe` | the logger's scope, `shell` by default |
 | `page_route` | the registered route template, else `unknown` |
 | `exception.type`, `exception.message`, `exception.stacktrace` | `attrs.error` through `serializeError` (stack ≤ 4 KiB) |
+| `exception.cause` | the error's cause chain, "Type: message ← Type: message" (three deep, redacted, ≤ 1 KiB) |
 
 Every other attribute is redacted with gincommon's rules (`contracts/redaction.json`):
 - sensitive keys become `[REDACTED]`;

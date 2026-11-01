@@ -68,6 +68,8 @@ export interface PlatformRuntime {
   events: Map<string, Set<() => void>>;
   /** A DENY_TENANT_READ_ONLY answer was seen on this page (/http sets it; /react reads it). */
   readOnlyDenied: boolean;
+  /** The page's pagehide senders and their shared keepalive budget (src/internal/unload.ts). */
+  unload: unknown;
 }
 
 export const RUNTIME_KEY = Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk');
@@ -113,6 +115,7 @@ function createRuntime(): PlatformRuntime {
     appUpdate: undefined,
     events: new Map(),
     readOnlyDenied: false,
+    unload: undefined,
   };
 }
 

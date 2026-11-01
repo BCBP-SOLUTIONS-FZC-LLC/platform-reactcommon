@@ -26,7 +26,7 @@ describe('publishProblems', () => {
     expect(publishProblems(bad)).toEqual([
       '@platform/frontend-sdk: not one of @bcbp-solutions-fzc-llc/frontend-sdk, @bcbp-solutions-fzc-llc/webpack-preset, @bcbp-solutions-fzc-llc/eslint-plugin (GitHub Packages needs the @bcbp-solutions-fzc-llc scope)',
       '@platform/frontend-sdk: private: true would refuse the publish',
-      '@platform/frontend-sdk: no license field (UNLICENSED for this private code)',
+      '@platform/frontend-sdk: no license field (UNLICENSED until a license is chosen: VERSIONING.md)',
       '@platform/frontend-sdk: publishConfig.registry must be https://npm.pkg.github.com',
       '@platform/frontend-sdk: publishConfig.access is not used by GitHub Packages (visibility follows the repository)',
       `@bcbp-solutions-fzc-llc/webpack-preset: repository.url must be ${REPOSITORY}, so GitHub links the package to this repository`,

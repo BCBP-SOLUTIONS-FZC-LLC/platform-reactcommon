@@ -54,10 +54,10 @@ flowchart LR
 | Example shell and tenders remote | **Real**, built for `PLATFORM_ENVIRONMENT=staging` (`__ENVIRONMENT__` is a build-time define) | this repo |
 | `/config/runtime.json` | Real file, this environment's values (`idpOrigin https://auth.localtest.me`, `sampleRatio 1`) | `scripts/prepare.mjs` |
 | Keycloak | **Real** | `quay.io/keycloak/keycloak:26.8.1`, `start`, `KC_HOSTNAME=https://auth.localtest.me`, `KC_PROXY_HEADERS=xforwarded` |
-| Realms `tenant-acme`, `trial` | Built from IAM `realm-template.json` plus what `iam-realm-provisioner` adds (tender-web redirect, web origin and post-logout URIs, the `tenant_id` mapper and admin-only user-profile attribute on `trial`) | `iam-realm-provisioner@6ed5bb9` |
+| Realms `tenant-acme`, `trial` | Built from IAM `realm-template.json` plus what `iam-realm-provisioner` adds (tender-web redirect, web origin and post-logout URIs, the `tenant_id` mapper and admin-only user-profile attribute on `trial`) | `iam-realm-provisioner@6ed5bb9`; re-checked at `e542f0f` (RP #48) |
 | Envoy | **Real**. The config is written for this run from IAM HLD v1.58 §4.3, §8.2.7, §8.3, §11.1 and the `iam-authz-enrichment` README sketch. No checked-in gateway config exists. | `envoyproxy/envoy:v1.40.2`, `docker/envoy/envoy.template.yaml` |
 | iam-authz-enrichment | **Real**, built from its Dockerfile (GitHub token passed as a BuildKit secret) | `4bea2ea` |
-| iam-org-membership | **Real**: PUB-1, P-35, I-8 with Postgres + PgBouncer + Valkey + floci. Seeded by `docker/org-membership/seed.sql` | `3d17d87` |
+| iam-org-membership | **Real**: PUB-1, P-35, I-8 with Postgres + PgBouncer + Valkey + floci. Seeded by `docker/org-membership/seed.sql` | `3d17d87`; re-run at `98cf517` (O&M #47) |
 | "Tenders" API | **Real gincommon**: platform-interop-tests `go-probe http-serve`. Envoy maps `/api/tenders/{id}` to its `/errors/tenders/{id}` (404 `TENDER_NOT_FOUND` problem+json) and `/api/v1/probe/*` to `/whoami`, `/echo` | `platform-interop-tests@93e3481`, `platform-gincommon@98957b8` (v2) |
 | S3, CloudFront (API + S3 data plane), Lambda, Secrets Manager, WAFv2 API, SNS/SQS/Glue | **Emulated**: floci | `floci/floci:2.1.0-compat` |
 | CloudFront Functions execution, custom origins | **Shim** (`docker/edge/server.mjs`). See §6. | node:22-alpine |
@@ -101,7 +101,6 @@ pnpm run stack-down                  # containers, network, volumes and floci's 
 - `stack-up` needs Docker Desktop and permission to bind port 443. On a busy host, use `STACK_HTTPS_PORT=8443 pnpm run stack-up`; every origin then includes the port.
 - The token stays in the environment of the `docker compose build` process. It is never written to a file or printed.
 - Toggles to reproduce issues (scripts/prepare.mjs + `stack-constants.ts`):
-  - `STACK_AUDIENCE_MAPPER=false`: Issue 13.
   - `STACK_PACK_TRACE_REASON=true`: Issue 14.
   - `DEPLOY_SET_CACHE_CONTROL=false`: Issue 15, the deploy as the README literally says.
   - `STACK_ACME_TOKEN_LIFESPAN`, `AUTHZ_ORG_MEMBERSHIP_TIMEOUT`.
@@ -123,22 +122,22 @@ The emulator rows `E-n` are in §6.
 | 2 | Forged `x-tenant-id` … `x-residency-mode` never reach an upstream: gincommon `/whoami` sees acme/alice. `/echo` shows exactly the 7 enriched headers and no `Authorization`. The bypass route shows none | ✅ | ✅ | ✅ |
 | 3 | Deep-link reload: `index.html` via spa-rewrite (`no-cache`), silent `prompt=none` restore, `/assets/*` immutable JS, manifest `no-cache`, `remoteEntry.js` immutable with `sha384` integrity, **remote renders** under the production CSP | ✅ (Issue 1 fixed) | ✅ | ✅ |
 | 4 | The remote calls `/api/tenders/1` through Envoy and renders the gincommon problem+json with its trace id; `x-request-id` echoed; backend spans carry the browser's trace id | ✅ (Issue 2 fixed) | ✅ | ✅ |
-| 5 | `/auth/callback` served by the rewrite, scripts from `/assets` | ✅ | ✅ | ✅ |
+| 5 | `/auth/callback` served by the rewrite, scripts from `/assets` pinned with `integrity` | ✅ | ✅ | ✅ |
 | 6 | P-35 trace id continues through Envoy, ext_authz (authz-enrichment) and org-membership spans | ✅ | ✅ | ✅ |
 | 7 | Gateway 401 shape (jwt_authn) as the SDK parses it | ⚠️ Issue 3 | ⚠️ Issue 3 | ⚠️ Issue 3 |
 | 8 | ext_authz deny (dave) → 403 problem+json, `gatewayDenyCode` = `DENY_UNRESOLVABLE_SUBJECT` | ✅ | ✅ | ✅ |
 | 9 | gincommon problem through Envoy keeps `traceId` and `x-request-id` | ✅ | ✅ | ✅ |
 | 10 | Cold AuthZ cache: first request within the ext_authz budget | ✅/⚠️ Issue 12 (timing) | ✅ | ✅ |
-| 11 | Refresh lineage in one tab: rotation, no reuse error | ✅ | ✅ | ✅ |
+| 11 | Refresh lineage in one tab: rotation, no reuse error (two refreshes of a 60 s token take up to 100 s; the wait is 120 s) | ✅ | ✅ | ✅ |
 | 12 | Refresh cadence with a 60 s token: exactly one refresh (200) in the first 55 s | ✅ (Issue 4 fixed) | ✅ | ✅ |
 | 13 | Two tabs, two refresh lineages in one Keycloak session (`revokeRefreshToken=true`) | ✅ | ✅ | ✅ |
-| 14 | Example offers a sign-out control | ⚠️ Issue 6 | ⚠️ Issue 6 | ⚠️ Issue 6 |
+| 14 | Example offers a sign-out control (`useSignOut`) that signs out of this device | ✅ (Issue 6 fixed) | ✅ | ✅ |
 | 15 | Global logout: end-session with the SDK's exact parameters → back to `/`, "You are signed out", SSO gone | ✅ | ✅ | ✅ |
 | 16 | Shared device: after sign-out, `prompt=login`; bob signs in; P-35 is bob's | ⚠️ Issue 10 | ⚠️ Issue 10 | ⚠️ Issue 10 |
-| 17 | Cross-tab sign-out reaches the open tab | ⚠️ Issue 7 | ⚠️ Issue 7 | ⚠️ Issue 7 |
-| 18 | Real CSP violation → `/csp-report` → Lambda → Collector | ⚠️ E-6 | ⚠️ Issue 11 | ⚠️ Issue 11 |
-| 19 | With the Issue 11 fix: `x-origin-verify` enforced (403 without it), both report formats → `csp.violation` OTLP logs without query strings | ✅ | ✅ | ✅ |
-| 20 | Browser clock 3 min fast, 60 s token | ⚠️ Issue 8 | ⚠️ Issue 8 | ⏭ (Playwright clock hangs WebKit teardown) |
+| 17 | Cross-tab sign-out reaches the open tab: the app is unmounted (not left under the dialog), "You are signed out" shown | ✅ (Issue 7 fixed) | ✅ | ✅ |
+| 18 | Real CSP violation → `/csp-report` → Lambda → Collector | ⚠️ E-6 | ✅ (Issue 11 fixed) | ✅ |
+| 19 | The deployed Lambda: `x-origin-verify` enforced (403 without it), both report formats → `csp.violation` OTLP logs without query strings | ✅ | ✅ | ✅ |
+| 20 | Browser clock 3 min fast, 60 s token: signs in (token times judged on the provider's clock) | ✅ (Issue 8 fixed) | ✅ | ⏭ (Playwright clock hangs WebKit teardown) |
 | 21 | `@gateway` PUB-1 per-IP rate limit: 429 after 20 requests. A viewer-sent `X-Forwarded-For` does not reset the bucket. The bucket refills | ✅ (gateway project, Chromium) | | |
 | 22 | `@gateway` WAF ACL associated, and its rate rule blocks a flood | ⚠️ E-3/E-4 | | |
 | 23 | `@gateway` Keycloak key rotation vs Envoy JWKS cache | ⚠️ Issue 9 | | |
@@ -220,6 +219,8 @@ With `revokeRefreshToken=true` and `refreshTokenMaxReuse=0`, two tabs sharing on
 
 ### Issue 6 — The example shell has no way to sign out
 
+- **Status: fixed.** `/react` has `useSignOut()` (local by default, `{ global: true }` ends the SSO session too), backed by an optional `signOut` the shell gives `PlatformProvider`; the example shell passes `idp.logout` and renders a **Sign out** button. Tests: `test/unit/react` (the hook, and its rejection without a shell), `test/e2e/shell.test.tsx` (the button signs out, clears app storage, tells other tabs), stack test 14.
+
 - **Symptom:** No control calls `IdentityProvider.logout()` (local or `{ global: true }`). Only the trial wrong-workspace dialog has a sign-out button.
 - **Owner:** Example.
 - **Severity:** Medium: the reference integration cannot exercise logout, and the shared-device flow (§C1) is unreachable.
@@ -227,12 +228,16 @@ With `revokeRefreshToken=true` and `refreshTokenMaxReuse=0`, two tabs sharing on
 
 ### Issue 7 — A sign-out in another tab leaves this tab rendering the app
 
+- **Status: fixed** (in the example; the SDK already moved the tab to `anonymous`/`signed-out`). The example shell's session listener now shows the signed-out screen on that state; the next sign-in uses `prompt=login`. Tests: `test/e2e/shell.test.tsx`, stack test 17.
+
 - **Symptom:** The SDK moves the tab to `anonymous` / `signed-out` (BroadcastChannel). The example subscribes only to `expired`, so the workspace stays on screen with no token. Its next API call is a 401 text/plain (Issue 3).
 - **Owner:** Example (or the SDK's `PlatformProvider`).
 - **Severity:** Medium (shared device).
 - **Suggested fix:** In `bootstrap.tsx`, on `anonymous` with reason `signed-out`, unmount the app and `showSignedOut`.
 
 ### Issue 8 — A client clock a few minutes fast makes sign-in fail silently with short tokens
+
+- **Status: fixed.** `/auth` judges ID-token times on the provider's clock: the token comes straight from the token endpoint, so its `iat` is the provider's time at receipt, and the device's offset is taken from it (also for `auth_time` / step-up). Beyond 10 minutes the sign-in fails visibly: `anonymous` with the new reason `device-clock`, an error log with `clock_offset_s`, and the example shell's "Check your device's clock" screen. Tests: `test/unit/auth/oidc.test.ts` (3 min ahead and 9 min behind with 60 s tokens sign in; 20 min off is `device-clock`; step-up on the provider's clock), `test/e2e/shell.test.tsx`, stack test 20.
 
 - **Symptom:** With the browser clock +3 min and a 60 s token, the code exchange succeeds, but the ID token is rejected (`exp + 60 s skew < now`). The user lands back on the identifier screen, with no message (`url=/`, screen "Sign in … Continue"). There was no redirect loop.
 - **Root cause:** `idTokenProblem` compares `exp` and `iat` with the local clock, allowing 60 s. Real laptops drift. The window equals the token lifetime plus 60 s.
@@ -265,6 +270,8 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 - **Suggested fix:** On a sign-out from a shared device, end the SSO session (`logout({ global: true })`, the default for "Sign out" in the example). Or have the SDK send `prompt=login` with `login_hint` cleared and an end-session first.
 
 ### Issue 11 — The `/csp-report` Lambda throws on every invocation in a real Lambda runtime
+
+- **Status: fixed.** `handler(event)` is the Lambda entry point and calls `handle(event, { fetch, env })`; the runtime's `context` can no longer land in `deps`. Tests: `examples/cloudfront/test` (the handler called exactly as the runtime does, `(event, context)`), stack tests 18–19 against the deployed function (the stack's hand-patched second Lambda is gone).
 
 - **Symptom:** Every report → `502` at the distribution.
 - **Evidence:** floci Lambda container log:
@@ -299,6 +306,11 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ### Issue 13 — Access tokens from the realm template have no `aud`, so Envoy's audience check rejects them
 
+- **Status: fixed upstream** (iam-realm-provisioner #48, `e542f0f`, RP-D21; re-checked 2026-11-01). Every public client (`tender-web`, `tender-mobile`) gets an `oidc-audience-mapper` with its own client ID, on access tokens only. It is added at realm creation and converged on the shared `trial` realm at startup; `tender-gateway` gets none. Verified three ways:
+  - **Upstream tests:** the provisioner's Keycloak 26 integration tests, run here against a real Keycloak container, pass. `TestKeycloakAdmin_EnsureSharedRealm_CreatesAndConverges` covers the shared realm and `…_CreateRealmFromTemplate_HardenedWebClient` a dedicated realm, and both assert the client in `aud` of real access tokens.
+  - **Stack:** the stack now adds exactly that mapper to every public client and lists `audiences: [tender-web, tender-mobile]` in Envoy, as RP #48 specifies. Its own workaround toggle (`STACK_AUDIENCE_MAPPER`) is gone.
+  - **E2E test:** test 1 asserts `aud` contains `tender-web` on the access token from the real login.
+
 - **Symptom:** With the template as-is, P-35 returns `403 text/plain ""`.
 - **Evidence:**
   - Envoy debug log: `Jwt authentication completed with: Audiences in Jwt are not allowed`.
@@ -318,6 +330,8 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ### Issue 15 — The deploy steps produce no `Cache-Control` on `/assets` and `/remotes`
 
+- **Status: fixed** (docs). `examples/cloudfront/README.md` gives the deploy as commands with `--cache-control` per prefix (`public, max-age=31536000, immutable` on `/assets` and `/remotes/<name>/<version>`, `no-cache` on the manifest, `runtime.json`, `index.html` and `version.json`, written last), and says why: a cache policy sets the edge TTL, never the viewer's header. `examples/cloudfront/test` pins every upload's header and the order.
+
 - **Symptom:** An object uploaded as `examples/cloudfront/README.md` says (`aws s3 cp`, no metadata) is served without `Cache-Control`.
 - **Evidence:** `GET /assets/readme-literal.js` returned only `content-type: text/javascript`.
 - **Root cause:** The README's behaviours table says "`max-age=31536000, immutable`", but CloudFront cache policies (CachingOptimized) control the *edge* TTL. They never add a `Cache-Control` header to the viewer response. Browsers fall back to heuristic caching, and `no-cache` on `index.html`, `runtime.json` and the manifest is equally absent.
@@ -335,6 +349,14 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ### Issue 17 — PUB-1 returns 500 unless Org & Membership's system pool can read the tables
 
+- **Status: fixed upstream** (iam-org-membership #47, merged as `98cf517`, the same tree as the reviewed `4d2598e`; re-run 2026-11-01).
+  - **The fix:** migration `000007_migrator_grants` grants the BYPASSRLS migrator DML on every table it does not own (`rls_violation_log` read-only, `schema_migrations` none), with default privileges for later tables, and fails loudly rather than skip (MIG-10).
+  - **Local compose:** it now has a separate `postgres` superuser, an RLS-bound app role (`NOSUPERUSER NOBYPASSRLS`; before, the app was the superuser, so RLS never applied locally), migrations and `SYSTEM_DATABASE_URL` as the migrator, and `CATALOG_ADMIN_BASE_URL`.
+
+  Verified two ways:
+  - **Upstream test:** O&M's `TestMigratorGrants_SysPoolRoleNotOwner`, run here, passes. It migrates as another role (this issue's exact case) and checks that PUB-1's `ResolveByIdentifier` and the reconcilers' writes work through the migrator, and that it cannot erase the RLS audit log.
+  - **Stack:** rebuilt from scratch with O&M's new role layout, and the seed's `GRANT` workaround removed. PUB-1 answers 200, and the full suite passes (§7).
+
 - **Symptom:** `GET /api/v1/public/tenants/resolve` → `500 INTERNAL_ERROR` (`*pgconn.PgError`). With `SYSTEM_DATABASE_URL` unset, every resolve is RLS-filtered to `found:false`.
 - **Root cause:** PUB-1 reads through the BYPASSRLS `org_membership_migrator` pool. In the service's own docker-compose, the schema is migrated by `org_membership_app` (`MIGRATION_DATABASE_URL`), so the migrator owns nothing and has no `SELECT`. That compose also omits `SYSTEM_DATABASE_URL` and `CATALOG_ADMIN_BASE_URL`; without the latter, startup panics.
 - **Owner:** IAM service (iam-org-membership deployment config / migrations grants).
@@ -342,6 +364,8 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 - **Suggested fix:** The migration that creates tables should `GRANT SELECT … TO org_membership_migrator`, or migrate as the migrator. Add `SYSTEM_DATABASE_URL` and `CATALOG_ADMIN_BASE_URL` to the local compose. The stack's seed adds the grant.
 
 ### Issue 18 — `loadRemote` logs drop the cause
+
+- **Status: fixed.** Logged errors carry `exception.cause`: the cause chain as "Type: message ← Type: message", three deep, cleaned and redacted like the message, at most 1 KiB. Tests: `test/unit/logging`.
 
 - **Evidence:** The Collector record for Issue 2 has `exception.message` "module ./EditTender failed to evaluate" and nothing about the missing shared module. Diagnosing it needed a patched container global.
 - **Owner:** SDK (`mfe/remote.ts` / logging error serialisation).
@@ -442,6 +466,13 @@ to the identifier screen. The remaining failures are timeouts across a sleep (24
 
 No unexpected failure points to anything other than the documented issues or host sleep. Two consecutive green
 full runs could not be obtained on this host during this session.
+
+After review round 4, with the machine awake and on AC power:
+
+| Run | As expected | Unexpected | Wall time | Note |
+|---|---|---|---|---|
+| 4 (host awake, on AC, review round 4) | 51 | 8 → 3 test defects, fixed | 15.9 min | `/auth/callback` regex predates the HTML `integrity` pin; the one-tab refresh wait (90 s) was shorter than two refreshes of a 60 s token can take; cross-tab sign-out left the previous user's app mounted under the dialog (shell fixed: it unmounts the app) |
+| 5 (the same, after the fixes) | **62** | **0** (1 skipped) | 15.2 min | |
 
 To re-verify, rerun with the machine awake and on AC power:
 

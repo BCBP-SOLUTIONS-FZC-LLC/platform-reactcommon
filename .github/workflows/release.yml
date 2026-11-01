@@ -288,6 +288,7 @@ jobs:
     environment: npm   # protected: required reviewers approve the irreversible publish
     permissions:
       contents: read
+      actions: read         # read the npm environment's protection rules
       packages: write       # npm publish to npm.pkg.github.com with GITHUB_TOKEN
       id-token: write       # build-provenance attestation (Sigstore)
       attestations: write
@@ -298,6 +299,14 @@ jobs:
           ref: ${{ env.RELEASE_REF }}
           persist-credentials: false
           token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      # A job naming an environment that does not exist gets one created, unprotected: never publish
+      # without the approval the environment is there for.
+      - name: The npm environment requires approval
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/check-npm-environment.sh
 
       - name: Install Node (GitHub Packages auth)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

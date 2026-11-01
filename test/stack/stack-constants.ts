@@ -39,10 +39,8 @@ export const STACK = {
   postLogoutRedirectUris: [`${appOrigin}/`],
   /** tenant-acme access tokens live this long (s): short, so the refresh lineage is exercised in a test. */
   acmeAccessTokenLifespan: Number(env('STACK_ACME_TOKEN_LIFESPAN', '60')),
-  /** Envoy jwt_authn audiences; see the report ("access token aud"). */
-  envoyAudiences: env('STACK_ENVOY_AUDIENCES', 'tender-web').split(',').filter(Boolean),
-  /** Whether the realms add tender-web to the access token's aud (the fix for the aud issue). */
-  audienceMapper: env('STACK_AUDIENCE_MAPPER', 'true') === 'true',
+  /** Envoy jwt_authn audiences: the public clients, as iam-realm-provisioner #48 specifies (report Issue 13). */
+  envoyAudiences: env('STACK_ENVOY_AUDIENCES', 'tender-web,tender-mobile').split(',').filter(Boolean),
   /** Envoy: keep the browser's x-request-id (the fix for the request-id issue). */
   preserveExternalRequestId: env('STACK_PRESERVE_REQUEST_ID', 'true') === 'true',
   /** Envoy: do not rewrite the request id's version nibble (the fix for the request-id issue). */

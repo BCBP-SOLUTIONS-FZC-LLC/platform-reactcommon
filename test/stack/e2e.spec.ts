@@ -181,7 +181,8 @@ test.describe('the tenders remote, deep links and the API through Envoy → go-p
     const res = await page.goto('/auth/callback?code=x&state=nope');
     expect(res?.status()).toBe(200);
     const html = await res!.text();
-    expect(html).toMatch(/<script defer src=\/assets\/main\.[0-9a-f]+\.js>/);
+    // Pinned by the preset's ChunkIntegrityPlugin: a tampered main.js from the CDN is refused.
+    expect(html).toMatch(/<script defer src=\/assets\/main\.[0-9a-f]+\.js integrity="sha384-[A-Za-z0-9+/]{64}" crossorigin="anonymous">/);
     // An unknown state is ignored; the shell lands on the identifier screen.
     await expect(page.getByLabel('Company workspace or invitation email')).toBeVisible();
     expect(edgeLog().some((l) => l.url?.startsWith('/auth/callback') && l.rewrittenUri === '/index.html')).toBe(true);
@@ -283,7 +284,8 @@ test.describe('token refresh against Keycloak (rotation, revokeRefreshToken=true
     await signInFromScratch(page, alice, 'acme');
     const first = t.latestTokens();
     expect(first.expires_in).toBe(STACK.acmeAccessTokenLifespan);
-    await eventually(() => t.tokenCalls.filter((c) => c.grant === 'refresh_token').length >= 2, 90_000, 'two refreshes');
+    // Each refresh comes 30–50 s into a 60 s token (Issue 4): two take up to 100 s.
+    await eventually(() => t.tokenCalls.filter((c) => c.grant === 'refresh_token').length >= 2, 120_000, 'two refreshes');
     const refreshes = t.tokenCalls.filter((c) => c.grant === 'refresh_token');
     for (const r of refreshes) expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(new Set(refreshes.map((r) => r.body.refresh_token)).size).toBe(refreshes.length); // rotated every time
@@ -323,11 +325,13 @@ test.describe('token refresh against Keycloak (rotation, revokeRefreshToken=true
 });
 
 test.describe('sign-out and the shared device', () => {
-  test('the example shell offers no way to call logout()', async ({ page }) => {
+  test('the example shell\'s Sign out control signs out of this device (Issue 6, fixed)', async ({ page }) => {
     await signInFromScratch(page, alice, 'acme');
-    const signOut = page.getByRole('button', { name: /sign out|log out/i }).or(page.getByRole('link', { name: /sign out|log out/i }));
-    test.fail((await signOut.count()) === 0, 'Issue 6: the example shell renders no sign-out control; IdentityProvider.logout() is unreachable from its UI');
+    const signOut = page.getByRole('button', { name: 'Sign out' });
     await expect(signOut).toHaveCount(1);
+    await signOut.click();
+    await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible();
+    expect(await page.evaluate((k) => localStorage.getItem(k), SIGNED_OUT_KEY)).not.toBeNull();
   });
 
   test('global logout: Keycloak end-session with the SDK\'s parameters ends SSO and returns to the app', async ({ page }) => {
@@ -373,7 +377,7 @@ test.describe('sign-out and the shared device', () => {
     expect(previousUserShown).toBe(false);
   });
 
-  test('another tab\'s sign-out reaches this tab, but the example keeps rendering the app', async ({ page, context }) => {
+  test('another tab\'s sign-out reaches this tab: the app is unmounted, the signed-out screen shown (Issue 7, fixed)', async ({ page, context }) => {
     await signInFromScratch(page, alice, 'acme');
     const other = await context.newPage();
     await other.goto('/version.json');
@@ -384,14 +388,9 @@ test.describe('sign-out and the shared device', () => {
     }, SIGNED_OUT_KEY);
     await other.close();
     await page.waitForTimeout(1000);
-    const stillRendered = await page.getByRole('heading', { name: 'acme' }).isVisible();
-    test.fail(stillRendered, 'Issue 7: the example subscribes only to `expired`; on a cross-tab sign-out (`anonymous`, signed-out) it keeps the app on screen');
-    if (stillRendered) {
-      // Close the stranded app page first: leaving it open made context teardown hang in Firefox and Chromium.
-      await page.close();
-      throw new Error('Issue 7: the app is still rendered after the cross-tab sign-out');
-    }
+    // Issue 7 (fixed): the example follows a cross-tab sign-out (anonymous, signed-out) off the app.
     await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole('heading', { name: 'acme' })).toHaveCount(0);
   });
 });
 
@@ -408,14 +407,13 @@ test.describe('/csp-report: browser → CloudFront → Lambda (x-origin-verify) 
     const hop = await eventually(() => edgeLog().filter((l) => l.behavior === '/csp-report').slice(before)[0], 60_000, 'a report at /csp-report').catch(() => undefined);
     test.fail(!hop && browserName === 'chromium', 'E-6: Chromium delivers report-to (Reporting API) reports only to endpoints with a valid certificate; the stack\'s is self-signed');
     expect(hop, 'the browser posted a report to /csp-report').toBeDefined();
-    test.fail(hop!.status === 502, 'Issue 11: the Lambda runtime calls handler(event, context): the context lands in the `deps` parameter and every invocation throws (deps.env is undefined)');
-    expect(hop!.status).toBe(204);
+    expect(hop!.status).toBe(204); // Issue 11 (fixed): the runtime's handler(event, context) no longer throws
     const log = await eventually(() => logRecords().find((r) => r.service === 'csp-report' && (r.attributes['csp.blocked_uri'] ?? '').includes(marker)), 60_000, `csp.violation for ${marker}`);
     expect(log.attributes['csp.blocked_uri']).toBe(`https://blocked.example.org/${marker}.png`);
   });
 
-  test('with the Issue 11 fix: x-origin-verify is enforced, both report formats become OTLP logs', async ({ request }) => {
-    const host = (JSON.parse(readFileSync(join(STATE, 'cloudfront/lambda-fixed.json'), 'utf8')) as { cspReportFixedHost: string }).cspReportFixedHost;
+  test('the deployed Lambda: x-origin-verify is enforced, both report formats become OTLP logs', async ({ request }) => {
+    const host = (JSON.parse(readFileSync(join(STATE, 'cloudfront/lambda.json'), 'utf8')) as { cspReportHost: string }).cspReportHost;
     const secret = readFileSync(join(STATE, 'origin-verify.secret'), 'utf8').trim();
     const url = `http://127.0.0.1:${STACK.ports.floci}/`;
     const marker = `fixed-${Date.now()}`;
@@ -453,7 +451,7 @@ test.describe('clock skew', () => {
     const screen = (await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 160);
     test.info().annotations.push({ type: 'observation', description: `url=${page.url()} screen="${screen}"` });
     test.info().annotations.push({ type: 'observation', description: `${t.authorize.length} authorize redirects, ${exchanges} code exchanges in 8 s; signed in: ${signedIn}` });
-    test.fail(!signedIn, `Issue 8: ID token rejected ("exp": 60 s token + 60 s skew < 3 min); ${t.authorize.length} authorize redirects in 8 s`);
+    // Issue 8 (fixed): token times are judged on the provider's clock, so 3 minutes off still signs in.
     expect(signedIn).toBe(true);
   });
 });
