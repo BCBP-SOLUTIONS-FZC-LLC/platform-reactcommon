@@ -12,7 +12,7 @@
 #
 # Parallel flow:
 #
-#   validate-test ──────┬──► interop, browser (Playwright: Chromium, Firefox, WebKit)
+#   validate-test ──────┬──► interop, browser (Playwright: Chromium, Firefox, WebKit), react-floor (React 19.0.0)
 #   package ────────────┼──► trivy ──────┐
 #                       └──► smoke ──────┤──► pr-summary (PR events only)
 #   validate-quality ────────────────────┤
@@ -237,6 +237,27 @@ jobs:
           path: playwright-report/
           retention-days: 14
 
+  # ── React floor: the lowest React the peer range (^19.0.0) allows ───────
+  # Everything else runs the lockfile's newest 19.x; this forces react / react-dom / @types 19.0.0 and
+  # runs typecheck, the unit suite, the build and the example checks (VERSIONING.md, "Supported versions").
+  react-floor:
+    name: React floor (19.0.0)
+    runs-on: ubuntu-latest
+    needs: validate-test
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: React 19.0.0
+        run: pnpm run test-react-floor
+
   # ── cross-language compatibility (platform-interop-tests) ─────────────────
   interop:
     name: Cross-language compatibility
@@ -254,7 +275,7 @@ jobs:
   pr-summary:
     name: PR summary
     runs-on: ubuntu-latest
-    needs: [validate-test, validate-quality, validate-contracts, package, trivy, smoke, browser, interop]
+    needs: [validate-test, validate-quality, validate-contracts, package, trivy, smoke, browser, react-floor, interop]
     # always(): post the result on failure too, so an earlier "ready to merge" comment is
     # replaced instead of left standing after a failing push.
     if: always() && github.event_name == 'pull_request'

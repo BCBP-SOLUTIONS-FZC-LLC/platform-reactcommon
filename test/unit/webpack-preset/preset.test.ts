@@ -46,9 +46,10 @@ describe('platformShared', () => {
     const otel = parseRange(platformShared['@opentelemetry/api']!.requiredVersion);
     expect(['1.10.0', '1.10.9'].map((v) => satisfy(otel, v))).toEqual([true, true]);
     expect(['1.9.0', '1.11.0'].map((v) => satisfy(otel, v))).toEqual([false, false]);
-    expect(satisfy(parseRange(platformShared.react!.requiredVersion), reactVersion)).toBe(true);
-    expect(satisfy(parseRange(platformShared.react!.requiredVersion), '18.3.1')).toBe(true);
-    expect(satisfy(parseRange(platformShared.react!.requiredVersion), '17.0.2')).toBe(false);
+    // React 19 only (VERSIONING.md, "Supported versions"): every 19.x, from the floor CI tests, never 18.
+    const react = parseRange(platformShared.react!.requiredVersion);
+    expect([reactVersion, '19.0.0', '19.9.9'].map((v) => satisfy(react, v))).toEqual([true, true, true]);
+    expect(['18.3.1', '17.0.2', '20.0.0', '19.0.0-rc.1'].map((v) => satisfy(react, v))).toEqual([false, false, false, false]);
   });
 
   it('the SDK share range accepts the alpha pre-releases and later 1.x, never 2.x', () => {
@@ -265,6 +266,46 @@ describe('a real build', () => {
     writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@bcbp-solutions-fzc-llc/frontend-sdk', version: SDK_VERSION, type: 'module', sideEffects: true, exports }));
     for (const s of subpaths) writeFileSync(join(pkgDir, `${s}.js`), `(globalThis.__sdkEvaluated ??= []).push('${s}');\nexport const subpath = '${s}';\n`);
   }
+
+  it('share negotiation: a remote refuses a shell on React 18 and runs on the shell\'s React 19, whatever its own fallback', async () => {
+    // React 19 only: the remote bundles its own React as a fallback and registers it in the share scope,
+    // but the shell's React is already loaded, so that one is checked against ^19.0.0. Under the old
+    // ^18.3.0 || ^19.0.0 a remote built on 19 ran on a shell's 18 and failed inside the page.
+    writeFileSync(join(dir, 'UsesReact.js'), "import { version } from 'react';\nexport default () => version;\n");
+    writeFileSync(join(dir, 'react-remote.js'), '// remote entry\n');
+    const out = join(dir, 'react-remote-dist');
+    const preset = platformWebpackConfig({ role: 'remote', name: 'react-remote', exposes: { './UsesReact': './UsesReact.js' }, mode: 'development' });
+    await compile({
+      ...preset,
+      target: 'node',
+      devtool: false,
+      context: dir,
+      entry: { main: './react-remote.js' },
+      output: { ...preset.output, path: out },
+      resolve: { modules: [join(import.meta.dirname, '../../../node_modules'), 'node_modules'] },
+    });
+    const load = () =>
+      new Function('require', '__dirname', `${readFileSync(join(out, 'remoteEntry.js'), 'utf8')}\nreturn react_remote;`)(createRequire(join(out, 'remoteEntry.js')), out) as {
+        init(scope: unknown): Promise<void> | void;
+        get(m: string): Promise<() => { default: () => string }>;
+      };
+    /** The shell's share scope: its React, already loaded (the shell rendered before loading remotes). */
+    const shell = (version: string) => ({
+      react: { [version]: { get: () => () => ({ version }), loaded: 1, from: 'shell' } },
+      'react/jsx-runtime': { [version]: { get: () => () => ({}), loaded: 1, from: 'shell' } },
+    });
+
+    for (const version of ['19.0.0', reactVersion]) {
+      const remote = load();
+      await remote.init(shell(version));
+      expect((await remote.get('./UsesReact'))().default(), `shell on React ${version}`).toBe(version);
+    }
+    const refused = load();
+    await refused.init(shell('18.3.1'));
+    await expect(Promise.resolve().then(() => refused.get('./UsesReact')).then((f) => f().default())).rejects.toThrow(
+      'Unsatisfied version 18.3.1 from shell of shared singleton module react (required ^19.0.0)',
+    );
+  });
 
   it('a shell builds with the same shared map', async () => {
     fakeSdk(dir);

@@ -22,6 +22,7 @@ const rows = [
   ['Trivy (dependencies · secrets · config)', 'trivy'],
   ['Smoke tests (packed tarballs)', 'smoke'],
   ['Browser tests (Chromium · Firefox · WebKit)', 'browser'],
+  ['React floor (19.0.0): types · unit tests · build', 'react-floor'],
   ['Cross-language compatibility', 'interop'],
 ];
 

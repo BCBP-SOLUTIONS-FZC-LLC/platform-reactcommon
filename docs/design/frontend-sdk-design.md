@@ -98,7 +98,7 @@ platform-reactcommon/
 
 Build: `tsup`/`rollup` to ESM + `.d.ts`, `"sideEffects": false`. `exports` map has one entry per
 subpath and no root barrel export (`"."` throws a helpful type error), so subpaths stay
-tree-shakeable. Peer deps: `react`, `react-dom` (^18 || ^19), `@opentelemetry/api` (^1).
+tree-shakeable. Peer deps: `react`, `react-dom` (^19: one React major, VERSIONING.md "Supported React versions"), `@opentelemetry/api` (~1.10).
 Direct deps: `@opentelemetry/sdk-trace` (OTel JS 3; `sdk-trace-web`/`-base` 2.x are deprecated), `exporter-*-otlp-http`, `sdk-logs`, `sdk-metrics`,
 `web-vitals`, `zod`, `dompurify`. Telemetry goes over OTLP/HTTP directly. There is no Faro SDK
 (one pipeline). The `/otel` path may point at a Faro receiver or a plain collector.
@@ -1139,12 +1139,12 @@ except `getConfig()`, which remotes call through `tryGetConfig()`.
 ```ts
 // shared — identical in shell and every remote; generated from the preset's own package.json pins
 export const platformShared = {
-  react:                     { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
+  react:                     { singleton: true, strictVersion: true, requiredVersion: '^19.0.0' },
   // the JSX runtimes and react-dom/client too: a remote's JSX must come from the shell's React
-  'react/jsx-runtime':       { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
-  'react/jsx-dev-runtime':   { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
-  'react-dom':               { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
-  'react-dom/client':        { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
+  'react/jsx-runtime':       { singleton: true, strictVersion: true, requiredVersion: '^19.0.0' },
+  'react/jsx-dev-runtime':   { singleton: true, strictVersion: true, requiredVersion: '^19.0.0' },
+  'react-dom':               { singleton: true, strictVersion: true, requiredVersion: '^19.0.0' },
+  'react-dom/client':        { singleton: true, strictVersion: true, requiredVersion: '^19.0.0' },
   '@opentelemetry/api':      { singleton: true, strictVersion: true, requiredVersion: '~1.10.0' }, // OTel JS 3 needs >=1.10 <1.11
   '@bcbp-solutions-fzc-llc/frontend-sdk':  { singleton: true, strictVersion: true, requiredVersion: '^1.0.0-0' },
   // subpaths share the same instance: MF keys by request, so each used subpath is listed

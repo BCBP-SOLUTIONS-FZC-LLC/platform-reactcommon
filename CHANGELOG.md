@@ -149,6 +149,8 @@ Fixed before the first release, after a security and production-readiness review
 
 ### Changed
 
+- **Breaking: React 19 only.** The peer range and the Module Federation shared range for `react` / `react-dom` are `^19.0.0` (was `^18.3.0 || ^19.0.0`). A page runs one React, the shell's, so a range spanning two majors let a remote built on one major run on a shell of the other and fail inside the page; now such a remote is refused at share negotiation. Nothing ran on React 18 (the reference shell and remote already used React 19 form actions). The new CI job `react-floor` (`pnpm run test-react-floor`) runs the typecheck, the unit suite, the build and the example checks on React 19.0.0; the policy for the next major is in VERSIONING.md, *Supported React versions*.
+
 - **Breaking:** the packages are renamed from `@platform/*` to `@bcbp-solutions-fzc-llc/frontend-sdk`, `/webpack-preset` and `/eslint-plugin` (and the ESLint rules from `@platform/<rule>` to `@bcbp-solutions-fzc-llc/<rule>`). GitHub Packages requires the organisation's scope, and the `platform` scope on npmjs.com belongs to a third party, so any install that resolved `@platform/*` from the public registry could have received someone else's code. Imports, the shared-module keys, ESLint configs and SDK-owned storage keys change with the name.
 
 - `@bcbp-solutions-fzc-llc/webpack-preset`: a remote requires `^<the SDK version it was built against>` (`sharedFor('remote')`); the shell keeps `^1.0.0-0`. A shell with an older SDK refuses the remote inside its `RemoteBoundary` instead of failing on a missing export. `react/jsx-runtime`, `react/jsx-dev-runtime` and `react-dom/client` are shared like `react`.

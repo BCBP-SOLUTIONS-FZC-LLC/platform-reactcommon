@@ -210,7 +210,7 @@ L2  tracing · logging · metrics     L5  react · testing
 
 ### 1. Prerequisites
 
-- **Toolchain:** React 18.3+ or 19, webpack 5 with Module Federation, Node ≥ 22 for builds.
+- **Toolchain:** React 19 (`^19.0.0`; one React major for the shell and every remote, see [VERSIONING.md](VERSIONING.md#supported-react-versions)), webpack 5 with Module Federation, Node ≥ 22 for builds.
 - **Packages:** `@bcbp-solutions-fzc-llc/frontend-sdk`, plus `@bcbp-solutions-fzc-llc/webpack-preset` and `@bcbp-solutions-fzc-llc/eslint-plugin` as dev dependencies. They're published to GitHub Packages: map the scope in `.npmrc` and authenticate with a `read:packages` token ([VERSIONING.md](VERSIONING.md#consume-a-release)).
 - **Hosting:** the app is served behind the platform's CloudFront distribution: same-origin `/api`, `/otel`, `/config/runtime.json`, `/remotes/`, and the response headers of [`examples/cloudfront`](examples/cloudfront/README.md) (the CSP with the three Trusted Types policies).
 
@@ -387,6 +387,7 @@ The same task names as platform-gincommon's Makefile, as `package.json` scripts.
 | `test-cover` | `make test-cover` | Tests with coverage (`coverage/`) |
 | `test-smoke` | `make test-smoke` | `test/smoke`: the example builds served as CloudFront serves them (after `pnpm build`), or a deployed shell with `SMOKE_BASE_URL` |
 | `test-browser` | (none) | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP (`test-browser-install` installs the browsers once) |
+| `test-react-floor` | (none) | The typecheck, unit suite, build and example checks on React 19.0.0, the floor of the peer range (CI job `react-floor`); restores the lockfile afterwards |
 | `test-stack` | `stack-up` | `test/stack`: the example shell in the three browsers against Keycloak, Envoy with the real IAM services, the distribution on floci and an OTel Collector (`stack-up` / `stack-down` start and remove it) |
 | `test-smoke-package` | `make test-smoke-image` | Build, pack the tarballs and run CI's tarball smoke tests against them (needs npm registry access) |
 | `build` | `make build` | Packages, then the example builds |

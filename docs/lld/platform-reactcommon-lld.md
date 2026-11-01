@@ -7,7 +7,7 @@
 | Packages | `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin` (one version, changesets `fixed`) |
 | Version | `1.0.0-alpha.N` (pre-release until the first end-to-end environment) |
 | Runtime | Evergreen browsers (ES2022, Trusted Types where supported); build tooling on Node ≥ 22 |
-| Peers | `react` / `react-dom` `^18.3.0 \|\| ^19.0.0`, `@opentelemetry/api` `~1.10.0`, `webpack` `^5.100.0`, `eslint` `^9 \|\| ^10` |
+| Peers | `react` / `react-dom` `^19.0.0` (one major; floor tested in CI), `@opentelemetry/api` `~1.10.0`, `webpack` `^5.100.0`, `eslint` `^9 \|\| ^10` |
 | Design record | [`docs/design/frontend-sdk-design.md`](../design/frontend-sdk-design.md) (decisions, public API per subpath, contracts, backend changes) |
 | Architecture | [`ARCHITECTURE.md`](../../ARCHITECTURE.md) (diagrams, invariants, threat model) |
 

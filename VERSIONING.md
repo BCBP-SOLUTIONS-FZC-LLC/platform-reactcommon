@@ -36,7 +36,19 @@ Import **subpaths** only (`@bcbp-solutions-fzc-llc/frontend-sdk/http`). The root
 The shell provides the SDK to every remote as a **strict singleton** shared under `^<MAJOR>.0.0-0` (`@bcbp-solutions-fzc-llc/webpack-preset`). So:
 - **Across majors:** a remote built for another major fails share negotiation. The failure stays in its `RemoteBoundary`, never breaking the shell. A MAJOR therefore means rebuilding the shell and every remote together.
 - **Within a major:** remotes run against **the shell's** SDK version. A remote requires `^<the SDK version it was built against>` (`sharedFor('remote')`), so a remote built on `1.4.0` is refused by a shell on `1.3.x`: the failure stays in its `RemoteBoundary` at share negotiation, never a missing export at run time. Rules: **upgrade the shell first**, then the remotes; **roll the shell back** only to an SDK at or above the newest one any deployed remote was built against.
-- **React and the OTel API** are shared the same way, with the ranges in `platformShared` (`react`/`react-dom` `^18.3.0 || ^19.0.0`, `@opentelemetry/api` `~1.10.0`). Narrowing any of them is a MAJOR.
+- **React and the OTel API** are shared the same way, with the ranges in `platformShared` (`react`/`react-dom` `^19.0.0`, `@opentelemetry/api` `~1.10.0`). Narrowing any of them is a MAJOR.
+
+### Supported React versions
+
+**One React major: React 19** (`^19.0.0`, peer and shared range alike).
+
+- **Why one major.** A page runs exactly one React: the shell's, shared to every remote as a strict singleton. A range spanning two majors would let a remote built and tested on one major run on a shell of the other, where it fails inside the page: React 19 removed `ReactDOM.render`, string refs, legacy context and `defaultProps` on function components, and form actions, `use()` and ref-as-a-prop don't exist in React 18. With one major, a remote on the wrong major is refused at share negotiation and shows its `RemoteBoundary` fallback (`reason=incompatible`).
+- **Tested at both ends.** CI runs everything on the lockfile's newest 19.x, and the `react-floor` job reruns the typecheck, the unit suite, the build and the example checks on **React 19.0.0** and `@types/react` 19.0.0 (`pnpm run test-react-floor`). The floor of the range is a tested claim.
+- **Moving to a new major (policy).** Support the next major alongside the current one only for a stated, dated window:
+  1. A minor release widens the range to both majors. Remotes build and test against both (the floor job gains a leg for each).
+  2. The shell upgrades once every deployed remote passes on the new major.
+  3. A MAJOR release narrows the range to the new major and drops the old one.
+- **History.** Until `1.0.0-alpha.1` the range was `^18.3.0 || ^19.0.0`, but nothing ran on React 18, and the reference shell and remote already needed 19 (form actions). It was narrowed during the alpha, when narrowing costs nothing: no frontend is deployed, and the only one in development is on 19.
 
 ### Guarantees
 
@@ -173,7 +185,7 @@ From then on, releases follow plain SemVer.
 
 | platform-reactcommon | React / react-dom | `@opentelemetry/api` | webpack | ESLint | Node (build) | TypeScript (types built with) |
 |--------------------|-------------------|----------------------|---------|--------|--------------|-------------------------------|
-| `1.0.0-alpha.N` | `^18.3.0 \|\| ^19.0.0` | `~1.10.0` (OTel JS 3) | `^5.100.0` | `^9 \|\| ^10` | `≥ 22` | `6.0` |
+| `1.0.0-alpha.N` | `^19.0.0` (tested at 19.0.0 and the newest 19.x) | `~1.10.0` (OTel JS 3) | `^5.100.0` | `^9 \|\| ^10` | `≥ 22` | `6.0` |
 
 The SDK targets evergreen browsers (ES2022), with Trusted Types where the browser supports them.
 
