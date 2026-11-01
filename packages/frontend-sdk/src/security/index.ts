@@ -91,7 +91,7 @@ function remoteOrigins(): readonly string[] {
 
 /**
  * Shell only, first thing in the bootstrap: creates the 'platform-sdk' Trusted Types policy the
- * CSP allows (`trusted-types platform-sdk platform-webpack dompurify`). Its HTML is sanitised as
+ * CSP allows (`trusted-types platform-sdk platform-webpack dompurify 'allow-duplicates'`). Its HTML is sanitised as
  * sanitizeHtml does; its script URLs must be same-origin or a configured remote origin; it never
  * creates scripts from strings. Idempotent; a no-op where the browser has no Trusted Types.
  */

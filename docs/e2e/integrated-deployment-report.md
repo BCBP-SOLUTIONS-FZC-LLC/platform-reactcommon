@@ -8,7 +8,7 @@ only once these parts ran together. Unit, integration, smoke and the single-orig
 
 - Stack: `docker-compose.yml` (compose project `reactcommon-e2e`)
 - Suite: `test/stack/e2e.spec.ts`, config `test/stack/playwright.config.ts`
-- Run date: 2026-10-31. Repository: `test/layout` at `5c9645e` (plus this change).
+- Run date: 2026-10-31. Repository: `test/layout` at `5c9645e` (plus this change). Re-run on 2026-11-01 with the fixes for Issues 1 and 2 (status lines below).
 
 ## 1. Environment
 
@@ -121,8 +121,8 @@ The emulator rows `E-n` are in §6.
 |---|---|---|---|---|
 | 1 | Anonymous → PUB-1 (Envoy bypass → org-membership) → Keycloak login form, PKCE S256 → callback → `/t/acme/`. P-35 with JWT, enriched by AuthZ Enrichment. Envoy log shows the upstream `x-tenant-id`/`x-user-id` | ✅ | ✅ | ✅ |
 | 2 | Forged `x-tenant-id` … `x-residency-mode` never reach an upstream: gincommon `/whoami` sees acme/alice. `/echo` shows exactly the 7 enriched headers and no `Authorization`. The bypass route shows none | ✅ | ✅ | ✅ |
-| 3 | Deep-link reload: `index.html` via spa-rewrite (`no-cache`), silent `prompt=none` restore, `/assets/*` immutable JS, manifest `no-cache`, `remoteEntry.js` immutable with `sha384` integrity, **remote renders** | ⚠️ Issue 1 | ⚠️ Issue 1 | ✅* |
-| 4 | Remote with the Issue 1 fix (TT `'allow-duplicates'`, applied through a shim test hook) → problem+json shown, ids and logs correlated | ⚠️ Issue 2 | ⚠️ Issue 2 | ⚠️ Issue 2 |
+| 3 | Deep-link reload: `index.html` via spa-rewrite (`no-cache`), silent `prompt=none` restore, `/assets/*` immutable JS, manifest `no-cache`, `remoteEntry.js` immutable with `sha384` integrity, **remote renders** under the production CSP | ✅ (Issue 1 fixed) | ✅ | ✅ |
+| 4 | The remote calls `/api/tenders/1` through Envoy and renders the gincommon problem+json with its trace id; `x-request-id` echoed; backend spans carry the browser's trace id | ✅ (Issue 2 fixed) | ✅ | ✅ |
 | 5 | `/auth/callback` served by the rewrite, scripts from `/assets` | ✅ | ✅ | ✅ |
 | 6 | P-35 trace id continues through Envoy, ext_authz (authz-enrichment) and org-membership spans | ✅ | ✅ | ✅ |
 | 7 | Gateway 401 shape (jwt_authn) as the SDK parses it | ⚠️ Issue 3 | ⚠️ Issue 3 | ⚠️ Issue 3 |
@@ -143,7 +143,7 @@ The emulator rows `E-n` are in §6.
 | 22 | `@gateway` WAF ACL associated, and its rate rule blocks a flood | ⚠️ E-3/E-4 | | |
 | 23 | `@gateway` Keycloak key rotation vs Envoy JWKS cache | ⚠️ Issue 9 | | |
 
-All three engines enforce Trusted Types (Chromium 156, Firefox 157, WebKit 27.2), so Issue 1 shows in each.
+All three engines enforce Trusted Types (Chromium 156, Firefox 157, WebKit 27.2), so Issue 1 showed in each until it was fixed.
 
 **Two full runs** (`pnpm run test-stack`, all four projects, serial): see §7 for the numbers.
 
@@ -158,6 +158,8 @@ Severity scale:
 
 ### Issue 1 — A remote cannot load under the production CSP: duplicate Trusted Types policy `platform-webpack`
 
+- **Status: fixed.** The CSP's `trusted-types` directive carries `'allow-duplicates'` (`examples/cloudfront/csp.mjs`, `response-headers-policy.json`, design doc §C3). One policy name for every app keeps the CSP independent of which remotes exist; names outside the list are still refused. Tests: `test/browser/csp.spec.ts` (a second `platform-webpack` is created in all three engines with no violation; an unlisted name is still refused and reported), `examples/cloudfront/test`, and stack tests 3–4.
+
 - **Symptom:** Every `RemoteBoundary` shows "Something went wrong."
 - **Evidence:** Chromium console:
   > Creating a TrustedTypePolicy named 'platform-webpack' violates the following Content Security Policy directive because a TrustedTypePolicy with that name already exists and the directive does not contain 'allow-duplicates': "trusted-types platform-sdk platform-webpack dompurify".
@@ -169,6 +171,8 @@ Severity scale:
 - **Suggested fix:** Give remotes their own policy name, e.g. `platform-webpack-<remote>`, and generate the CSP `trusted-types` list from the manifest. Or add `'allow-duplicates'` to the CSP (simplest; the suite's fix variant shows it gets past this step). Add a real-browser test that loads one remote under `securitypolicy()`.
 
 ### Issue 2 — The shell's share scope does not provide the SDK subpaths it never imports
+
+- **Status: fixed.** `platformWebpackConfig({ role: 'shell' })` adds `ProvideSdkPlugin`, which provides every shared SDK subpath (all but `/testing`), resolved as the shell's own imports are and registered lazily (`eager: false`: nothing loads until a remote uses it). Tests: `test/unit/webpack-preset` (a shell importing only `/logging` registers all 16 subpaths without evaluating any, and a remote using `/problem` gets the shell's copy; a shell that cannot resolve the SDK fails its build), `pnpm examples:check` (the built shell registers every subpath at the SDK version; it reported exactly `problem, storage, nav` before the fix), and stack test 4.
 
 - **Symptom:** With Issue 1 fixed, the remote still fails: "module ./EditTender failed to evaluate".
 - **Evidence:** The factory throws:
@@ -342,6 +346,15 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 - **Severity:** Low.
 - **Suggested fix:** Serialise `error.cause` (`exception.cause.*`, sanitised) in `getLogger().error`.
 
+### Issue 19 — An aborted refresh hijacks the user's navigation (found once remotes loaded)
+
+- **Symptom:** In a signed-in tab, a full navigation (a link, a typed URL, a reload of a deep link) sometimes lands back on the page being left (`/t/acme/`) after a `prompt=none` round trip, instead of on the new URL. Seen in WebKit (1 of 6 repeated runs of stack test 4) and in Firefox (twice in one full run, tests 3 and 4).
+- **Evidence (Playwright trace):** four `refresh_token` grants in 400 ms after sign-in (Issue 4). One is in flight when the navigation to `/t/acme/tenders/1/edit` starts; WebKit aborts it (status −1) together with the navigation's own request; 14 ms later the **old** page navigates to `…/openid-connect/auth?prompt=none` with the old URL as its return URL.
+- **Root cause:** `doRefresh()` (`auth/oidc.ts`) treats a rejected token `fetch` as an ambiguous outcome (the token may have rotated), drops the tokens and calls `restoreLineage()` at once, which `location.assign`s the IdP. A fetch aborted because the page is navigating away looks the same as a network failure, and the SDK's redirect replaces the user's navigation.
+- **Owner:** SDK (`/auth`).
+- **Severity:** Medium: wrong page after a navigation, intermittent; Issue 4's refresh storm widens the window.
+- **Suggested fix:** Defer the restore by a macrotask or two (or until the next visibility/online check): when the page is unloading, the timer never runs; otherwise restore as now. Fixing Issue 4 also narrows the window. The stack tests record it (`gotoDeepLink` annotates "Issue 19" and loads the URL again) rather than fail on it.
+
 ### Observations (no issue raised)
 
 - **Issuer and hostname:** With `KC_HOSTNAME=https://auth.localtest.me` and `KC_PROXY_HEADERS=xforwarded`, the issuer is identical for the browser, the `iss` callback parameter (RFC 9207, checked by the SDK) and Envoy. Envoy fetches JWKS from the internal `http://keycloak:8080` URL, and the issuer still matches.
@@ -357,7 +370,7 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ## 5. What could not be run, and why
 
-- **Remote → API → problem rendered by the remote**, and **SDK-sent API spans/logs from inside a remote**: blocked by Issues 1 and 2 in every engine. The HTTP-level equivalent (test 9) and the ext_authz deny parse (test 8) cover the gateway side.
+- **SDK-sent spans and logs from inside a remote:** the example CMP grants only `essential`, and the boundary logs an API error as a warning, which needs telemetry consent. So no browser record reaches the Collector for test 4; correlation is shown through the backend spans and `x-request-id`.
 - **Chromium's Reporting API delivery** (`report-to`): no report reached `/csp-report` in 2 min, even with `--ignore-certificate-errors` (E-6, self-signed endpoint). Firefox and WebKit (`report-uri`) did deliver.
 - **WAF enforcement**, **CloudFront compression and edge caching** (TTLs, `x-cache`), real **OAC**/S3 403 semantics, **HTTP/2/3**, and **CloudFront's exact origin header set**: emulator limitations (§6). The shim approximates the documented header behaviour.
 - **MFA enrolment** for trial users (`requires-mfa`), the trial wrong-workspace path (invitation email), trial → paid conversion: these need the realm provisioner, notification and billing services, which were not deployed.
@@ -388,9 +401,8 @@ floci *did* reproduce:
 - Secrets Manager.
 - The IAM services' SNS/SQS/Glue topology.
 
-The shim (`docker/edge/server.mjs`, about 200 lines) has one test-only hook. When the request carries cookie
-`e2e-csp-fix=tt-allow-duplicates`, it appends `'allow-duplicates'` to the CSP, so the Issue 1 fix can be tried
-without redeploying the policy. It never caches, compresses or enforces WAF.
+The shim (`docker/edge/server.mjs`, about 200 lines) has no test hooks (the cookie that tried the Issue 1 CSP
+fix is gone with the fix). It never caches, compresses or enforces WAF.
 
 ## 7. Runs
 

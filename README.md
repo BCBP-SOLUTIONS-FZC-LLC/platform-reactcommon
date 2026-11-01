@@ -95,7 +95,7 @@ The 17 subpaths fall into seven functional areas, each with its own page in [`do
 | `/mfe` | `loadManifest`, `loadRemote`, `RemoteDisabledError`, `RemoteLoadError`, `isChunkLoadError`, `reloadOnceForChunkError`, `startVersionPolling`, `subscribeAppUpdate` |
 | `/flags` | `getFlag`, `setFlagProvider`, `runtimeConfigFlagProvider`, `sessionContextFlagProvider`, `isRemoteKilled` |
 | `/nav` | `navigate(appId, path)`, `registerNavigator`, `isSafeRedirect` |
-| `@platform/webpack-preset` | `platformWebpackConfig({ role, name, exposes, mode })`, `platformShared`, `sharedFor(role)`, `containerName(remote)` |
+| `@platform/webpack-preset` | `platformWebpackConfig({ role, name, exposes, mode })`, `platformShared`, `sharedFor(role)`, `containerName(remote)`, `ProvideSdkPlugin` (added to the shell: every SDK subpath in the share scope) |
 
 ### UI support — `/i18n`, `/security`
 

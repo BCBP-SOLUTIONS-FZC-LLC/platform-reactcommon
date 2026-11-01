@@ -7,7 +7,7 @@
  * @packageDocumentation
  */
 import { createRequire } from 'node:module';
-import webpack, { type Configuration } from 'webpack';
+import webpack, { type Compiler, type Configuration } from 'webpack';
 import { SDK_PACKAGE, SDK_SHARE_RANGE, SDK_SUBPATHS, SDK_VERSION } from './generated/sdk.ts';
 
 /** A Module Federation shared entry (the subset the platform uses). */
@@ -76,6 +76,42 @@ export function sharedFor(role: 'shell' | 'remote'): Record<string, SharedConfig
   ) as Record<string, SharedConfig>;
 }
 
+/** The SDK subpaths in the shared map: the share keys a remote may consume from the shell. */
+const SHARED_SDK_SUBPATHS = SDK_SUBPATHS.filter((s) => !NOT_SHARED.has(s)).map((s) => `${SDK_PACKAGE}/${s}`);
+
+/**
+ * Makes the shell provide every shared SDK subpath, not only those its own code imports. Webpack provides a
+ * shared package request only when the bundle imports it, and a remote's SDK has `import: false` (no
+ * fallback): a remote using a subpath the shell never imports (say /problem) would fail at runtime with
+ * "Shared module … doesn't exist in shared scope". Each subpath is resolved as the shell's own imports are
+ * (from its context, ESM conditions, so the same file and one SDK instance) and provided lazily (eager:
+ * false): a subpath no one uses is registered in the share scope but never loaded.
+ */
+export class ProvideSdkPlugin {
+  apply(compiler: Compiler): void {
+    let applied = false;
+    compiler.hooks.beforeCompile.tapPromise(ProvideSdkPlugin.name, async () => {
+      if (applied) return;
+      applied = true;
+      const resolver = compiler.resolverFactory.get('normal', { dependencyType: 'esm' });
+      const provides: Record<string, { shareKey: string; version: string; eager: false }> = {};
+      for (const request of SHARED_SDK_SUBPATHS) {
+        const { path, version } = await new Promise<{ path: string; version: string | undefined }>((resolve, reject) =>
+          resolver.resolve({}, compiler.context, request, {}, (err, result, data) => {
+            if (err || typeof result !== 'string') {
+              return reject(new Error(`the shell cannot resolve ${request} from ${compiler.context}: it must depend on ${SDK_PACKAGE} (${err?.message ?? 'not found'})`));
+            }
+            resolve({ path: result, version: (data?.descriptionFileData as { version?: string } | undefined)?.version });
+          }),
+        );
+        if (!version) throw new Error(`${request} resolved to ${path}, which has no package.json version`);
+        provides[path] = { shareKey: request, version, eager: false };
+      }
+      new webpack.sharing.ProvideSharedPlugin({ provides }).apply(compiler);
+    });
+  }
+}
+
 const NAME = /^[a-z][a-z0-9_-]{0,62}$/;
 
 /**
@@ -100,7 +136,8 @@ export interface PresetOptions {
 
 /**
  * The platform's webpack settings for a shell or remote, to merge into the app's own config (the app adds
- * entry, loaders and dev server). Adds the ModuleFederationPlugin with sharedFor(role).
+ * entry, loaders and dev server). Adds the ModuleFederationPlugin with sharedFor(role), and for the shell
+ * the ProvideSdkPlugin (every SDK subpath in the share scope).
  */
 export function platformWebpackConfig(o: PresetOptions): Configuration {
   if (o.role !== 'shell' && o.role !== 'remote') throw new TypeError(`role must be 'shell' or 'remote', got ${JSON.stringify(o.role)}`);
@@ -132,7 +169,9 @@ export function platformWebpackConfig(o: PresetOptions): Configuration {
       filename: shell ? `assets/${js}` : js,
       chunkFilename: shell ? `assets/${js}` : js,
       assetModuleFilename: prod ? 'assets/[name].[contenthash][ext]' : 'assets/[name][ext]',
-      // require-trusted-types-for 'script': webpack's script URLs go through this policy.
+      // require-trusted-types-for 'script': webpack's script URLs go through this policy. The shell's
+      // runtime and every remote's create it under the same name, so the CSP's trusted-types directive
+      // carries 'allow-duplicates' (examples/cloudfront/csp.mjs).
       trustedTypes: { policyName: 'platform-webpack' },
       crossOriginLoading: false,
       // Every supported browser has globalThis: without this, webpack's runtime keeps a
@@ -141,6 +180,9 @@ export function platformWebpackConfig(o: PresetOptions): Configuration {
       ...(o.role === 'remote' ? { uniqueName: containerName(o.name ?? '') } : { uniqueName: 'shell' }),
     },
     optimization: { moduleIds: 'deterministic', chunkIds: 'deterministic' },
-    plugins: [new webpack.container.ModuleFederationPlugin(mf as ConstructorParameters<typeof webpack.container.ModuleFederationPlugin>[0])],
+    plugins: [
+      new webpack.container.ModuleFederationPlugin(mf as ConstructorParameters<typeof webpack.container.ModuleFederationPlugin>[0]),
+      ...(shell ? [new ProvideSdkPlugin()] : []),
+    ],
   };
 }

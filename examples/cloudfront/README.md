@@ -42,7 +42,7 @@ to the error-tracking store, never to S3 behind the distribution.
 default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self';
 connect-src 'self' https://auth.bcbpsolutions.com; manifest-src 'self'; worker-src 'self';
 base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests;
-require-trusted-types-for 'script'; trusted-types platform-sdk platform-webpack dompurify;
+require-trusted-types-for 'script'; trusted-types platform-sdk platform-webpack dompurify 'allow-duplicates';
 report-uri /csp-report; report-to csp
 ```
 
@@ -60,7 +60,8 @@ report-uri /csp-report; report-to csp
   trailing slash or `http:`; runtime.json's `http://localhost` dev origins have no place in a deployed
   CSP), or `buildCsp` throws. Both default to none, which gives the policy above.
 - The three Trusted Types policies are the SDK's (`/security`), webpack's (`@platform/webpack-preset`)
-  and DOMPurify's.
+  and DOMPurify's. `'allow-duplicates'` is required: the shell's webpack runtime and every remote's
+  create `platform-webpack`, and without it no remote can load. A name outside the list is still refused.
 - Nothing in the SDK or the example builds needs `eval`: the preset removes webpack's `new Function`
   fallback (`output.environment.globalThis`), and the SDK runs Zod jitless. `pnpm examples:check`
   checks the built output.

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import {
   cspViolations, decodeJwt, docker, STATE, deployed, edgeLog, envoyAccess, eventually, keycloakLogin, kcAdmin, logRecords,
-  navigateOnce, signInFromScratch, SIGNED_OUT_KEY, spans, traceIdOf, Traffic, watchCsp,
+  gotoDeepLink, navigateOnce, signInFromScratch, SIGNED_OUT_KEY, spans, traceIdOf, Traffic, watchCsp,
 } from './helpers.ts';
 import { STACK } from './stack-constants.ts';
 
@@ -40,8 +40,15 @@ test.describe('sign-in through PUB-1, Keycloak and the gateway', () => {
     expect(access.iss).toBe(STACK.issuer('tenant-acme'));
 
     // P-35 with the JWT: jwt_authn → ext_authz (AuthZ Enrichment → I-8) → iam-org-membership.
-    // The SDK retries a 503 (Issue 12: a cold I-8 lookup can exceed AuthZ Enrichment's 40 ms budget).
-    const ctx = await eventually(() => t.api.find((a) => a.url.pathname === '/api/v1/me/session-context' && a.status !== 503), 20_000, 'P-35');
+    // The SDK retries a 503 (Issue 12: a cold I-8 lookup can exceed AuthZ Enrichment's 40 ms budget). On
+    // the first sign-in after boot every retry can miss it; a reload (silent restore) asks again, warm.
+    const p35 = () => eventually(() => t.api.find((a) => a.url.pathname === '/api/v1/me/session-context' && a.status !== 503), 20_000, 'P-35');
+    let ctx = await p35().catch(() => undefined);
+    if (!ctx) {
+      test.info().annotations.push({ type: 'issue', description: 'Issue 12: the first P-35 after boot got only 503s (cold AuthZ cache); reloaded once' });
+      await navigateOnce(page, () => page.reload({ waitUntil: 'commit' }));
+      ctx = await p35();
+    }
     expect(ctx.status).toBe(200);
     expect(ctx.request.headers()['authorization']).toMatch(/^Bearer /);
     const body = ctx.json() as { tenant_id: string; slug: string; roles: string[]; departments: { id: string; level: string }[]; plan: string };
@@ -84,15 +91,6 @@ test.describe('sign-in through PUB-1, Keycloak and the gateway', () => {
   });
 });
 
-/**
- * The suggested fix for Issue 1, for this test only (the deployed policy is untouched): the edge shim adds
- * Trusted Types 'allow-duplicates' to the CSP when this cookie is present (a test hook; see edge/server.mjs).
- * A cookie, not page.route: the documents after a Keycloak redirect are not routable.
- */
-async function withTrustedTypesAllowDuplicates(page: Page): Promise<void> {
-  await page.context().addCookies([{ name: 'e2e-csp-fix', value: 'tt-allow-duplicates', domain: STACK.appHost, path: '/', secure: true, sameSite: 'Lax' }]);
-}
-
 interface Loaded { url: string; status: number; type: string; cache: string }
 function watchStatic(page: Page): Loaded[] {
   const out: Loaded[] = [];
@@ -115,10 +113,8 @@ test.describe('the tenders remote, deep links and the API through Envoy → go-p
     const deep = '/t/acme/tenders/1/edit';
     // WebKit may report the goto as interrupted by the SDK's own prompt=none round trip: read the document
     // response from the network instead of goto's return value.
-    const docResponse = page.waitForResponse((r) => new URL(r.url()).pathname === deep && r.request().resourceType() === 'document');
-    await page.goto(deep, { waitUntil: 'commit' }).catch((e: Error) => {
-      if (!/interrupted by another navigation|NS_BINDING_ABORTED/.test(e.message)) throw e;
-    });
+    const docResponse = page.waitForResponse((r) => new URL(r.url()).pathname === deep && r.request().resourceType() === 'document', { timeout: 45_000 });
+    await gotoDeepLink(page, deep);
     const doc = await docResponse;
     expect(doc.status()).toBe(200);
     expect(doc.headers()['content-type']).toContain('text/html');
@@ -136,28 +132,21 @@ test.describe('the tenders remote, deep links and the API through Envoy → go-p
     expect(loaded.find((a) => a.url.endsWith('/remoteEntry.js'))).toMatchObject({ status: 200, cache: 'public, max-age=31536000, immutable' });
     expect(await page.evaluate(() => document.querySelector<HTMLScriptElement>('script[src*="remoteEntry.js"]')?.integrity)).toMatch(/^sha384-/);
 
-    // Under the production CSP, the remote's webpack runtime cannot create its Trusted Types policy.
-    const blocked = (await cspViolations(page)).filter((v) => v.directive === 'trusted-types');
-    test.fail(blocked.length > 0, 'Issue 1: the remote\'s webpack runtime re-creates the platform-webpack Trusted Types policy; the production CSP has no \'allow-duplicates\'');
+    // Issue 1 (fixed): the remote's webpack runtime creates platform-webpack again under the production CSP.
     expect(await cspViolations(page)).toEqual([]);
     await expect(page.getByRole('alert')).not.toHaveText(/Something went wrong/);
   });
 
-  test('with the Issue 1 fix: the remote renders the gateway\'s problem+json; ids and logs correlate end to end', async ({ page }) => {
-    await withTrustedTypesAllowDuplicates(page);
+  test('the remote renders the gateway\'s problem+json; ids and logs correlate end to end', async ({ page }) => {
     await watchCsp(page);
     const t = new Traffic(page);
     const loaded = watchStatic(page);
     await signInFromScratch(page, alice, 'acme');
-    await page.goto('/t/acme/tenders/1/edit', { waitUntil: 'commit' });
+    await gotoDeepLink(page, '/t/acme/tenders/1/edit');
     await expect(page.getByRole('alert')).toBeVisible();
-    // Issue 2: the shell never imports @platform/frontend-sdk/problem, so its share scope does not provide it,
-    // and the remote (SDK import: false) cannot evaluate. Browser logs (essential errors) still arrive.
-    if (/Something went wrong/.test(await page.getByRole('alert').innerText())) {
-      const evalError = await eventually(() => logRecords().find((r) => r.service === 'web-app' && /failed to evaluate/.test(r.attributes['exception.message'] ?? '')), 30_000, 'the remote evaluate error in the Collector');
-      expect(evalError.severity).toBe('ERROR');
-      test.fail(true, 'Issue 2: the shell\'s share scope does not provide @platform/frontend-sdk/problem (it never imports it); the remote cannot evaluate');
-    }
+    // Issue 2 (fixed): the shell provides @platform/frontend-sdk/problem although it never imports it, so the
+    // remote (SDK import: false) evaluates and renders the problem instead of the boundary's fallback.
+    await expect(page.getByRole('alert')).not.toHaveText(/Something went wrong/);
     // GET /api/tenders/1 → Envoy (jwt_authn, ext_authz) → go-probe: a gincommon 404 problem the remote shows.
     const tender = await eventually(() => t.apiCall('/api/tenders/1'), 10_000, '/api/tenders/1');
     expect(tender.status).toBe(404);
@@ -177,11 +166,8 @@ test.describe('the tenders remote, deep links and the API through Envoy → go-p
     for (const c of chunks) expect(c, c.url).toMatchObject({ status: 200, cache: 'public, max-age=31536000, immutable' });
     expect(await cspViolations(page)).toEqual([]);
 
-    // Telemetry: leave the page so the SDK flushes its queues (beacons), then read the Collector output.
-    await page.goto('/version.json');
-    const log = await eventually(() => logRecords().find((r) => r.service === 'web-app' && r.attributes['request_id'] === reqId), 60_000, 'the boundary\'s error log with the request id');
-    expect(log.severity).toBe('ERROR');
-    // The backend spans of that request carry the browser's trace id: Envoy, AuthZ Enrichment (ext_authz), go-probe.
+    // No browser log for it: the boundary logs an API error as a warning ("remote showed an error"), which
+    // needs telemetry consent, and the example CMP grants only 'essential'. The backend spans of that request carry the browser's trace id: Envoy, AuthZ Enrichment (ext_authz), go-probe.
     const services = await eventually(() => {
       const s = new Set(spans().filter((x) => x.traceId === sentTrace).map((x) => x.service));
       return s.has('envoy-gateway') && s.has('iam-authz-enrichment') && s.has('go-probe') ? s : undefined;

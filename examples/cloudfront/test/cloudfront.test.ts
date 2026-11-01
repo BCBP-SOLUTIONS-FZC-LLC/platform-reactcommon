@@ -29,6 +29,13 @@ describe('CSP and response headers (§C3)', () => {
     expect(TRUSTED_TYPES_POLICIES).toEqual(['platform-sdk', 'platform-webpack', 'dompurify']);
   });
 
+  it("allows duplicate policy names: the shell's and every remote's webpack runtime create platform-webpack", () => {
+    // The shell and the remotes share one policy name (the preset); without 'allow-duplicates' the first
+    // remote's runtime cannot create its policy and no remote loads (docs/e2e report, Issue 1).
+    expect(platformWebpackConfig({ role: 'remote', name: 'tenders', mode: 'production' }).output?.trustedTypes).toEqual({ policyName: 'platform-webpack' });
+    expect(buildCsp()).toContain("; trusted-types platform-sdk platform-webpack dompurify 'allow-duplicates';");
+  });
+
   it('response-headers-policy.json carries the same values', () => {
     const policy = JSON.parse(read('../response-headers-policy.json'));
     const headers = securityHeaders();

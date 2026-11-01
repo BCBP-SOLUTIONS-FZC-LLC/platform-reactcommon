@@ -1,11 +1,11 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import webpack from 'webpack';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { containerGlobal } from '../../../packages/frontend-sdk/src/mfe/remote.ts';
-import { containerName, platformShared, platformWebpackConfig, sharedFor } from '../../../packages/webpack-preset/src/index.ts';
+import { containerName, platformShared, platformWebpackConfig, ProvideSdkPlugin, sharedFor } from '../../../packages/webpack-preset/src/index.ts';
 import { SDK_SHARE_RANGE, SDK_SUBPATHS, SDK_VERSION } from '../../../packages/webpack-preset/src/generated/sdk.ts';
 
 const require = createRequire(import.meta.url);
@@ -150,6 +150,8 @@ describe('platformWebpackConfig', () => {
     const shell = platformWebpackConfig({ role: 'shell', mode: 'production', name: 'ignored', exposes: { './X': './x.js' } });
     expect(shell.plugins![0]).toBeInstanceOf(webpack.container.ModuleFederationPlugin);
     expect(mfOptions(shell)).toEqual({ name: 'shell', shared: sharedFor('shell') });
+    expect(shell.plugins![1]).toBeInstanceOf(ProvideSdkPlugin);
+    expect(shell.plugins).toHaveLength(2);
     const remote = platformWebpackConfig({ role: 'remote', name: 'iam-admin', mode: 'development' });
     expect(mfOptions(remote)).toEqual({
       name: 'iam_admin',
@@ -159,6 +161,7 @@ describe('platformWebpackConfig', () => {
       shared: sharedFor('remote'),
     });
     expect(remote.output?.uniqueName).toBe('iam_admin');
+    expect(remote.plugins).toHaveLength(1); // a remote provides no SDK
   });
 
   it('refuses a remote without a valid name', () => {
@@ -248,7 +251,18 @@ describe('a real build', () => {
     );
   });
 
+  /** A stand-in @platform/frontend-sdk under `root`: each subpath records in globalThis.__sdkEvaluated that it ran. */
+  function fakeSdk(root: string): void {
+    const pkgDir = join(root, 'node_modules', '@platform', 'frontend-sdk');
+    mkdirSync(pkgDir, { recursive: true });
+    const subpaths = SDK_SUBPATHS.filter((s) => s !== 'testing');
+    const exports = Object.fromEntries(subpaths.map((s) => [`./${s}`, { import: `./${s}.js` }]));
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@platform/frontend-sdk', version: SDK_VERSION, type: 'module', sideEffects: true, exports }));
+    for (const s of subpaths) writeFileSync(join(pkgDir, `${s}.js`), `(globalThis.__sdkEvaluated ??= []).push('${s}');\nexport const subpath = '${s}';\n`);
+  }
+
   it('a shell builds with the same shared map', async () => {
+    fakeSdk(dir);
     writeFileSync(join(dir, 'bootstrap.js'), "export const ready = 'shell';\n");
     writeFileSync(join(dir, 'shell.js'), "import('./bootstrap.js');\n");
     const out = join(dir, 'shell-dist');
@@ -256,5 +270,57 @@ describe('a real build', () => {
     await compile({ ...preset, context: dir, entry: { main: './shell.js' }, output: { ...preset.output, path: out } });
     expect(readdirSync(join(out, 'assets'))).toContain('main.js'); // the shell's bundles live under assets/
     expect(readFileSync(join(out, 'assets', 'main.js'), 'utf8')).not.toMatch(/\beval\(/);
+  });
+
+  it('the shell provides every SDK subpath, imported or not, and a remote consumes one the shell never imports', async () => {
+    // docs/e2e report, Issue 2: webpack provides a shared request only when the bundle imports it, and a
+    // remote's SDK has no fallback (import: false). This shell imports only /logging; the remote uses /problem.
+    const root = mkdtempSync(join(dir, 'provide-'));
+    fakeSdk(root);
+    writeFileSync(join(root, 'bootstrap.js'), "import { subpath } from '@platform/frontend-sdk/logging';\nexport default subpath;\n");
+    writeFileSync(
+      join(root, 'shell.js'),
+      "globalThis.__shellScope = (async () => { await __webpack_init_sharing__('default'); return __webpack_share_scopes__.default; })();\n",
+    );
+    const shellOut = join(root, 'shell-dist');
+    const shellPreset = platformWebpackConfig({ role: 'shell', mode: 'development' });
+    await compile({ ...shellPreset, target: 'node', devtool: false, context: root, entry: { main: './shell.js' }, output: { ...shellPreset.output, path: shellOut } });
+    const g = globalThis as { __shellScope?: Promise<Record<string, Record<string, { get(): Promise<() => unknown>; from: string }>>>; __sdkEvaluated?: string[] };
+    delete g.__sdkEvaluated;
+    createRequire(join(shellOut, 'assets', 'main.js'))(join(shellOut, 'assets', 'main.js'));
+    const scope = await g.__shellScope!;
+    const sdkKeys = Object.keys(scope).filter((k) => k.startsWith('@platform/frontend-sdk/')).sort();
+    expect(sdkKeys).toEqual(SDK_SUBPATHS.filter((s) => s !== 'testing').map((s) => `@platform/frontend-sdk/${s}`).sort());
+    for (const k of sdkKeys) expect(Object.keys(scope[k]!), k).toEqual([SDK_VERSION]);
+    expect(scope['@platform/frontend-sdk/testing']).toBeUndefined();
+    // Provided lazily: registering the scope evaluates no subpath.
+    expect(g.__sdkEvaluated ?? []).toEqual([]);
+
+    writeFileSync(join(root, 'Uses.js'), "import { subpath } from '@platform/frontend-sdk/problem';\nexport default () => subpath;\n");
+    writeFileSync(join(root, 'remote.js'), '// remote entry\n');
+    const remoteOut = join(root, 'remote-dist');
+    const remotePreset = platformWebpackConfig({ role: 'remote', name: 'uses-problem', exposes: { './Uses': './Uses.js' }, mode: 'development' });
+    await compile({ ...remotePreset, target: 'node', devtool: false, context: root, entry: { main: './remote.js' }, output: { ...remotePreset.output, path: remoteOut } });
+    const container = new Function('require', '__dirname', `${readFileSync(join(remoteOut, 'remoteEntry.js'), 'utf8')}\nreturn uses_problem;`)(
+      createRequire(join(remoteOut, 'remoteEntry.js')),
+      remoteOut,
+    ) as { init(scope: unknown): Promise<void> | void; get(m: string): Promise<() => { default: () => unknown }> };
+    await container.init(scope);
+    expect((await container.get('./Uses'))().default()).toBe('problem');
+    expect(g.__sdkEvaluated).toEqual(['problem']); // the shell's copy, loaded on first use
+    delete g.__sdkEvaluated;
+  });
+
+  it('a shell that cannot resolve the SDK fails the build, naming the subpath', async () => {
+    const lonely = mkdtempSync(join(tmpdir(), 'preset-nosdk-'));
+    try {
+      writeFileSync(join(lonely, 'shell.js'), '// no SDK installed\n');
+      const preset = platformWebpackConfig({ role: 'shell', mode: 'development' });
+      await expect(compile({ ...preset, context: lonely, entry: { main: './shell.js' }, output: { ...preset.output, path: join(lonely, 'dist') } })).rejects.toThrow(
+        /the shell cannot resolve @platform\/frontend-sdk\/core from .*: it must depend on @platform\/frontend-sdk/,
+      );
+    } finally {
+      rmSync(lonely, { recursive: true, force: true });
+    }
   });
 });

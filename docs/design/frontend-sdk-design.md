@@ -1161,6 +1161,13 @@ privately and not served), no `eval` devtools in any mode, and content hashing. 
 rewrite), so a relative script URL would resolve under `/t/acme/…` or `/auth/callback` and fail. A remote
 keeps `publicPath: 'auto'`: its chunks load relative to its `remoteEntry.js`.
 
+The shell provides **every** SDK subpath in the share scope (`ProvideSdkPlugin`), not only those its own
+code imports: webpack provides a shared request only when the bundle imports it, and a remote's SDK has
+no fallback (`import: false`), so a remote using a subpath the shell never imports would fail at run time.
+The extra provides are lazy (`eager: false`): a subpath no remote uses is registered but never loaded.
+The shell's and each remote's webpack runtime create the same Trusted Types policy, `platform-webpack`,
+so the CSP's `trusted-types` directive carries `'allow-duplicates'`.
+
 **Versioning.** The SDK is not started at `0.x`. A caret range on `0.x` pins the minor version
 (`^0.3.0` means below `0.4.0`), so with `strictVersion` every minor release would break every remote.
 It is published as `1.0.0-alpha.N` while nothing is deployed. The shell shares it under
@@ -1197,7 +1204,7 @@ Content-Security-Policy:
   connect-src 'self' https://auth.bcbpsolutions.com;
   manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self';
   frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests;
-  require-trusted-types-for 'script'; trusted-types platform-sdk platform-webpack dompurify;
+  require-trusted-types-for 'script'; trusted-types platform-sdk platform-webpack dompurify 'allow-duplicates';
   report-uri /csp-report; report-to csp
 Reporting-Endpoints: csp="/csp-report"
 Strict-Transport-Security: max-age=63072000; includeSubDomains; preload

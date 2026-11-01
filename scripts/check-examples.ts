@@ -5,9 +5,12 @@
 //   capability probe `new Function("")` stays in the bundle but never runs: the SDK sets jitless, which
 //   the probe checks first (test/unit/config/schema-csp.test.ts proves no Function is constructed);
 // - production source maps are emitted but never referenced (hidden-source-map);
-// - index.html loads only external scripts (no inline script).
+// - index.html loads only external scripts (no inline script);
+// - the shell's share scope registers every shared SDK subpath, at the SDK's version, not only those the
+//   shell imports (a remote's SDK has no fallback: docs/e2e/integrated-deployment-report.md, Issue 2).
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { SDK_SUBPATHS, SDK_VERSION } from '../packages/webpack-preset/src/generated/sdk.ts';
 import { REPO_ROOT } from './lib/subpaths.ts';
 
 const failures: string[] = [];
@@ -38,6 +41,11 @@ check(!remote.js.includes('@platform/frontend-sdk:session-id'), 'remote-tenders:
 // The remote's JSX must come from the shell's React (another major's elements fail to render).
 check(/"react\/jsx-runtime"/.test(readFileSync(join(remoteDir, 'remoteEntry.js'), 'utf8')), 'remote-tenders: does not consume react/jsx-runtime from the shared scope');
 check(shell.js.includes('@platform/frontend-sdk:session-id'), 'shell: does not bundle the SDK');
+// The share-scope registration webpack emits for a provided module: register("<key>","<version>",factory).
+const provided = new Set([...shell.js.matchAll(/\("(@platform\/frontend-sdk\/[a-z0-9]+)","([^"]+)",/g)].filter((m) => m[2] === SDK_VERSION).map((m) => m[1]!));
+const missing = SDK_SUBPATHS.filter((s) => s !== 'testing' && !provided.has(`@platform/frontend-sdk/${s}`));
+check(missing.length === 0, `shell: share scope does not provide @platform/frontend-sdk/{${missing.join(',')}} at ${SDK_VERSION}`);
+check(!provided.has('@platform/frontend-sdk/testing'), 'shell: provides @platform/frontend-sdk/testing (dev only)');
 const html = readFileSync(join(shellDir, 'index.html'), 'utf8');
 const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
 check(scripts.length > 0 && scripts.every(([, attrs, body]) => /\bsrc=/.test(attrs!) && body!.trim() === ''), 'shell: index.html has an inline script');
