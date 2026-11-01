@@ -1,0 +1,54 @@
+# OpenTelemetry Collector for the integrated stack.
+#
+# otlp/browser  OTLP/HTTP for the browser, behind the distribution's /otel/* behavior. CloudFront forwards
+#               the viewer path unchanged (an origin path can only be prepended, never stripped), so the
+#               receiver listens on /otel/v1/{traces,logs,metrics}, not the default /v1/*.
+# otlp          OTLP gRPC (Envoy, Go services) and OTLP/HTTP on the default paths (the /csp-report Lambda).
+#
+# Everything is written as OTLP JSON lines under /out (test/stack/.state/otel), which the e2e suite reads.
+receivers:
+  otlp/browser:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        traces_url_path: /otel/v1/traces
+        logs_url_path: /otel/v1/logs
+        metrics_url_path: /otel/v1/metrics
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4319
+
+processors:
+  batch:
+    timeout: 500ms
+
+exporters:
+  file/traces:
+    path: /out/traces.jsonl
+  file/logs:
+    path: /out/logs.jsonl
+  file/metrics:
+    path: /out/metrics.jsonl
+  debug:
+    verbosity: basic
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp/browser, otlp]
+      processors: [batch]
+      exporters: [file/traces, debug]
+    logs:
+      receivers: [otlp/browser, otlp]
+      processors: [batch]
+      exporters: [file/logs, debug]
+    metrics:
+      receivers: [otlp/browser, otlp]
+      processors: [batch]
+      exporters: [file/metrics]

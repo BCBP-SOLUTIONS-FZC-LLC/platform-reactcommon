@@ -11,3 +11,4 @@ dist-packages/
 playwright-report/
 test-results/
 test/browser/.build/
+test/stack/.state/

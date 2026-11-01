@@ -384,6 +384,7 @@ The same task names as platform-gincommon's Makefile, as `package.json` scripts.
 | `test-cover` | `make test-cover` | Tests with coverage (`coverage/`) |
 | `test-smoke` | `make test-smoke` | `test/smoke`: the example builds served as CloudFront serves them (after `pnpm build`), or a deployed shell with `SMOKE_BASE_URL` |
 | `test-browser` | (none) | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP (`test-browser-install` installs the browsers once) |
+| `test-stack` | `stack-up` | `test/stack`: the example shell in the three browsers against Keycloak, Envoy with the real IAM services, the distribution on floci and an OTel Collector (`stack-up` / `stack-down` start and remove it) |
 | `test-smoke-package` | `make test-smoke-image` | Build, pack the tarballs and run CI's tarball smoke tests against them (needs npm registry access) |
 | `build` | `make build` | Packages, then the example builds |
 | `cover` / `cover-func` | `make cover` / `make cover-func` | Coverage HTML report (`coverage/index.html`) / per-file table |
@@ -466,6 +467,7 @@ test/
   e2e/                   the reference shell and remote booted end to end in-process (sign-in, remote, logout)
   smoke/                 the example builds served as CloudFront serves them, or a deployed shell (SMOKE_BASE_URL)
   browser/               Playwright: the SDK in Chromium, Firefox and WebKit under the production CSP (test/browser/README.md)
+  stack/                 Playwright against a production-like stack (docs/e2e/integrated-deployment-report.md)
   fixtures/              shared fakes and helpers (Keycloak, render, parity cases, the boundaries tree)
   testenv/               loads .env and sets defaults (OBSERVABILITY_DOMAIN, ENVIRONMENT, SMOKE_BASE_URL)
 ```

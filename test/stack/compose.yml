@@ -1,0 +1,284 @@
+# The integrated, production-like stack for test/stack/e2e.spec.ts (docs/e2e/integrated-deployment-report.md).
+# Run through `pnpm run stack-up` / `stack-down` (scripts/stack-up.sh): the configs it mounts are rendered
+# into .state by scripts/prepare.mjs, and the IAM images need a private-module token passed as a BuildKit
+# secret from the environment (never a file).
+#
+# Host ports (127.0.0.1 unless noted): STACK_HTTPS_PORT (default 443, all interfaces) the viewer entry
+# (app./auth.localtest.me), 18080 Keycloak (admin API for the tests), 18566 floci, 19901 Envoy admin.
+name: reactcommon-e2e
+
+x-aws: &aws
+  AWS_REGION: ap-south-1
+  AWS_DEFAULT_REGION: ap-south-1
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  AWS_ENDPOINT_URL: http://floci:4566
+
+networks:
+  default:
+    # Fixed name: floci starts the Lambda runtime containers on it (FLOCI_SERVICES_LAMBDA_DOCKER_NETWORK).
+    name: reactcommon-e2e
+
+services:
+  # ── AWS (emulated) ───────────────────────────────────────────────────────────────────────────
+  floci:
+    image: floci/floci:2.1.0-compat
+    ports: ["127.0.0.1:18566:4566"]
+    environment:
+      FLOCI_DEFAULT_REGION: ap-south-1
+      FLOCI_DEFAULT_ACCOUNT_ID: "000000000000"
+      FLOCI_HOSTNAME: floci
+      FLOCI_INIT_HOOKS_TIMEOUT_SECONDS: "180"
+      FLOCI_SERVICES_LAMBDA_DOCKER_NETWORK: reactcommon-e2e
+      FLOCI_SERVICES_LAMBDA_EPHEMERAL: "false"
+    volumes:
+      # Lambda runs each function in a container: floci needs the Docker socket.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The IAM services' own floci topology (SNS/SQS/Glue), as their compose files provision it.
+      - ${IAM_ROOT}/iam-org-membership/scripts/init-floci.sh:/etc/floci/init/ready.d/10-org-membership.sh:ro
+      - ${IAM_ROOT}/iam-org-membership/internal/adapter/outbound/eventbus/schemas:/etc/floci/init/schemas:ro
+      - ${IAM_ROOT}/iam-authz-enrichment/scripts/init-floci.sh:/etc/floci/init/ready.d/20-authz-enrichment.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "aws --region ap-south-1 sqs get-queue-url --queue-name tender-authz-q >/dev/null && aws --region ap-south-1 glue get-schema --schema-id RegistryName=iam-tenant-events,SchemaName=TrialStarted >/dev/null"]
+      interval: 5s
+      timeout: 10s
+      retries: 60
+
+  web-deploy:
+    image: floci/floci:2.1.0-compat
+    entrypoint: ["bash", "/deploy/deploy-web.sh"]
+    environment:
+      <<: *aws
+      REMOTE_VERSION: ${REMOTE_VERSION}
+      DEPLOY_SET_CACHE_CONTROL: ${DEPLOY_SET_CACHE_CONTROL:-true}
+    volumes:
+      - ./floci/deploy-web.sh:/deploy/deploy-web.sh:ro
+      - ./.state:/work
+    depends_on:
+      floci: { condition: service_healthy }
+      otel-collector: { condition: service_started }
+    restart: "no"
+
+  # ── Telemetry ────────────────────────────────────────────────────────────────────────────────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.164.0
+    command: ["--config", "/etc/otelcol/config.yaml"]
+    user: "0:0"
+    volumes:
+      - ./otel/collector.yaml:/etc/otelcol/config.yaml:ro
+      - ./.state/otel:/out
+
+  # ── Identity ─────────────────────────────────────────────────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    command: ["start", "--import-realm"]
+    ports: ["127.0.0.1:18080:8080"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_DB: dev-file
+      KC_HTTP_ENABLED: "true"
+      # The issuer the browser sees (and Envoy validates) must be the public one.
+      KC_HOSTNAME: ${AUTH_HOSTNAME_URL}
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_LOG_LEVEL: info
+    volumes:
+      - ./.state/keycloak/import:/opt/keycloak/data/import:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  # ── IAM (real services, built from their repositories) ───────────────────────────────────────
+  valkey:
+    image: valkey/valkey:8-alpine
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: org_membership_app
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: org_membership
+    volumes:
+      - ${IAM_ROOT}/iam-org-membership/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U org_membership_app -d org_membership"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: org_membership_app
+      DB_PASSWORD: devpassword
+      DB_NAME: org_membership
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 100
+      DEFAULT_POOL_SIZE: 5
+      AUTH_TYPE: scram-sha-256
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits
+      SERVER_TLS_SSLMODE: disable
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 -U org_membership_app || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  org-membership:
+    build:
+      context: ${IAM_ROOT}/iam-org-membership
+      secrets: [go_private_token]
+    image: reactcommon-e2e/iam-org-membership:local
+    environment:
+      <<: *aws
+      APP_ENV: dev
+      OBSERVABILITY_DOMAIN: iam
+      APP_PORT: "8080"
+      METRICS_PORT: "9090"
+      APP_NAME: iam-org-membership
+      PG_HOST: pgbouncer
+      PG_PORT: "5432"
+      PG_USER: org_membership_app
+      PG_PASSWORD: devpassword
+      PG_DBNAME: org_membership
+      PG_SSLMODE: disable
+      PG_MAX_CONNS: "20"
+      PG_MIN_CONNS: "0"
+      PG_BOUNCER_MODE: "true"
+      MIGRATION_DATABASE_URL: postgres://org_membership_app:devpassword@postgres:5432/org_membership?sslmode=disable
+      VALKEY_URL: valkey:6379
+      SNS_TOPIC_MEMBERSHIP_ARN: arn:aws:sns:ap-south-1:000000000000:iam-membership-events
+      SNS_TOPIC_TENANT_ARN: arn:aws:sns:ap-south-1:000000000000:iam-tenant-events
+      SQS_TENANT_ORGM_QUEUE_URL: http://floci:4566/000000000000/tenant-orgm-q
+      SQS_BILLING_ORGM_QUEUE_URL: http://floci:4566/000000000000/billing-orgm-q
+      SQS_CATALOG_ORGM_QUEUE_URL: http://floci:4566/000000000000/catalog-orgm-q
+      GLUE_REGISTRY_MEMBERSHIP_NAME: iam-membership-events
+      GLUE_REGISTRY_MEMBERSHIP_ARN: arn:aws:glue:ap-south-1:000000000000:registry/iam-membership-events
+      GLUE_REGISTRY_TENANT_NAME: iam-tenant-events
+      GLUE_REGISTRY_TENANT_ARN: arn:aws:glue:ap-south-1:000000000000:registry/iam-tenant-events
+      OUTBOX_POLL_INTERVAL: 500ms
+      OUTBOX_STARTUP_JITTER: 2s
+      # BYPASSRLS pool: PUB-1 (no tenant GUC yet) resolves through it; without it every resolve is found:false.
+      SYSTEM_DATABASE_URL: postgres://org_membership_migrator:devpassword@postgres:5432/org_membership?sslmode=disable
+      # Required at startup; iam-catalog-admin is not in this stack (the I-8 read path tolerates its absence).
+      CATALOG_ADMIN_BASE_URL: http://catalog-admin-not-deployed:8080
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_TRACES_SAMPLER_RATIO: "1.0"
+    depends_on:
+      pgbouncer: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+      floci: { condition: service_healthy }
+
+  # Seeds the tenants and memberships once the service has migrated its schema (its image is
+  # distroless: no healthcheck possible, so this waits for the schema instead).
+  org-membership-seed:
+    image: postgres:17-alpine
+    environment:
+      PGPASSWORD: devpassword
+    entrypoint: ["sh", "-c", "for i in $$(seq 1 120); do [ \"$$(psql -h postgres -U org_membership_app -d org_membership -tAc \"select to_regclass('public.tenant_roles') is not null and to_regclass('public.trial_signup_ledger') is not null\")\" = t ] && exec psql -v ON_ERROR_STOP=1 -h postgres -U org_membership_app -d org_membership -f /seed.sql; sleep 1; done; echo 'schema never appeared'; exit 1"]
+    volumes:
+      - ./org-membership/seed.sql:/seed.sql:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      org-membership: { condition: service_started }
+    restart: "no"
+
+  authz-enrichment:
+    build:
+      context: ${IAM_ROOT}/iam-authz-enrichment
+      secrets: [go_private_token]
+    image: reactcommon-e2e/iam-authz-enrichment:local
+    environment:
+      <<: *aws
+      APP_ENV: dev
+      APP_NAME: iam-authz-enrichment
+      OBSERVABILITY_DOMAIN: iam
+      APP_PORT: "8080"
+      METRICS_PORT: "9090"
+      GRPC_PORT: "9091"
+      VALKEY_URL: valkey:6379
+      ORG_MEMBERSHIP_BASE_URL: http://org-membership:8080
+      ORG_MEMBERSHIP_TIMEOUT: ${AUTHZ_ORG_MEMBERSHIP_TIMEOUT:-40ms}
+      # iam-tender-acl is not in this stack: only restricted tenders call it (none here).
+      TENDER_ACL_BASE_URL: http://tender-acl-not-deployed:8086
+      MEMBERSHIP_AUTHZ_QUEUE_URL: http://floci:4566/000000000000/membership-authz-q
+      USER_AUTHZ_QUEUE_URL: http://floci:4566/000000000000/user-authz-q
+      BILLING_AUTHZ_QUEUE_URL: http://floci:4566/000000000000/billing-authz-q
+      TENANT_AUTHZ_QUEUE_URL: http://floci:4566/000000000000/tenant-authz-q
+      TENDER_AUTHZ_QUEUE_URL: http://floci:4566/000000000000/tender-authz-q
+      SHARED_REALM_ISSUER: ${SHARED_REALM_ISSUER}
+      REALM_TENANT_MAP_SEED: ${REALM_TENANT_MAP_SEED}
+      JWT_METADATA_NAMESPACE: envoy.filters.http.jwt_authn
+      JWT_PAYLOAD_KEY: jwt_payload
+      GRPC_REQUEST_TIMEOUT: 250ms
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_TRACES_SAMPLER_RATIO: "1.0"
+      LOG_LEVEL: debug
+    depends_on:
+      valkey: { condition: service_healthy }
+      floci: { condition: service_healthy }
+
+  # platform-interop-tests' go-probe http-serve (real gincommon) as the "tenders" API.
+  go-probe:
+    build:
+      context: ./go-probe
+      additional_contexts:
+        probe: ${SHARED_ROOT:-../../../..}/platform-interop-tests/go-probe
+        gincommon: ${SHARED_ROOT:-../../../..}/go/platform-gincommon
+        events: ${SHARED_ROOT:-../../../..}/go/platform-events
+        pgcommon: ${SHARED_ROOT:-../../../..}/go/platform-pgcommon
+    image: reactcommon-e2e/go-probe:local
+    environment:
+      OBSERVABILITY_DOMAIN: documents
+      APP_ENV: staging
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_TRACES_SAMPLER_RATIO: "1.0"
+
+  # ── Gateway ──────────────────────────────────────────────────────────────────────────────────
+  envoy:
+    image: envoyproxy/envoy:v1.40.2
+    command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "info", "--component-log-level", "jwt:debug,ext_authz:debug"]
+    ports: ["127.0.0.1:19901:9901"]
+    volumes:
+      - ./.state/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    depends_on:
+      keycloak: { condition: service_healthy }
+      authz-enrichment: { condition: service_started }
+      org-membership: { condition: service_started }
+      go-probe: { condition: service_started }
+      otel-collector: { condition: service_started }
+
+  # ── The viewer's entry: CloudFront (floci + the gap shim) and the IdP host ─────────────────────
+  edge:
+    image: node:22-alpine
+    command: ["node", "/edge/server.mjs"]
+    ports: ["${STACK_HTTPS_PORT:-443}:8443"]
+    environment:
+      PUBLIC_PORT: ${STACK_HTTPS_PORT:-443}
+    volumes:
+      - ./edge:/edge:ro
+      - ./.state:/state:ro
+      - ./.state/logs:/logs
+    depends_on:
+      web-deploy: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+      envoy: { condition: service_started }
+
+secrets:
+  go_private_token:
+    environment: GO_PRIVATE_TOKEN

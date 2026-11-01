@@ -143,7 +143,7 @@ Fixed before the first release, after a security and production-readiness review
 - `/flags`: `read_only` is true when the platform or the tenant says so.
 - Release PRs run `pnpm run version-packages` (`changeset version` + `exports:sync`).
 - The coverage gate is 98% of statements (as platform-gincommon); 1100+ tests.
-- Tests live under `test/` as in platform-gincommon: `unit/<subpath>`, `integration`, `e2e` (the reference shell and remote booted end to end), `smoke` (the served builds, or a deployed shell with `SMOKE_BASE_URL`), `fixtures`, `testenv`, and `browser` (Playwright in Chromium, Firefox and WebKit under the production CSP; CI job `browser`).
+- Tests live under `test/` as in platform-gincommon: `unit/<subpath>`, `integration`, `e2e` (the reference shell and remote booted end to end), `smoke` (the served builds, or a deployed shell with `SMOKE_BASE_URL`), `fixtures`, `testenv`, `browser` (Playwright in Chromium, Firefox and WebKit under the production CSP; CI job `browser`), and `stack` (the example shell in the three browsers against a production-like deployment: Keycloak, Envoy with the real IAM services, the distribution on floci and an OTel Collector; `pnpm run stack-up`, `test-stack`, `stack-down`; local only). The issues it found are in `docs/e2e/integrated-deployment-report.md`.
 
 ### Fixed
 
