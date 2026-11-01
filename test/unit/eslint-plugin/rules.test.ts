@@ -15,34 +15,34 @@ const tester = new RuleTester({
 
 tester.run('no-sdk-root-import', rules['no-sdk-root-import']!, {
   valid: [
-    "import { getLogger } from '@platform/frontend-sdk/logging';",
-    "import x from '@platform/frontend-sdk-extra';",
-    'const m = require(`@platform/frontend-sdk${suffix}`);', // a built specifier is not static: not checked
+    "import { getLogger } from '@bcbp-solutions-fzc-llc/frontend-sdk/logging';",
+    "import x from '@bcbp-solutions-fzc-llc/frontend-sdk-extra';",
+    'const m = require(`@bcbp-solutions-fzc-llc/frontend-sdk${suffix}`);', // a built specifier is not static: not checked
   ],
   invalid: [
-    { code: "import { getLogger } from '@platform/frontend-sdk';", errors: [{ messageId: 'root' }] },
-    { code: "export * from '@platform/frontend-sdk';", errors: [{ messageId: 'root' }] },
-    { code: "const m = await import('@platform/frontend-sdk');", errors: [{ messageId: 'root' }] },
-    { code: "const m = require('@platform/frontend-sdk');", errors: [{ messageId: 'root' }] },
-    { code: 'const m = require(`@platform/frontend-sdk`);', errors: [{ messageId: 'root' }] },
-    { code: 'const m = await import(`@platform/frontend-sdk`);', errors: [{ messageId: 'root' }] },
+    { code: "import { getLogger } from '@bcbp-solutions-fzc-llc/frontend-sdk';", errors: [{ messageId: 'root' }] },
+    { code: "export * from '@bcbp-solutions-fzc-llc/frontend-sdk';", errors: [{ messageId: 'root' }] },
+    { code: "const m = await import('@bcbp-solutions-fzc-llc/frontend-sdk');", errors: [{ messageId: 'root' }] },
+    { code: "const m = require('@bcbp-solutions-fzc-llc/frontend-sdk');", errors: [{ messageId: 'root' }] },
+    { code: 'const m = require(`@bcbp-solutions-fzc-llc/frontend-sdk`);', errors: [{ messageId: 'root' }] },
+    { code: 'const m = await import(`@bcbp-solutions-fzc-llc/frontend-sdk`);', errors: [{ messageId: 'root' }] },
   ],
 });
 
 tester.run('no-sdk-deep-import', rules['no-sdk-deep-import']!, {
   valid: [
-    "import { createApiClient } from '@platform/frontend-sdk/http';",
-    "import { createTestPlatform } from '@platform/frontend-sdk/testing';",
-    "import pkg from '@platform/frontend-sdk/package.json';",
-    'const m = await import(`@platform/frontend-sdk/${name}`);', // a built specifier is not static: not checked
+    "import { createApiClient } from '@bcbp-solutions-fzc-llc/frontend-sdk/http';",
+    "import { createTestPlatform } from '@bcbp-solutions-fzc-llc/frontend-sdk/testing';",
+    "import pkg from '@bcbp-solutions-fzc-llc/frontend-sdk/package.json';",
+    'const m = await import(`@bcbp-solutions-fzc-llc/frontend-sdk/${name}`);', // a built specifier is not static: not checked
   ],
   invalid: [
-    { code: "import { x } from '@platform/frontend-sdk/http/client';", errors: [{ messageId: 'deep' }] },
-    { code: "import { x } from '@platform/frontend-sdk/dist/http/index.js';", errors: [{ messageId: 'deep' }] },
-    { code: "import { x } from '@platform/frontend-sdk/internal';", errors: [{ messageId: 'deep' }] },
-    { code: "export { x } from '@platform/frontend-sdk/src/core/index.ts';", errors: [{ messageId: 'deep' }] },
-    { code: 'const m = await import(`@platform/frontend-sdk/http/client`);', errors: [{ messageId: 'deep' }] },
-    { code: 'const m = require(`@platform/frontend-sdk/internal`);', errors: [{ messageId: 'deep' }] },
+    { code: "import { x } from '@bcbp-solutions-fzc-llc/frontend-sdk/http/client';", errors: [{ messageId: 'deep' }] },
+    { code: "import { x } from '@bcbp-solutions-fzc-llc/frontend-sdk/dist/http/index.js';", errors: [{ messageId: 'deep' }] },
+    { code: "import { x } from '@bcbp-solutions-fzc-llc/frontend-sdk/internal';", errors: [{ messageId: 'deep' }] },
+    { code: "export { x } from '@bcbp-solutions-fzc-llc/frontend-sdk/src/core/index.ts';", errors: [{ messageId: 'deep' }] },
+    { code: 'const m = await import(`@bcbp-solutions-fzc-llc/frontend-sdk/http/client`);', errors: [{ messageId: 'deep' }] },
+    { code: 'const m = require(`@bcbp-solutions-fzc-llc/frontend-sdk/internal`);', errors: [{ messageId: 'deep' }] },
   ],
 });
 
@@ -78,7 +78,7 @@ tester.run('no-identity-headers', rules['no-identity-headers']!, {
 
 tester.run('no-raw-storage', rules['no-raw-storage']!, {
   valid: [
-    "import { storage } from '@platform/frontend-sdk/storage'; storage('tenders').set('filter', 'open');",
+    "import { storage } from '@bcbp-solutions-fzc-llc/frontend-sdk/storage'; storage('tenders').set('filter', 'open');",
     'const localStorage = new Map(); localStorage.get("x");',
     'obj.localStorage = 1;',
     'window[key].getItem("x");', // a computed member with a non-literal key is not resolved
@@ -179,7 +179,7 @@ describe('plugin', () => {
     const linter = new Linter();
     const messages = linter.verify(
       [
-        "import { getLogger } from '@platform/frontend-sdk';",
+        "import { getLogger } from '@bcbp-solutions-fzc-llc/frontend-sdk';",
         "localStorage.setItem('k', 'v');",
         'eval(code);',
         "const f = new Function('return 1');",
@@ -188,7 +188,7 @@ describe('plugin', () => {
       [plugin.configs.recommended, { languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { setTimeout: 'readonly' } } }],
     );
     expect(messages.map((m) => m.ruleId).sort()).toEqual(
-      ['@platform/no-raw-storage', '@platform/no-sdk-root-import', 'no-eval', 'no-implied-eval', 'no-new-func'].sort(),
+      ['@bcbp-solutions-fzc-llc/no-raw-storage', '@bcbp-solutions-fzc-llc/no-sdk-root-import', 'no-eval', 'no-implied-eval', 'no-new-func'].sort(),
     );
     expect(Object.keys(plugin.configs.recommended.rules!)).toHaveLength(Object.keys(rules).length + 3);
   });

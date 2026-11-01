@@ -11,8 +11,8 @@ export const STATE = join(import.meta.dirname, '..', '..', '.state');
 export type StackUser = (typeof STACK.users)[keyof typeof STACK.users];
 
 /** SDK storage keys (packages/frontend-sdk/src/auth/oidc.ts). */
-export const SIGNED_OUT_KEY = '@platform/frontend-sdk:auth:signed-out';
-export const LAST_USER_KEY = '@platform/frontend-sdk:auth:last-user';
+export const SIGNED_OUT_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:signed-out';
+export const LAST_USER_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-user';
 
 export interface TokenResponse {
   access_token: string;

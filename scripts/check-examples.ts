@@ -7,7 +7,10 @@
 // - production source maps are emitted but never referenced (hidden-source-map);
 // - index.html loads only external scripts (no inline script);
 // - the shell's share scope registers every shared SDK subpath, at the SDK's version, not only those the
-//   shell imports (a remote's SDK has no fallback: docs/e2e/integrated-deployment-report.md, Issue 2).
+//   shell imports (a remote's SDK has no fallback: docs/e2e/integrated-deployment-report.md, Issue 2);
+// - every lazily loaded chunk is in its entry's integrity map with its real sha384 (the shell's main
+//   bundle, the remote's remoteEntry.js), nothing else is emitted, and the script loader enforces it.
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { SDK_SUBPATHS, SDK_VERSION } from '../packages/webpack-preset/src/generated/sdk.ts';
@@ -37,15 +40,36 @@ for (const [name, b] of [['shell', shell], ['remote-tenders', remote]] as const)
 }
 check(remote.files.includes('remoteEntry.js'), 'remote-tenders: no remoteEntry.js');
 check(/\bvar tenders\b/.test(readFileSync(join(remoteDir, 'remoteEntry.js'), 'utf8')), 'remote-tenders: remoteEntry.js does not define window.tenders');
-check(!remote.js.includes('@platform/frontend-sdk:session-id'), 'remote-tenders: bundles SDK code (it must come from the shell)');
+check(!remote.js.includes('@bcbp-solutions-fzc-llc/frontend-sdk:session-id'), 'remote-tenders: bundles SDK code (it must come from the shell)');
 // The remote's JSX must come from the shell's React (another major's elements fail to render).
 check(/"react\/jsx-runtime"/.test(readFileSync(join(remoteDir, 'remoteEntry.js'), 'utf8')), 'remote-tenders: does not consume react/jsx-runtime from the shared scope');
-check(shell.js.includes('@platform/frontend-sdk:session-id'), 'shell: does not bundle the SDK');
+check(shell.js.includes('@bcbp-solutions-fzc-llc/frontend-sdk:session-id'), 'shell: does not bundle the SDK');
 // The share-scope registration webpack emits for a provided module: register("<key>","<version>",factory).
-const provided = new Set([...shell.js.matchAll(/\("(@platform\/frontend-sdk\/[a-z0-9]+)","([^"]+)",/g)].filter((m) => m[2] === SDK_VERSION).map((m) => m[1]!));
-const missing = SDK_SUBPATHS.filter((s) => s !== 'testing' && !provided.has(`@platform/frontend-sdk/${s}`));
-check(missing.length === 0, `shell: share scope does not provide @platform/frontend-sdk/{${missing.join(',')}} at ${SDK_VERSION}`);
-check(!provided.has('@platform/frontend-sdk/testing'), 'shell: provides @platform/frontend-sdk/testing (dev only)');
+const provided = new Set([...shell.js.matchAll(/\("(@bcbp-solutions-fzc-llc\/frontend-sdk\/[a-z0-9]+)","([^"]+)",/g)].filter((m) => m[2] === SDK_VERSION).map((m) => m[1]!));
+const missing = SDK_SUBPATHS.filter((s) => s !== 'testing' && !provided.has(`@bcbp-solutions-fzc-llc/frontend-sdk/${s}`));
+check(missing.length === 0, `shell: share scope does not provide @bcbp-solutions-fzc-llc/frontend-sdk/{${missing.join(',')}} at ${SDK_VERSION}`);
+check(!provided.has('@bcbp-solutions-fzc-llc/frontend-sdk/testing'), 'shell: provides @bcbp-solutions-fzc-llc/frontend-sdk/testing (dev only)');
+// Subresource Integrity on lazily loaded chunks (ChunkIntegrityPlugin): the entry's map equals the
+// sha384 of exactly the other scripts of the build.
+for (const [name, scriptDir, isEntry] of [
+  ['shell', join(shellDir, 'assets'), (f: string) => /^main\.[0-9a-f]+\.js$/.test(f)],
+  ['remote-tenders', remoteDir, (f: string) => f === 'remoteEntry.js'],
+] as const) {
+  const scripts = readdirSync(scriptDir).filter((f) => f.endsWith('.js'));
+  const entry = scripts.find(isEntry);
+  if (!entry) {
+    check(false, `${name}: no entry script`);
+    continue;
+  }
+  const runtime = readFileSync(join(scriptDir, entry), 'utf8');
+  const map = /sriHashes\s*=\s*(\{[^}]*\})/.exec(runtime)?.[1];
+  check(map !== undefined && !runtime.includes('__PLATFORM_CHUNK_INTEGRITY__'), `${name}: ${entry} has no chunk integrity map`);
+  check(/\.integrity=\w+\.sriHashes\[\w+\]\|\|"sha384-A{64}"/.test(runtime), `${name}: the script loader does not set integrity (fail-closed)`);
+  if (!map) continue;
+  const want = Object.values(JSON.parse(map) as Record<string, string>).sort();
+  const have = scripts.filter((f) => f !== entry).map((f) => `sha384-${createHash('sha384').update(readFileSync(join(scriptDir, f))).digest('base64')}`).sort();
+  check(JSON.stringify(want) === JSON.stringify(have), `${name}: the integrity map (${want.length}) does not match the ${have.length} lazily loaded scripts`);
+}
 const html = readFileSync(join(shellDir, 'index.html'), 'utf8');
 const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
 check(scripts.length > 0 && scripts.every(([, attrs, body]) => /\bsrc=/.test(attrs!) && body!.trim() === ''), 'shell: index.html has an inline script');

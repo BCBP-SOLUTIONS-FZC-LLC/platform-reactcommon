@@ -259,13 +259,13 @@ importers:
 
   examples/cloudfront:
     dependencies:
-      '@platform/frontend-sdk':
+      '@bcbp-solutions-fzc-llc/frontend-sdk':
         specifier: workspace:*
         version: link:../../packages/frontend-sdk
 
   examples/remote-tenders:
     dependencies:
-      '@platform/frontend-sdk':
+      '@bcbp-solutions-fzc-llc/frontend-sdk':
         specifier: workspace:*
         version: link:../../packages/frontend-sdk
       react:
@@ -275,7 +275,7 @@ importers:
         specifier: ^19.3.1
         version: 19.3.1(react@19.3.1)
     devDependencies:
-      '@platform/webpack-preset':
+      '@bcbp-solutions-fzc-llc/webpack-preset':
         specifier: workspace:*
         version: link:../../packages/webpack-preset
       '@types/react':
@@ -293,12 +293,12 @@ importers:
 
   examples/shell:
     dependencies:
+      '@bcbp-solutions-fzc-llc/frontend-sdk':
+        specifier: workspace:*
+        version: link:../../packages/frontend-sdk
       '@opentelemetry/api':
         specifier: ~1.10.0
         version: 1.10.0
-      '@platform/frontend-sdk':
-        specifier: workspace:*
-        version: link:../../packages/frontend-sdk
       react:
         specifier: ^19.3.1
         version: 19.3.1
@@ -306,7 +306,7 @@ importers:
         specifier: ^19.3.1
         version: 19.3.1(react@19.3.1)
     devDependencies:
-      '@platform/webpack-preset':
+      '@bcbp-solutions-fzc-llc/webpack-preset':
         specifier: workspace:*
         version: link:../../packages/webpack-preset
       '@types/react':

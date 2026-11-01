@@ -20,6 +20,7 @@ import { createServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { build } from 'esbuild';
+import { buildRemote } from './remote-build.ts';
 // @ts-expect-error plain JS module
 import { securityHeaders } from '../../examples/cloudfront/csp.mjs';
 
@@ -148,6 +149,8 @@ export async function startServer(port = Number(process.env.BROWSER_TEST_PORT ??
   const harnessFile = await buildHarness();
   const harnessJs = readFileSync(harnessFile);
   const harnessMap = readFileSync(`${harnessFile}.map`);
+  const remoteDir = join(BUILD_DIR, 'remote');
+  const { entryIntegrity } = await buildRemote(remoteDir);
   const indexHtml = readFileSync(join(HERE, 'harness/index.html'));
   const headers: Record<string, string> = securityHeaders();
 
@@ -189,6 +192,10 @@ export async function startServer(port = Number(process.env.BROWSER_TEST_PORT ??
     if (method === 'GET' && path === '/harness.js.map') return page(res, 'application/json', harnessMap);
     if (method === 'GET' && path === '/favicon.ico') return send(res, 204, 'image/x-icon', '', headers);
     if (method === 'GET' && path === '/config/runtime.json') return json(res, 200, RUNTIME_CONFIG, { ...headers, 'cache-control': 'no-cache' });
+    // The tenders remote (integrity.spec.ts): its entry's integrity, and its files as CloudFront serves them.
+    if (method === 'GET' && path === '/remotes/tenders/integrity') return json(res, 200, { entry: entryIntegrity });
+    const remoteFile = /^\/remotes\/tenders\/([\w.-]+\.js)$/.exec(path)?.[1];
+    if (method === 'GET' && remoteFile && existsSync(join(remoteDir, remoteFile))) return page(res, 'text/javascript; charset=utf-8', readFileSync(join(remoteDir, remoteFile)));
 
     // --- OTLP collectors -------------------------------------------------------------------------
     const otel = /^\/otel\/v1\/(traces|logs|metrics)$/.exec(path);

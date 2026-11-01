@@ -7,8 +7,11 @@
  * @packageDocumentation
  */
 import { createRequire } from 'node:module';
-import webpack, { type Compiler, type Configuration } from 'webpack';
+import webpack, { type Compilation, type Compiler, type Configuration } from 'webpack';
 import { SDK_PACKAGE, SDK_SHARE_RANGE, SDK_SUBPATHS, SDK_VERSION } from './generated/sdk.ts';
+import { ChunkIntegrityPlugin } from './integrity.ts';
+
+export { ChunkIntegrityPlugin, INTEGRITY_PLACEHOLDER, MISSING_INTEGRITY, integrityOf } from './integrity.ts';
 
 /** A Module Federation shared entry (the subset the platform uses). */
 export interface SharedConfig {
@@ -23,7 +26,7 @@ const pkg = createRequire(import.meta.url)('../package.json') as { platformShare
 
 function pin(name: string): string {
   const v = pkg.platformShared[name];
-  if (typeof v !== 'string') throw new Error(`@platform/webpack-preset package.json has no platformShared pin for ${name}`);
+  if (typeof v !== 'string') throw new Error(`@bcbp-solutions-fzc-llc/webpack-preset package.json has no platformShared pin for ${name}`);
   return v;
 }
 
@@ -89,6 +92,30 @@ const SHARED_SDK_SUBPATHS = SDK_SUBPATHS.filter((s) => !NOT_SHARED.has(s)).map((
  */
 export class ProvideSdkPlugin {
   apply(compiler: Compiler): void {
+    // ProvideSharedPlugin taps compiler.hooks.compilation and finishMake, which webpack copies into
+    // every child compiler (HtmlWebpackPlugin's, for one): applied to the compiler itself, each child
+    // compilation built and emitted a second, unused copy of every SDK chunk. It is applied to this
+    // adapter instead, whose hooks run for the main compilation only (thisCompilation, which child
+    // compilers do not inherit; finishMake for the compilation of this compiler).
+    type CompilationParams = Parameters<Parameters<Compiler['hooks']['thisCompilation']['tap']>[1]>[1];
+    const onCompilation: ((c: Compilation, p: CompilationParams) => void)[] = [];
+    const onFinishMake: ((c: Compilation) => Promise<unknown>)[] = [];
+    const adapter = {
+      context: compiler.context,
+      hooks: {
+        validate: { tap: () => {} },
+        compilation: { tap: (_: string, fn: (c: Compilation, p: CompilationParams) => void) => void onCompilation.push(fn) },
+        finishMake: { tapPromise: (_: string, fn: (c: Compilation) => Promise<unknown>) => void onFinishMake.push(fn) },
+      },
+    };
+    compiler.hooks.thisCompilation.tap(ProvideSdkPlugin.name, (compilation, params) => {
+      for (const fn of onCompilation) fn(compilation, params);
+    });
+    compiler.hooks.finishMake.tapPromise(ProvideSdkPlugin.name, async (compilation) => {
+      if (compilation.compiler !== compiler) return; // a child compilation (this tap is copied into it)
+      await Promise.all(onFinishMake.map((fn) => fn(compilation)));
+    });
+
     let applied = false;
     compiler.hooks.beforeCompile.tapPromise(ProvideSdkPlugin.name, async () => {
       if (applied) return;
@@ -107,7 +134,7 @@ export class ProvideSdkPlugin {
         if (!version) throw new Error(`${request} resolved to ${path}, which has no package.json version`);
         provides[path] = { shareKey: request, version, eager: false };
       }
-      new webpack.sharing.ProvideSharedPlugin({ provides }).apply(compiler);
+      new webpack.sharing.ProvideSharedPlugin({ provides }).apply(adapter as unknown as Compiler);
     });
   }
 }
@@ -136,8 +163,9 @@ export interface PresetOptions {
 
 /**
  * The platform's webpack settings for a shell or remote, to merge into the app's own config (the app adds
- * entry, loaders and dev server). Adds the ModuleFederationPlugin with sharedFor(role), and for the shell
- * the ProvideSdkPlugin (every SDK subpath in the share scope).
+ * entry, loaders and dev server). Adds the ModuleFederationPlugin with sharedFor(role), for the shell
+ * the ProvideSdkPlugin (every SDK subpath in the share scope), and in production the
+ * ChunkIntegrityPlugin (integrity on every lazily loaded chunk).
  */
 export function platformWebpackConfig(o: PresetOptions): Configuration {
   if (o.role !== 'shell' && o.role !== 'remote') throw new TypeError(`role must be 'shell' or 'remote', got ${JSON.stringify(o.role)}`);
@@ -173,7 +201,9 @@ export function platformWebpackConfig(o: PresetOptions): Configuration {
       // runtime and every remote's create it under the same name, so the CSP's trusted-types directive
       // carries 'allow-duplicates' (examples/cloudfront/csp.mjs).
       trustedTypes: { policyName: 'platform-webpack' },
-      crossOriginLoading: false,
+      // Lazily loaded chunks carry integrity (ChunkIntegrityPlugin); a cross-origin one is fetched with
+      // CORS, as SRI requires (webpack sets crossorigin only for URLs outside the page's origin).
+      crossOriginLoading: 'anonymous',
       // Every supported browser has globalThis: without this, webpack's runtime keeps a
       // new Function('return this') fallback, which script-src 'self' forbids.
       environment: { globalThis: true },
@@ -183,6 +213,7 @@ export function platformWebpackConfig(o: PresetOptions): Configuration {
     plugins: [
       new webpack.container.ModuleFederationPlugin(mf as ConstructorParameters<typeof webpack.container.ModuleFederationPlugin>[0]),
       ...(shell ? [new ProvideSdkPlugin()] : []),
+      ...(prod ? [new ChunkIntegrityPlugin()] : []),
     ],
   };
 }

@@ -11,6 +11,8 @@ where earlier bugs came from:
 | `events.spec.ts` | The order of `beforeunload`, `pagehide` and `visibilitychange` on close and on navigation in each engine. The SDK delivers in either order, and with `pagehide` alone. |
 | `http.spec.ts` | `/http` deadlines and aborts (before the response and while reading the body), with and without `AbortSignal.any` (Safari < 17.4), under GC pressure. Also checks that a long-lived caller signal does not keep growing its listener list. |
 | `platform-apis.spec.ts` | Trusted Types (`sanitizeHtml` returns TrustedHTML where the engine has it), `BroadcastChannel` and `storage` events across tabs, `crypto.subtle` SHA-256. |
+| `integrity.spec.ts` | The real tenders remote (built in production by global setup), loaded as the shell does under the production CSP: every chunk its webpack runtime injects carries its sha384, and a chunk altered in transit is refused, its code never run. |
+| `navigation.spec.ts` | A leaving page sees its in-flight request rejected, always after `beforeunload` (the signal `/auth` uses not to restore while navigating away). |
 | `csp.spec.ts` | Booting core, config, tracing, logging, metrics, http and security under the production CSP causes no violation and no `eval`/`new Function`. Two controls show that each engine's violation detectors work. |
 
 Every test also fails on any CSP violation, page error or console error in its pages (the `guard`

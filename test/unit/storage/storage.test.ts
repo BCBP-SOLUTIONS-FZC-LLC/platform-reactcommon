@@ -154,12 +154,12 @@ describe('clearAllAppStorage', () => {
     getRuntime().storageNamespace = `trial:${TENANT}`;
     storage('iam-admin', { area: 'session' }).set('b', 2);
     local.setItem(SESSION_ID_STORAGE_KEY, '6f1c2a4e-1b2c-4d3e-8f40-0123456789ab');
-    local.setItem('@platform/frontend-sdk:workspaces', '[]');
+    local.setItem('@bcbp-solutions-fzc-llc/frontend-sdk:workspaces', '[]');
     local.setItem('other-lib:setting', 'x');
     local.setItem('i18nextLng', 'ar');
     clearAllAppStorage();
     expect([...Array(local.length).keys()].map((i) => local.key(i)).sort()).toEqual(
-      ['@platform/frontend-sdk:workspaces', SESSION_ID_STORAGE_KEY, 'i18nextLng', 'other-lib:setting'].sort(),
+      ['@bcbp-solutions-fzc-llc/frontend-sdk:workspaces', SESSION_ID_STORAGE_KEY, 'i18nextLng', 'other-lib:setting'].sort(),
     );
     expect(session.length).toBe(0);
   });

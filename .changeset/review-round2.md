@@ -1,9 +1,9 @@
 ---
-'@platform/frontend-sdk': minor
-'@platform/webpack-preset': minor
+'@bcbp-solutions-fzc-llc/frontend-sdk': minor
+'@bcbp-solutions-fzc-llc/webpack-preset': minor
 ---
 
-`@platform/webpack-preset`: `sharedFor('remote')` requires `^<the SDK version the remote was built
+`@bcbp-solutions-fzc-llc/webpack-preset`: `sharedFor('remote')` requires `^<the SDK version the remote was built
 against>` for every SDK entry (the shell keeps `^1.0.0-0`), so a remote that needs a newer SDK than the
 shell provides fails share negotiation inside its `RemoteBoundary` instead of hitting a missing export at
 run time. Upgrade the shell first; roll it back only to an SDK at or above the newest one any deployed

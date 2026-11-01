@@ -35,13 +35,14 @@ fi
   cat release-notes.md
   echo ""
   echo "---"
-  echo "**Install** (the tarballs attached below; no registry yet):"
+  echo "**Install** from GitHub Packages (\`.npmrc\`: \`@bcbp-solutions-fzc-llc:registry=https://npm.pkg.github.com\` and a token with \`read:packages\`; see VERSIONING.md):"
   echo ""
   echo '```'
-  echo "gh release download ${RELEASE_TAG} --repo ${REPO} --pattern 'platform-*.tgz'"
-  echo "pnpm add ./platform-frontend-sdk-${VERSION}.tgz        # shell and remotes"
-  echo "pnpm add -D ./platform-webpack-preset-${VERSION}.tgz ./platform-eslint-plugin-${VERSION}.tgz"
+  echo "pnpm add @bcbp-solutions-fzc-llc/frontend-sdk@${VERSION}        # shell and remotes"
+  echo "pnpm add -D @bcbp-solutions-fzc-llc/webpack-preset@${VERSION} @bcbp-solutions-fzc-llc/eslint-plugin@${VERSION}"
   echo '```'
+  echo ""
+  echo "The same tarballs are attached below (\`gh release download ${RELEASE_TAG} --repo ${REPO} --pattern 'bcbp-solutions-fzc-llc-*.tgz'\`), with a build-provenance attestation each: \`gh attestation verify <tarball> --repo ${REPO}\`."
   echo ""
   echo "**Verify:** \`sha256sum --check checksums.txt\`; \`checksums.txt\` is Cosign keyless-signed (bundle: \`checksums.txt.sigstore.json\`):"
   echo ""

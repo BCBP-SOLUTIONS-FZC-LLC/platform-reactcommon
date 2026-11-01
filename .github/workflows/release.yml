@@ -7,7 +7,7 @@
 #
 #   verify ──┬─► validate-test ────┬──► interop ──────────────┐
 #            ├─► package ──────────┼──► trivy ────────────────┤
-#            │                     └──► smoke ────────────────┤──► publish
+#            │                     └──► smoke ────────────────┤──► npm-publish ──► publish
 #            ├─► validate-quality ────────────────────────────┤
 #            └─► validate-contracts ──────────────────────────┘
 #
@@ -24,8 +24,12 @@
 # checksums.txt.sigstore.json. Signer identity: release.yml@refs/tags/vX.Y.Z (or @refs/heads/main
 # for a dispatch from main).
 #
-# Publishes a GitHub Release only (tarballs, SBOM, signed checksums); no npm registry yet. A
-# registry publish, when one is chosen, is one more step in publish, after the signature check.
+# Publishes to GitHub Packages (npm-publish: @bcbp-solutions-fzc-llc/*, the same tarballs, with a
+# build-provenance attestation each), then the GitHub Release (tarballs, SBOM, signed checksums).
+# Order of the irreversible steps, as platform-fastapicommon's PyPI release: npm-publish (a version
+# can never be re-published) → publish (GitHub Release). npm-publish runs in the protected `npm`
+# environment (required reviewers) and is idempotent: a re-run skips versions already published with
+# the same integrity and refuses any other (VERSIONING.md, "Publishing").
 #
 # workflow_dispatch: GitHub runs this file and the reusable validate-*.yml from the DISPATCHING
 # ref, not from the tag, so verify refuses a dispatch unless github.ref is refs/heads/main or
@@ -126,6 +130,13 @@ jobs:
 
       - name: Pack
         run: bash .github/scripts/pack-packages.sh
+
+      # What GitHub Packages will receive: scope, registry, repository link, one version, no
+      # workspace: specs. DIST_TAG travels with the tarballs to the release's npm-publish job.
+      - name: Publish check
+        run: |
+          pnpm publish:check
+          pnpm exec tsx scripts/check-publish.ts --dist-tag > dist-packages/DIST_TAG
 
       - name: Upload tarballs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -246,11 +257,57 @@ jobs:
     secrets:
       gh_private_token: ${{ secrets.GO_PRIVATE_TOKEN }}
 
+  # ── release-only: GitHub Packages, the exact smoke-tested tarballs ────────
+  npm-publish:
+    name: npm publish (GitHub Packages)
+    runs-on: ubuntu-latest
+    needs: [verify, validate-test, validate-quality, validate-contracts, package, trivy, smoke, interop]
+    timeout-minutes: 10
+    environment: npm   # protected: required reviewers approve the irreversible publish
+    permissions:
+      contents: read
+      packages: write       # npm publish to npm.pkg.github.com with GITHUB_TOKEN
+      id-token: write       # build-provenance attestation (Sigstore)
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Install Node (GitHub Packages auth)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://npm.pkg.github.com
+          scope: '@bcbp-solutions-fzc-llc'
+
+      - name: Download tarballs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: packages-${{ env.RELEASE_TAG }}
+          path: dist-packages
+
+      # GitHub Packages has no npm provenance; this attestation binds each tarball to this workflow
+      # run (verify: gh attestation verify <tarball> --repo <repo>).
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist-packages/*.tgz
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PKG_DIR: dist-packages
+        run: bash .github/scripts/npm-publish.sh
+
   # ── release-only: the GitHub Release ─────────────────────────────────────
   publish:
     name: GitHub Release
     runs-on: ubuntu-latest
-    needs: [verify, validate-test, validate-quality, validate-contracts, package, trivy, smoke, interop]
+    needs: [verify, validate-test, validate-quality, validate-contracts, package, trivy, smoke, interop, npm-publish]
     timeout-minutes: 10
     permissions:
       contents: write

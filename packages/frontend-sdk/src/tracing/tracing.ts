@@ -54,7 +54,7 @@ interface TracingState {
   removeListeners: () => void;
 }
 
-const SDK_SCOPE = '@platform/frontend-sdk';
+const SDK_SCOPE = '@bcbp-solutions-fzc-llc/frontend-sdk';
 const TRACE_HEADERS = ['traceparent', 'tracestate'] as const;
 const propagator = new W3CTraceContextPropagator();
 const headerSetter: TextMapSetter<Headers> = { set: (carrier, key, value) => carrier.set(key, value) };

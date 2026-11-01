@@ -1,6 +1,6 @@
 # Contributing
 
-This is an internal shared library for BCBP Solutions platform web apps: the React micro-frontend SDK (`@platform/frontend-sdk`), the Module Federation preset (`@platform/webpack-preset`) and the consumer lint rules (`@platform/eslint-plugin`). This guide covers how to set up a development environment, add a subpath, a lint rule or a contract, write tests, and cut a release.
+This is an internal shared library for BCBP Solutions platform web apps: the React micro-frontend SDK (`@bcbp-solutions-fzc-llc/frontend-sdk`), the Module Federation preset (`@bcbp-solutions-fzc-llc/webpack-preset`) and the consumer lint rules (`@bcbp-solutions-fzc-llc/eslint-plugin`). This guide covers how to set up a development environment, add a subpath, a lint rule or a contract, write tests, and cut a release.
 
 ## Prerequisites
 
@@ -65,7 +65,7 @@ A subpath imports only lower subpaths that it lists in `imports`, and only throu
 
 1. Add the entry to `packages/frontend-sdk/subpaths.json`: `name`, `layer`, `area` (one of the seven functional areas) and the `imports` it needs.
 2. Implement it in `packages/frontend-sdk/src/<name>/index.ts`. Only what that file exports is public; put helpers in other files of the folder or in `src/internal/`.
-3. Run `pnpm exports:sync`. It regenerates the exports map and the SDK facts in `@platform/webpack-preset` (the shared list) and `@platform/eslint-plugin`. The build and the API reports pick the subpath up automatically.
+3. Run `pnpm exports:sync`. It regenerates the exports map and the SDK facts in `@bcbp-solutions-fzc-llc/webpack-preset` (the shared list) and `@bcbp-solutions-fzc-llc/eslint-plugin`. The build and the API reports pick the subpath up automatically.
 4. Add tests in `test/unit/<name>/` (and to `test/integration` if it changes how subpaths work together).
 5. Run `pnpm build && pnpm api` and commit `api/<name>.api.md`.
 6. Run `pnpm docs:sync` (dependency graph, area pages), and describe the subpath in the design doc, the LLD and its `docs/areas/` page.

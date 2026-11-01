@@ -144,7 +144,7 @@ test.describe('the tenders remote, deep links and the API through Envoy → go-p
     await signInFromScratch(page, alice, 'acme');
     await gotoDeepLink(page, '/t/acme/tenders/1/edit');
     await expect(page.getByRole('alert')).toBeVisible();
-    // Issue 2 (fixed): the shell provides @platform/frontend-sdk/problem although it never imports it, so the
+    // Issue 2 (fixed): the shell provides @bcbp-solutions-fzc-llc/frontend-sdk/problem although it never imports it, so the
     // remote (SDK import: false) evaluates and renders the problem instead of the boundary's fallback.
     await expect(page.getByRole('alert')).not.toHaveText(/Something went wrong/);
     // GET /api/tenders/1 → Envoy (jwt_authn, ext_authz) → go-probe: a gincommon 404 problem the remote shows.

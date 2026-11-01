@@ -52,7 +52,7 @@ const createPolicies = (page: import('@playwright/test').Page, names: string[]) 
   }, names);
 
 // docs/e2e/integrated-deployment-report.md, Issue 1: the shell's webpack runtime and every remote's create
-// the platform-webpack policy (one name from @platform/webpack-preset). Without 'allow-duplicates' the
+// the platform-webpack policy (one name from @bcbp-solutions-fzc-llc/webpack-preset). Without 'allow-duplicates' the
 // remote's runtime is refused and no remote loads.
 test("a remote's webpack runtime can create platform-webpack again after the shell's", async ({ openHarness }) => {
   const page = await openHarness();

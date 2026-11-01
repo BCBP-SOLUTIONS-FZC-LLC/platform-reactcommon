@@ -1,5 +1,5 @@
 ---
-'@platform/webpack-preset': minor
+'@bcbp-solutions-fzc-llc/webpack-preset': minor
 ---
 
 First release: `platformShared` (React, react-dom, `@opentelemetry/api` `~1.10.0` and every SDK subpath

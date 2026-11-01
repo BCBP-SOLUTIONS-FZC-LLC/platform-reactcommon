@@ -154,7 +154,7 @@ export function setRuntimeConfig(c: RuntimeConfig): void {
   const rt = getRuntime();
   if (rt.config !== undefined) {
     if (JSON.stringify(rt.config) === JSON.stringify(parsed)) return;
-    throw new Error('@platform/frontend-sdk: the runtime config is already set; it is set once, by the shell.');
+    throw new Error('@bcbp-solutions-fzc-llc/frontend-sdk: the runtime config is already set; it is set once, by the shell.');
   }
   rt.config = parsed;
 }

@@ -166,7 +166,7 @@ Severity scale:
 
   `securitypolicyviolation` reports `trusted-types / trusted-types-policy`. The Collector receives `remote failed to load`, `reason=incompatible`, "module ./EditTender is not exposed or failed to load". Firefox 157 shows the same.
 - **Root cause:** The webpack preset gives the shell and every remote the same `output.trustedTypes.policyName: 'platform-webpack'`. The remote's runtime calls `trustedTypes.createPolicy('platform-webpack')` a second time in the same page. `csp.mjs` lists the name once and has no `'allow-duplicates'`. The `test/browser` CSP suite boots only the shell, so it never loads a second webpack runtime.
-- **Owner:** SDK (`@platform/webpack-preset`) + CloudFront config (`examples/cloudfront/csp.mjs`).
+- **Owner:** SDK (`@bcbp-solutions-fzc-llc/webpack-preset`) + CloudFront config (`examples/cloudfront/csp.mjs`).
 - **Severity:** Critical: no micro-frontend works in production.
 - **Suggested fix:** Give remotes their own policy name, e.g. `platform-webpack-<remote>`, and generate the CSP `trusted-types` list from the manifest. Or add `'allow-duplicates'` to the CSP (simplest; the suite's fix variant shows it gets past this step). Add a real-browser test that loads one remote under `securitypolicy()`.
 
@@ -176,13 +176,13 @@ Severity scale:
 
 - **Symptom:** With Issue 1 fixed, the remote still fails: "module ./EditTender failed to evaluate".
 - **Evidence:** The factory throws:
-  > Shared module @platform/frontend-sdk/problem doesn't exist in shared scope default
+  > Shared module @bcbp-solutions-fzc-llc/frontend-sdk/problem doesn't exist in shared scope default
 
   The built shell's federation metadata lists only `auth, authz, config, core, flags, http, logging, metrics, mfe, react, security, tracing` (and i18n). There is no `problem`, `storage`, `nav` or root.
 - **Root cause:** Webpack provides a shared module only if the host bundle actually references it. `sharedFor('shell')` declares every subpath, but the example shell never imports `/problem`. The remote gets the SDK with `import: false`, so it has no fallback. `test/e2e/shell.test.tsx` mocks federation, so it cannot see this.
 - **Owner:** SDK (webpack preset) / example shell.
 - **Severity:** Critical: any remote that uses an SDK subpath the shell does not happen to use breaks at runtime, in production only.
-- **Suggested fix:** Have the preset add a generated "provide all SDK subpaths" module to the shell entry (`import('@platform/frontend-sdk/<each>')` in a never-executed branch, or `eager` provides). Have `pnpm examples:check` assert the shell's provided set ⊇ `SDK_SUBPATHS`.
+- **Suggested fix:** Have the preset add a generated "provide all SDK subpaths" module to the shell entry (`import('@bcbp-solutions-fzc-llc/frontend-sdk/<each>')` in a never-executed branch, or `eager` provides). Have `pnpm examples:check` assert the shell's provided set ⊇ `SDK_SUBPATHS`.
 
 Issue 18 makes this hard to diagnose: the logged error has no `cause`.
 

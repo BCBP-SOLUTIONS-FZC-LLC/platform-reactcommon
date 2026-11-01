@@ -1,4 +1,4 @@
-# `@platform/frontend-sdk` — design contract
+# `@bcbp-solutions-fzc-llc/frontend-sdk` — design contract
 
 Status: **approved for implementation, except the `/metrics` Tier 1 binding** (2026-10-30) · Scope: design
 only (deliverables C1–C5). Each subpath is implemented in a follow-up, one module at a time, against
@@ -14,7 +14,7 @@ relies on are listed in §D6.
 | `/core`, `/config`, `/tracing`, `/logging`, `/security`, `/flags`, `/nav`, `/i18n`, `/storage` | **Ready** | — |
 | `/problem` | **Ready** | — (gateway denials are RFC 9457 since AuthZ Enrichment #39, §D6 H) |
 | `/http`, `/mfe` | **Ready** (metrics via the no-op instrument port) | — |
-| `@platform/webpack-preset`, `@platform/eslint-plugin` | **Ready** | — |
+| `@bcbp-solutions-fzc-llc/webpack-preset`, `@bcbp-solutions-fzc-llc/eslint-plugin` | **Ready** | — |
 | `/authz` | **Ready** | — (real roles come from session context, IAM item A, merged: O&M #42/#46) |
 | `/auth` | **Ready**, including token refresh: the Keycloak multi-tab rotation test passed with RP #41's settings (§D6 L, RP #44). Resolve endpoint and session context are mocked from their contracts (§C5 #18) | (IAM rounds 1 and 2 are merged.) PUB-1 enabled at the edge, which needs the platform rate-limit service and the WAF challenge (§D6 B); web-app base URLs per environment (§D6 F). G (bff-signup returns the slug) is needed for the signup handoff |
 | `/react`, `/testing` | **Ready** | Session/workspace hooks ship with `/auth`; role, plan and flag hooks read session context (IAM item A, merged) |
@@ -81,7 +81,7 @@ workaround. The "backend wins" rule above still applies to contracts that alread
 ```
 platform-reactcommon/
   packages/
-    frontend-sdk/            @platform/frontend-sdk
+    frontend-sdk/            @bcbp-solutions-fzc-llc/frontend-sdk
       src/<subpath>/index.ts   one folder per subpath; index.ts is the ONLY public surface
       src/internal/            shared private helpers (not exported)
       contracts/               generated, committed: problem-types.json, registry-vocab.json,
@@ -90,8 +90,8 @@ platform-reactcommon/
                                gateway-deny-codes.json, metric-registry.json, tenant-resolve-cases.json (resolve endpoint request/response fixtures),
                                session-context-cases.json (P-35 response fixtures)
       api/                     api-extractor reports (public API snapshot, one per subpath)
-    webpack-preset/          @platform/webpack-preset  (MF shared config, CSP-safe output)
-    eslint-plugin/           @platform/eslint-plugin
+    webpack-preset/          @bcbp-solutions-fzc-llc/webpack-preset  (MF shared config, CSP-safe output)
+    eslint-plugin/           @bcbp-solutions-fzc-llc/eslint-plugin
   examples/shell, examples/remote-tenders
   scripts/sync-contracts.ts  regenerates contracts/ from ../go + ../python and the IAM repos (contracts/sources.json)
 ```
@@ -126,7 +126,7 @@ L5  react ─► anything above         testing ─► anything (dev only)
 - **Only `/tracing`, `/logging` and `/metrics` import `@opentelemetry/*`** (trace, logs and metrics SDKs
   respectively). Consumers never see OTel types, and no other subpath depends on one of those three for OTel.
 - No subpath reads module state of another directly. Cross-module wiring goes through the
-  `PlatformRuntime` registry in `/core`, stored at `globalThis[Symbol.for('@platform/frontend-sdk')]`
+  `PlatformRuntime` registry in `/core`, stored at `globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]`
   with its version. A second copy of the SDK (a remote that bundled it instead of sharing it)
   is detected, and the duplicate logs a one-time `error` and binds to the existing runtime when the major version matches.
 - Ports (interfaces) live in the lowest layer that needs them: `TokenSource` in `/http`,
@@ -1134,7 +1134,7 @@ except `getConfig()`, which remotes call through `tryGetConfig()`.
 
 ## C3. Module Federation and CloudFront
 
-### `@platform/webpack-preset`
+### `@bcbp-solutions-fzc-llc/webpack-preset`
 
 ```ts
 // shared — identical in shell and every remote; generated from the preset's own package.json pins
@@ -1146,9 +1146,9 @@ export const platformShared = {
   'react-dom':               { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
   'react-dom/client':        { singleton: true, strictVersion: true, requiredVersion: '^18.3.0' },
   '@opentelemetry/api':      { singleton: true, strictVersion: true, requiredVersion: '~1.10.0' }, // OTel JS 3 needs >=1.10 <1.11
-  '@platform/frontend-sdk':  { singleton: true, strictVersion: true, requiredVersion: '^1.0.0-0' },
+  '@bcbp-solutions-fzc-llc/frontend-sdk':  { singleton: true, strictVersion: true, requiredVersion: '^1.0.0-0' },
   // subpaths share the same instance: MF keys by request, so each used subpath is listed
-  ...Object.fromEntries(SUBPATHS.map(s => [`@platform/frontend-sdk/${s}`,
+  ...Object.fromEntries(SUBPATHS.map(s => [`@bcbp-solutions-fzc-llc/frontend-sdk/${s}`,
       { singleton: true, strictVersion: true, requiredVersion: '^1.0.0-0' }])),
 } as const;
 // shell: eager:false for all; remotes: import:false for the SDK (must come from the shell, never bundled)
@@ -1156,11 +1156,23 @@ export const platformShared = {
 ```
 
 The preset also sets `output.trustedTypes: { policyName: 'platform-webpack' }`,
-`output.crossOriginLoading: false` (same origin), devtool `hidden-source-map` (maps uploaded
+`output.crossOriginLoading: 'anonymous'` (set by webpack only for a chunk on another origin, which SRI
+fetches with CORS), devtool `hidden-source-map` (maps uploaded
 privately and not served), no `eval` devtools in any mode, and content hashing. The shell gets
 `publicPath: '/'` with its bundles under `assets/`: `index.html` is served for every deep link (the SPA
 rewrite), so a relative script URL would resolve under `/t/acme/…` or `/auth/callback` and fail. A remote
 keeps `publicPath: 'auto'`: its chunks load relative to its `remoteEntry.js`.
+
+**Chunk integrity (production).** The remote manifest pins `remoteEntry.js` with `integrity`, and
+`index.html` pins the shell's entry, but everything those entries load later would run unchecked. The
+preset's `ChunkIntegrityPlugin` puts a map of chunk id → sha384 of every lazily loaded JS chunk into
+each runtime chunk (the shell's main bundle, a remote's `remoteEntry.js`), and webpack's script loader
+sets `script.integrity` from it. A chunk id the map lacks gets a well-formed hash that matches nothing,
+so the load fails closed. The hashes are taken after minification and taken again after the final
+content hashing, which renames files and rewrites Terser's license banner. The map is then swapped for one
+of the same length, so no source-map column moves, and the build fails if any chunk no longer matches.
+The chain of trust is: manifest → entry → chunks. (`webpack-subresource-integrity` was not used: its
+Module Federation support is broken and unmaintained.)
 
 The shell provides **every** SDK subpath in the share scope (`ProvideSdkPlugin`), not only those its own
 code imports: webpack provides a shared request only when the bundle imports it, and a remote's SDK has
@@ -1224,7 +1236,7 @@ does not change), and the app origin is registered in each realm's `tender-web` 
 refresh `fetch`es need `connect-src`. There is no `frame-src`: silent renewal uses the refresh token,
 not an iframe.
 
-`style-src 'self'` stays strict (§D3). `@platform/ui` uses zero-runtime CSS (CSS Modules,
+`style-src 'self'` stays strict (§D3). `@bcbp-solutions-fzc-llc/ui` uses zero-runtime CSS (CSS Modules,
 vanilla-extract or Linaria, extracted at build time). React `style={{}}` is fine, because it goes
 through the CSSOM. Runtime CSS-in-JS (Emotion, styled-components, MUI) is not allowed without a
 written exception, and the only exception ever granted is `'unsafe-inline'` on `style-src`, never on `script-src`.
@@ -1236,20 +1248,20 @@ written exception, and the only exception ever granted is `'unsafe-inline'` on `
 ### Shell bootstrap (`examples/shell/src/bootstrap.tsx`)
 
 ```tsx
-import { initializeCore, setConsentProvider } from '@platform/frontend-sdk/core';
-import { loadRuntimeConfig, setRuntimeConfig } from '@platform/frontend-sdk/config';
-import { initializeTracing } from '@platform/frontend-sdk/tracing';
-import { initializeLogging, getLogger } from '@platform/frontend-sdk/logging';
-import { initializeMetrics, startWebVitals } from '@platform/frontend-sdk/metrics';
-import { setFlagProvider, runtimeConfigFlagProvider, sessionContextFlagProvider } from '@platform/frontend-sdk/flags';
+import { initializeCore, setConsentProvider } from '@bcbp-solutions-fzc-llc/frontend-sdk/core';
+import { loadRuntimeConfig, setRuntimeConfig } from '@bcbp-solutions-fzc-llc/frontend-sdk/config';
+import { initializeTracing } from '@bcbp-solutions-fzc-llc/frontend-sdk/tracing';
+import { initializeLogging, getLogger } from '@bcbp-solutions-fzc-llc/frontend-sdk/logging';
+import { initializeMetrics, startWebVitals } from '@bcbp-solutions-fzc-llc/frontend-sdk/metrics';
+import { setFlagProvider, runtimeConfigFlagProvider, sessionContextFlagProvider } from '@bcbp-solutions-fzc-llc/frontend-sdk/flags';
 import { createOidcProvider, initializeAuth, chooseWorkspace, rememberWorkspace, isWrongWorkspace,
-         signInAgain } from '@platform/frontend-sdk/auth';
-import { setTokenSource } from '@platform/frontend-sdk/http';
-import { setAuthorizer, setAuthzSubject, roleMapAuthorizer } from '@platform/frontend-sdk/authz';
-import { initializeI18n } from '@platform/frontend-sdk/i18n';
-import { loadManifest, startVersionPolling } from '@platform/frontend-sdk/mfe';
-import { installTrustedTypesPolicy } from '@platform/frontend-sdk/security';
-import { PlatformProvider, installGlobalErrorHandlers } from '@platform/frontend-sdk/react';
+         signInAgain } from '@bcbp-solutions-fzc-llc/frontend-sdk/auth';
+import { setTokenSource } from '@bcbp-solutions-fzc-llc/frontend-sdk/http';
+import { setAuthorizer, setAuthzSubject, roleMapAuthorizer } from '@bcbp-solutions-fzc-llc/frontend-sdk/authz';
+import { initializeI18n } from '@bcbp-solutions-fzc-llc/frontend-sdk/i18n';
+import { loadManifest, startVersionPolling } from '@bcbp-solutions-fzc-llc/frontend-sdk/mfe';
+import { installTrustedTypesPolicy } from '@bcbp-solutions-fzc-llc/frontend-sdk/security';
+import { PlatformProvider, installGlobalErrorHandlers } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
 import { createRoot } from 'react-dom/client';
 import { cmp } from './consent';
 import { permissions } from './permissions';
@@ -1333,9 +1345,9 @@ export async function bootstrap(): Promise<void> {
 ```tsx
 import { useState } from 'react';
 import { useApi, useApiClient, useHasPermission, useRouteTemplate, useT,
-         MFEErrorBoundary } from '@platform/frontend-sdk/react';
-import { isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@platform/frontend-sdk/problem';
-import { problemMessage } from '@platform/frontend-sdk/i18n';
+         MFEErrorBoundary } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
+import { isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@bcbp-solutions-fzc-llc/frontend-sdk/problem';
+import { problemMessage } from '@bcbp-solutions-fzc-llc/frontend-sdk/i18n';
 
 interface Tender { id: string; title: string; deadline: string; version: number }
 
@@ -1473,7 +1485,7 @@ never reaches a label. `canEdit` is a UI hint, and the PUT is authorised by the 
 |---|---|---|---|
 | D1 | Domain for frontend services | Decided: `portal`. In the registry since gincommon v2.3.0 (§D6 J) | — |
 | D2 | Tenant model, workspace switching | Decided by IAM (HLD v1.58, LLDs, code). Backend work is tracked in §D6 | First end-to-end environment (§D6). Implementation is not blocked |
-| D3 | CSS-in-JS vs strict `style-src` | Decided | `@platform/ui`, CSP |
+| D3 | CSS-in-JS vs strict `style-src` | Decided | `@bcbp-solutions-fzc-llc/ui`, CSP |
 | D4 | IdP proxy vs CSP allowlist | Decided by IAM: `auth.bcbpsolutions.com` | — |
 | D5 | Registry ratification | Decided. Needs governance approval | `/metrics` Tier 1 binding only |
 | D6 | Backend changes the SDK relies on | Requested (nothing is in production, so each is fixed at the source) | See §D6 |
@@ -1540,7 +1552,7 @@ Also relevant from the FE screen spec (a draft under `iam-catalog-admin/Claude o
 
 ### D3. CSS-in-JS vs strict `style-src`
 
-Keep `style-src 'self'`. `@platform/ui` uses zero-runtime CSS (CSS Modules, vanilla-extract, or
+Keep `style-src 'self'`. `@bcbp-solutions-fzc-llc/ui` uses zero-runtime CSS (CSS Modules, vanilla-extract, or
 Linaria, all extracted at build time).
 - Runtime CSS-in-JS (Emotion, styled-components, MUI via Emotion) injects `<style>` tags at runtime,
   which needs a nonce or `'unsafe-inline'`.

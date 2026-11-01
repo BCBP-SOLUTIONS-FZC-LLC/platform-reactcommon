@@ -43,7 +43,7 @@ vi.mock('react-dom/client', async (importOriginal) => {
 });
 
 // The examples are imported at run time: they are type-checked by their own tsconfig (which maps
-// @platform/frontend-sdk/* to the SDK source, as vitest.config.ts aliases it).
+// @bcbp-solutions-fzc-llc/frontend-sdk/* to the SDK source, as vitest.config.ts aliases it).
 const example = (path: string) => import(/* @vite-ignore */ join(testenv.root, 'examples', path));
 const shell = async () => (await example('shell/src/bootstrap.tsx')) as { bootstrap(): Promise<void> };
 const screen = async () => (await example('shell/src/screen.tsx')) as { hideScreen(): void };

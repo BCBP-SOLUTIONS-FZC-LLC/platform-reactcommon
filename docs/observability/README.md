@@ -54,7 +54,7 @@ The one exception is a remote's **own** Tier 2/3 metrics. `metricslint` requires
 | 3 — service-specific | `<domain>_<service>_*` | The team, no registry entry | `getServiceMeter({ mfe })` |
 
 ```ts
-import { getServiceMeter } from '@platform/frontend-sdk/metrics';
+import { getServiceMeter } from '@bcbp-solutions-fzc-llc/frontend-sdk/metrics';
 
 // In the tenders remote (ownerDomain tender_management, service tenders):
 const drafts = getServiceMeter({ mfe: 'tenders' }).counter('tender_management_tenders_drafts_saved_total', 'Drafts saved.', ['outcome']);

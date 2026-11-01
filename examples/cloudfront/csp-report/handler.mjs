@@ -13,7 +13,7 @@
 // Environment: ORIGIN_VERIFY_SECRET, COLLECTOR_LOGS_URL (e.g. http://otel-collector:4318/v1/logs),
 // SERVICE_NAMESPACE (the page's domain, 'portal' per §D1), DEPLOYMENT_ENVIRONMENT.
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { sanitizeString } from '@platform/frontend-sdk/core';
+import { sanitizeString } from '@bcbp-solutions-fzc-llc/frontend-sdk/core';
 
 const MAX_BODY = 64 * 1024;
 const MAX_REPORTS = 20;

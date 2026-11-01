@@ -105,7 +105,7 @@ function warnOnce(key: string, message: string): void {
   if (s.warned.has(key)) return;
   s.warned.add(key);
   const env = getIdentity()?.environment;
-  if (env === undefined || env === 'local' || env === 'dev') console.warn(`@platform/frontend-sdk/metrics: ${message}`);
+  if (env === undefined || env === 'local' || env === 'dev') console.warn(`@bcbp-solutions-fzc-llc/frontend-sdk/metrics: ${message}`);
 }
 
 function resolveScope(scope?: Partial<MfeScope>): ScopeIdentity | undefined {
@@ -358,7 +358,7 @@ export function initializeMetrics(o: { otlpBaseUrl: string; exportIntervalMs?: n
     readers: [reader],
   });
   s.provider = provider;
-  s.meter = provider.getMeter('@platform/frontend-sdk');
+  s.meter = provider.getMeter('@bcbp-solutions-fzc-llc/frontend-sdk');
   const flush = () => void provider.forceFlush().catch(() => {});
   const onVisibility = () => {
     if (globalThis.document?.visibilityState === 'hidden') flush();

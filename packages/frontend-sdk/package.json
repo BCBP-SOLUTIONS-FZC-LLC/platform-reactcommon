@@ -1,6 +1,12 @@
 {
-  "name": "@platform/frontend-sdk",
+  "name": "@bcbp-solutions-fzc-llc/frontend-sdk",
   "version": "1.0.0-alpha.0",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon.git",
+    "directory": "packages/frontend-sdk"
+  },
   "description": "Shared TypeScript SDK for React micro-frontends: contract-compatible with platform-gincommon and platform-fastapicommon.",
   "type": "module",
   "sideEffects": false,
@@ -102,9 +108,6 @@
       "optional": true
     }
   },
-  "publishConfig": {
-    "access": "restricted"
-  },
   "devDependencies": {
     "@opentelemetry/api": "^1.10.0",
     "@types/react": "^19.3.0",
@@ -125,5 +128,8 @@
     "@types/trusted-types": "^2.0.7",
     "dompurify": "^3.4.17",
     "zod": "^4.6.7"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   }
 }

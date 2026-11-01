@@ -1,18 +1,18 @@
 // The shell bootstrap of design doc §C4 (sequence: §C2), as written there.
-import { initializeCore, setConsentProvider } from '@platform/frontend-sdk/core';
-import { loadRuntimeConfig, setRuntimeConfig } from '@platform/frontend-sdk/config';
-import { initializeTracing } from '@platform/frontend-sdk/tracing';
-import { initializeLogging, getLogger } from '@platform/frontend-sdk/logging';
-import { initializeMetrics, startWebVitals } from '@platform/frontend-sdk/metrics';
-import { setFlagProvider, runtimeConfigFlagProvider, sessionContextFlagProvider } from '@platform/frontend-sdk/flags';
+import { initializeCore, setConsentProvider } from '@bcbp-solutions-fzc-llc/frontend-sdk/core';
+import { loadRuntimeConfig, setRuntimeConfig } from '@bcbp-solutions-fzc-llc/frontend-sdk/config';
+import { initializeTracing } from '@bcbp-solutions-fzc-llc/frontend-sdk/tracing';
+import { initializeLogging, getLogger } from '@bcbp-solutions-fzc-llc/frontend-sdk/logging';
+import { initializeMetrics, startWebVitals } from '@bcbp-solutions-fzc-llc/frontend-sdk/metrics';
+import { setFlagProvider, runtimeConfigFlagProvider, sessionContextFlagProvider } from '@bcbp-solutions-fzc-llc/frontend-sdk/flags';
 import { createOidcProvider, initializeAuth, chooseWorkspace, rememberWorkspace, isWrongWorkspace,
-         signInAgain } from '@platform/frontend-sdk/auth';
-import { setTokenSource } from '@platform/frontend-sdk/http';
-import { setAuthorizer, setAuthzSubject, roleMapAuthorizer } from '@platform/frontend-sdk/authz';
-import { initializeI18n } from '@platform/frontend-sdk/i18n';
-import { loadManifest, startVersionPolling } from '@platform/frontend-sdk/mfe';
-import { installTrustedTypesPolicy } from '@platform/frontend-sdk/security';
-import { PlatformProvider, installGlobalErrorHandlers } from '@platform/frontend-sdk/react';
+         signInAgain } from '@bcbp-solutions-fzc-llc/frontend-sdk/auth';
+import { setTokenSource } from '@bcbp-solutions-fzc-llc/frontend-sdk/http';
+import { setAuthorizer, setAuthzSubject, roleMapAuthorizer } from '@bcbp-solutions-fzc-llc/frontend-sdk/authz';
+import { initializeI18n } from '@bcbp-solutions-fzc-llc/frontend-sdk/i18n';
+import { loadManifest, startVersionPolling } from '@bcbp-solutions-fzc-llc/frontend-sdk/mfe';
+import { installTrustedTypesPolicy } from '@bcbp-solutions-fzc-llc/frontend-sdk/security';
+import { PlatformProvider, installGlobalErrorHandlers } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
 import { createRoot } from 'react-dom/client';
 import { cmp } from './consent';
 import { permissions } from './permissions';

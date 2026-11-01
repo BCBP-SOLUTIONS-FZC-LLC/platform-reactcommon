@@ -1,6 +1,6 @@
 // The shell's session screens (design doc §C1 /auth, §C2 step 7). None of them signs in on its own:
 // every login starts from the user's click.
-import type { IdentityProvider, SessionState } from '@platform/frontend-sdk/auth';
+import type { IdentityProvider, SessionState } from '@bcbp-solutions-fzc-llc/frontend-sdk/auth';
 import { askForWorkspace } from './IdentifierFirst';
 import { hideScreen, showScreen } from './screen';
 

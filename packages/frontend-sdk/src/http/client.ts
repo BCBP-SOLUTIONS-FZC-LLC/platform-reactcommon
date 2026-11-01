@@ -470,7 +470,7 @@ function subscribe<T>(shared: Shared, signal?: AbortSignal): Promise<ApiResponse
 
 function startCall(method: Method, template: RouteTemplate, o: RequestOptions, baseUrl: string | undefined, mfe: string): Call {
   const url = buildUrl(baseUrl ?? tryGetConfig()?.api.baseUrl ?? '/api', template, o.params, o.query);
-  const span = getTracer('@platform/frontend-sdk/http').startSpan(`HTTP ${method}`, {
+  const span = getTracer('@bcbp-solutions-fzc-llc/frontend-sdk/http').startSpan(`HTTP ${method}`, {
     'http.request.method': method,
     'url.template': template,
     mfe,

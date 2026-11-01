@@ -7,7 +7,7 @@
     "frontend",
     "proposed"
   ],
-  "description": "Tier 1 browser metrics recorded by @platform/frontend-sdk for every web shell and its remotes. Every metric here is PROPOSED (monitoring/registry/platform-web.proposal.json) and awaits governance ratification; until then the SDK records none of them and the panels are empty. docs/observability/tier1-ratification.md.",
+  "description": "Tier 1 browser metrics recorded by @bcbp-solutions-fzc-llc/frontend-sdk for every web shell and its remotes. Every metric here is PROPOSED (monitoring/registry/platform-web.proposal.json) and awaits governance ratification; until then the SDK records none of them and the panels are empty. docs/observability/tier1-ratification.md.",
   "schemaVersion": 39,
   "version": 1,
   "editable": true,

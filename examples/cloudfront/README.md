@@ -30,6 +30,7 @@ platform's infrastructure repository owns the distribution; it takes these files
    overwrite a version.
 2. Write `/remotes/manifest.json`:
    `{ "tenders": { "entry": "/remotes/tenders/<version>/remoteEntry.js", "version": "<version>", "ownerDomain": "tender_management", "integrity": "sha384-…" } }`.
+   The `integrity` (sha384 of the uploaded `remoteEntry.js`) is the root of the chain of trust: `remoteEntry.js` carries the sha384 of each of the remote's chunks (`@bcbp-solutions-fzc-llc/webpack-preset`'s `ChunkIntegrityPlugin`), and the browser refuses a chunk that doesn't match. Never rewrite a file after the build (no minify-on-upload, no injected banners), or every load of it fails. A remote on **another origin** must also send `Access-Control-Allow-Origin` for the shell's origin on its `.js` files: an integrity-checked cross-origin script is fetched with CORS.
 3. Upload the shell (`examples/shell/dist`): hashed files first, `index.html` last.
 4. Write `/version.json` (`{ "version": "<shell build version>" }`), which tells open tabs an update exists.
 
@@ -59,13 +60,13 @@ report-uri /csp-report; report-to csp
   runtime.json is attack surface. Each must be an exact `https://host[:port]` origin (no wildcard, path,
   trailing slash or `http:`; runtime.json's `http://localhost` dev origins have no place in a deployed
   CSP), or `buildCsp` throws. Both default to none, which gives the policy above.
-- The three Trusted Types policies are the SDK's (`/security`), webpack's (`@platform/webpack-preset`)
+- The three Trusted Types policies are the SDK's (`/security`), webpack's (`@bcbp-solutions-fzc-llc/webpack-preset`)
   and DOMPurify's. `'allow-duplicates'` is required: the shell's webpack runtime and every remote's
   create `platform-webpack`, and without it no remote can load. A name outside the list is still refused.
 - Nothing in the SDK or the example builds needs `eval`: the preset removes webpack's `new Function`
   fallback (`output.environment.globalThis`), and the SDK runs Zod jitless. `pnpm examples:check`
   checks the built output.
-- `style-src 'self'` stays strict (§D3): zero-runtime CSS only; `@platform/eslint-plugin`'s
+- `style-src 'self'` stays strict (§D3): zero-runtime CSS only; `@bcbp-solutions-fzc-llc/eslint-plugin`'s
   `no-runtime-css-in-js` rule enforces it in code.
 
 ## `/csp-report`
@@ -75,7 +76,7 @@ or `application/csp-report`. The handler keeps the effective directive, disposit
 of the blocked, document and source URLs (no query string, fragment or credentials), runs every value
 through the SDK's redaction (`sanitizeString`), and posts OTLP/HTTP JSON logs
 (`event.name=csp.violation`, severity WARN) to `COLLECTOR_LOGS_URL`. Bundle it with its
-`@platform/frontend-sdk/core` import (e.g. esbuild, `--platform=node`). Environment:
+`@bcbp-solutions-fzc-llc/frontend-sdk/core` import (e.g. esbuild, `--platform=node`). Environment:
 `ORIGIN_VERIFY_SECRET`, `COLLECTOR_LOGS_URL`, `SERVICE_NAMESPACE` (`portal`, §D1), `DEPLOYMENT_ENVIRONMENT`.
 
 ### Origin authentication: a secret origin header, not OAC

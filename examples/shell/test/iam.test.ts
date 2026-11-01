@@ -2,7 +2,7 @@
 // which sync-contracts checks against iam-org-membership's swagger. Run through the real ApiClient.
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createTestPlatform, mockApi } from '@platform/frontend-sdk/testing';
+import { createTestPlatform, mockApi } from '@bcbp-solutions-fzc-llc/frontend-sdk/testing';
 import { sessionContextSource, workspaceResolver } from '../src/iam';
 
 interface Cases<C> {

@@ -83,6 +83,13 @@ jobs:
       - name: Pack
         run: bash .github/scripts/pack-packages.sh
 
+      # What GitHub Packages will receive: scope, registry, repository link, one version, no
+      # workspace: specs. DIST_TAG travels with the tarballs to the release's npm-publish job.
+      - name: Publish check
+        run: |
+          pnpm publish:check
+          pnpm exec tsx scripts/check-publish.ts --dist-tag > dist-packages/DIST_TAG
+
       - name: Upload tarballs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

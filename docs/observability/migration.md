@@ -1,31 +1,31 @@
 # Moving an existing app onto the SDK
 
-gincommon's migration page maps removed metric names to their standard replacements. The SDK has no legacy names: it started on the standard, and no frontend has been deployed. This page maps the patterns an existing React app usually has to what replaces them, and to the lint rule or check that catches what's left over. `@platform/eslint-plugin`'s `configs.recommended` turns on every rule below.
+gincommon's migration page maps removed metric names to their standard replacements. The SDK has no legacy names: it started on the standard, and no frontend has been deployed. This page maps the patterns an existing React app usually has to what replaces them, and to the lint rule or check that catches what's left over. `@bcbp-solutions-fzc-llc/eslint-plugin`'s `configs.recommended` turns on every rule below.
 
 ## Pattern mapping
 
 | Before | After | Caught by |
 |---|---|---|
-| `fetch('/api/tenders/' + id)`, axios | `useApi((c, signal) => c.get('/tenders/:id', { params: { id }, signal }))`, or `useApiClient()` | `@platform/api-route-template` (built URLs) |
-| Setting `x-tenant-id` / `x-user-id` in a request | Nothing: the gateway derives identity from the token | `@platform/no-identity-headers`; `/http` drops them |
+| `fetch('/api/tenders/' + id)`, axios | `useApi((c, signal) => c.get('/tenders/:id', { params: { id }, signal }))`, or `useApiClient()` | `@bcbp-solutions-fzc-llc/api-route-template` (built URLs) |
+| Setting `x-tenant-id` / `x-user-id` in a request | Nothing: the gateway derives identity from the token | `@bcbp-solutions-fzc-llc/no-identity-headers`; `/http` drops them |
 | Reading `response.json().message` on errors | `isProblemError(e)` → `e.is(PlatformProblemTypes.X)`, `toFieldErrorMap(e)`, `problemMessage(e)` | — |
 | `console.log` / `console.error` | `getLogger({ mfe }).info/warn/error(msg, attrs)` (correlated, redacted, consent-gated) | — |
 | Ad-hoc timing + a metrics SDK | Tier 3 `getServiceMeter({ mfe })` (names `<domain>_<service>_*`); HTTP and remote-load timing are recorded by the SDK | `InvalidMetricError` at registration; `metricslint check` on `renderMetricInventory()` in CI |
-| `localStorage.setItem('token', …)` | Nothing: tokens stay in the SDK's memory | `@platform/no-raw-storage`; `ForbiddenStorageKeyError` |
-| `localStorage` for app data | `storage(appId).set(key, value)` (namespaced by workspace, cleared on logout) | `@platform/no-raw-storage` |
-| `el.innerHTML = html`, `dangerouslySetInnerHTML={{ __html: html }}` | `sanitizeHtml(html)` from `/security` | `@platform/no-unsafe-html` |
-| `styled-components`, Emotion, MUI | Zero-runtime CSS (CSS Modules, vanilla-extract, Linaria) | `@platform/no-runtime-css-in-js` |
+| `localStorage.setItem('token', …)` | Nothing: tokens stay in the SDK's memory | `@bcbp-solutions-fzc-llc/no-raw-storage`; `ForbiddenStorageKeyError` |
+| `localStorage` for app data | `storage(appId).set(key, value)` (namespaced by workspace, cleared on logout) | `@bcbp-solutions-fzc-llc/no-raw-storage` |
+| `el.innerHTML = html`, `dangerouslySetInnerHTML={{ __html: html }}` | `sanitizeHtml(html)` from `/security` | `@bcbp-solutions-fzc-llc/no-unsafe-html` |
+| `styled-components`, Emotion, MUI | Zero-runtime CSS (CSS Modules, vanilla-extract, Linaria) | `@bcbp-solutions-fzc-llc/no-runtime-css-in-js` |
 | `window.location.href = returnUrl` | `navigate(appId, path)`; `isSafeRedirect(url)` for any redirect target | — |
 | An app-owned OIDC library, tokens in storage | `/auth` (`createOidcProvider`, shell only); remotes read `useSession`, `useCurrentUser` | — |
 | Hard-coded role checks | `useHasPermission(action, resource)`, `<Can>` (role map set by the shell from P-35) | — |
-| `import x from '@platform/frontend-sdk'`, deep imports | Subpath imports (`@platform/frontend-sdk/http`) | `@platform/no-sdk-root-import`, `no-sdk-deep-import` |
+| `import x from '@bcbp-solutions-fzc-llc/frontend-sdk'`, deep imports | Subpath imports (`@bcbp-solutions-fzc-llc/frontend-sdk/http`) | `@bcbp-solutions-fzc-llc/no-sdk-root-import`, `no-sdk-deep-import` |
 | Its own webpack Module Federation config | `platformWebpackConfig({ role: 'remote', name, exposes, mode })` | `pnpm examples:check`-style checks in the app's CI |
 | `eval`, `new Function`, inline scripts | Not allowed (CSP `script-src 'self'`) | `no-eval`, `no-implied-eval`, `no-new-func` |
 
 ## Upgrading a remote
 
-1. Add `@platform/frontend-sdk` as a dependency and build with `@platform/webpack-preset`. The SDK is then shared from the shell (`import: false`), never bundled.
-2. Add `@platform/eslint-plugin` with `configs.recommended`, and fix what it reports.
+1. Add `@bcbp-solutions-fzc-llc/frontend-sdk` as a dependency and build with `@bcbp-solutions-fzc-llc/webpack-preset`. The SDK is then shared from the shell (`import: false`), never bundled.
+2. Add `@bcbp-solutions-fzc-llc/eslint-plugin` with `configs.recommended`, and fix what it reports.
 3. Wrap the exposed module's root in `<MFEErrorBoundary mfe="<name>">`, or rely on the shell's `RemoteBoundary`.
 4. Replace data fetching with `useApi` / `useApiClient` and route templates. Register each page's template with `useRouteTemplate('/tenders/:id/edit')`.
 5. Replace error handling with the problem helpers. Map field errors with `toFieldErrorMap`.

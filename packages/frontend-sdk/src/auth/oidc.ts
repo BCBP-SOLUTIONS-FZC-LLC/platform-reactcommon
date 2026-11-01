@@ -15,11 +15,11 @@ type Reason = 'step-up' | 'restore' | 'login' | 'switch';
 type Settled = Extract<SessionState, { status: 'authenticated' | 'anonymous' }>;
 
 // SDK-reserved keys, outside /storage namespaces.
-export const PENDING_PREFIX = '@platform/frontend-sdk:auth:pending:';
-export const RESTORE_MARK_KEY = '@platform/frontend-sdk:auth:restore-attempt'; // sessionStorage: the loop guard
-export const SIGNED_OUT_KEY = '@platform/frontend-sdk:auth:signed-out'; // localStorage, shared by tabs
-export const ACTIVITY_KEY = '@platform/frontend-sdk:auth:last-activity'; // localStorage, shared by tabs
-export const LAST_USER_KEY = '@platform/frontend-sdk:auth:last-user'; // localStorage: SHA-256 of realm + sub, never the sub
+export const PENDING_PREFIX = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:pending:';
+export const RESTORE_MARK_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:restore-attempt'; // sessionStorage: the loop guard
+export const SIGNED_OUT_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:signed-out'; // localStorage, shared by tabs
+export const ACTIVITY_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-activity'; // localStorage, shared by tabs
+export const LAST_USER_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-user'; // localStorage: SHA-256 of realm + sub, never the sub
 export const CHANNEL_NAME = 'platform-auth';
 
 const PENDING_TTL_MS = 10 * 60_000;

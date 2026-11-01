@@ -24,6 +24,7 @@
     "api:check": "pnpm -r api:check",
     "metrics:parity": "tsx scripts/metrics-parity.ts",
     "metrics:proposal": "tsx scripts/metrics-proposal.ts",
+    "publish:check": "tsx scripts/check-publish.ts",
     "examples:check": "tsx scripts/check-examples.ts",
     "docs:sync": "tsx scripts/sync-docs.ts",
     "docs:check": "tsx scripts/sync-docs.ts --check",

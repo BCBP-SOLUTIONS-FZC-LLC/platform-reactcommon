@@ -8,7 +8,7 @@ set -euo pipefail
 : "${GH_TOKEN:?GH_TOKEN is required}"
 
 shopt -s nullglob
-TARBALLS=(platform-*.tgz)
+TARBALLS=(bcbp-solutions-fzc-llc-*.tgz)
 for f in release-notes.md checksums.txt checksums.txt.sigstore.json sbom.cyclonedx.json "${TARBALLS[@]}"; do
   test -f "$f" || {
     echo "::error::Release asset missing: ${f}"

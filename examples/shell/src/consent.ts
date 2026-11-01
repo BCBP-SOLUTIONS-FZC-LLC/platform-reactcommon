@@ -1,6 +1,6 @@
 // A stand-in for the consent management platform (CMP): essential telemetry always; telemetry and
 // analytics once the user accepts. A real shell wires its CMP's API here.
-import type { ConsentCategory, ConsentProvider } from '@platform/frontend-sdk/core';
+import type { ConsentCategory, ConsentProvider } from '@bcbp-solutions-fzc-llc/frontend-sdk/core';
 
 const granted = new Set<ConsentCategory>(['essential']);
 const listeners = new Set<() => void>();

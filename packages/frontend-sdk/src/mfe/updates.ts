@@ -6,7 +6,7 @@ import { getRuntime } from '../internal/runtime.ts';
 import { getLogger } from '../logging/index.ts';
 import { RemoteLoadError } from './remote.ts';
 
-const RELOAD_GUARD_KEY = '@platform/frontend-sdk:chunk-reload';
+const RELOAD_GUARD_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:chunk-reload';
 const CHUNK_ERROR = /Loading (CSS )?chunk [\w-]+ failed|Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i;
 
 interface UpdateState {

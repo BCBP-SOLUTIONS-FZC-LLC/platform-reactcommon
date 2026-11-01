@@ -112,7 +112,7 @@ export function initializeLogging(o: { otlpBaseUrl: string; level?: LogLevel; ba
 
   getRuntime().logging = {
     provider,
-    logger: provider.getLogger('@platform/frontend-sdk'),
+    logger: provider.getLogger('@bcbp-solutions-fzc-llc/frontend-sdk'),
     processor,
     level,
     stats,

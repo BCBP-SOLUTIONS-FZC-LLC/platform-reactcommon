@@ -5,11 +5,11 @@ graph TD
     end
 
     subgraph tooling["Build-time packages"]
-        preset["@platform/webpack-preset<br/>platformShared · sharedFor · containerName<br/>platformWebpackConfig (Trusted Types, no eval, hidden maps)"]
-        eslint["@platform/eslint-plugin<br/>7 rules + configs.recommended"]
+        preset["@bcbp-solutions-fzc-llc/webpack-preset<br/>platformShared · sharedFor · containerName<br/>platformWebpackConfig (Trusted Types, no eval, hidden maps)"]
+        eslint["@bcbp-solutions-fzc-llc/eslint-plugin<br/>7 rules + configs.recommended"]
     end
 
-    subgraph sdk["@platform/frontend-sdk  —  17 subpaths, no root barrel ('.' throws)"]
+    subgraph sdk["@bcbp-solutions-fzc-llc/frontend-sdk  —  17 subpaths, no root barrel ('.' throws)"]
         L5["L5  /react (hooks, boundaries, PlatformProvider)  ·  /testing (dev only)"]
         L4["L4  /auth (Keycloak OIDC, PKCE)  ·  /mfe (manifest, loadRemote, app updates)  ·  /nav"]
         L3["L3  /http (ApiClient)  ·  /flags  ·  /i18n"]

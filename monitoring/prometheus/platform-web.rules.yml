@@ -1,4 +1,4 @@
-# platform-reactcommon — reference Prometheus rules for web shells built on @platform/frontend-sdk
+# platform-reactcommon — reference Prometheus rules for web shells built on @bcbp-solutions-fzc-llc/frontend-sdk
 # (load alongside the backend services' rules).
 #
 # Enterprise Platform Observability Standard. Every rule here queries a Tier 1 platform_web_* metric

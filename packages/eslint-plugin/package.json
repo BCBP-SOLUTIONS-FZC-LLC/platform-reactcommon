@@ -1,6 +1,12 @@
 {
-  "name": "@platform/eslint-plugin",
+  "name": "@bcbp-solutions-fzc-llc/eslint-plugin",
   "version": "1.0.0-alpha.0",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon.git",
+    "directory": "packages/eslint-plugin"
+  },
   "description": "ESLint rules for the platform's shell and remotes: SDK subpath imports, no identity headers, storage and HTML through the SDK, no runtime CSS-in-JS, route templates (design doc).",
   "type": "module",
   "sideEffects": false,
@@ -20,11 +26,11 @@
   "peerDependencies": {
     "eslint": "^9.0.0 || ^10.0.0"
   },
-  "publishConfig": {
-    "access": "restricted"
-  },
   "devDependencies": {
     "@types/estree": "^1.0.10",
     "eslint": "^10.13.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   }
 }

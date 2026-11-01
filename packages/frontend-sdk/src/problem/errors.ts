@@ -29,7 +29,7 @@ export interface ProblemDetails {
 }
 
 // Recognises a ProblemError from any copy of the SDK on the page (instanceof would not).
-const PROBLEM_ERROR_BRAND = Symbol.for('@platform/frontend-sdk/ProblemError');
+const PROBLEM_ERROR_BRAND = Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk/ProblemError');
 
 /**
  * The type id: the last two path segments of an absolute type URI ("platform/not-found"), so it

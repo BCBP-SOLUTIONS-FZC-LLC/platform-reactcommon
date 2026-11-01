@@ -63,7 +63,7 @@ jobs:
             exit 1
           fi
 
-      - name: Lint (ESLint, dependency boundaries, @platform/eslint-plugin on the examples)
+      - name: Lint (ESLint, dependency boundaries, @bcbp-solutions-fzc-llc/eslint-plugin on the examples)
         run: pnpm lint
 
       - name: Typecheck

@@ -7,7 +7,7 @@
 import { UUID_V4_PATTERN, uuidV4 } from './ids.ts';
 import { getRuntime } from './runtime.ts';
 
-export const SESSION_ID_STORAGE_KEY = '@platform/frontend-sdk:session-id';
+export const SESSION_ID_STORAGE_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:session-id';
 
 function localStore(): Storage | undefined {
   try {

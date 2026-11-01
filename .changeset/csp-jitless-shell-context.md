@@ -1,5 +1,5 @@
 ---
-'@platform/frontend-sdk': patch
+'@bcbp-solutions-fzc-llc/frontend-sdk': patch
 ---
 
 `/config`: Zod runs jitless, so parsing the runtime config never probes `new Function` (under the

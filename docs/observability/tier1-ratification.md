@@ -1,6 +1,6 @@
 # Tier 1 browser metrics: submission for ratification
 
-**To:** observability governance · **From:** platform-reactcommon (`@platform/frontend-sdk`) · **Status:** submitted, awaiting ratification · **Standard:** Enterprise Platform Observability Standard, Registry Ratification Requirement
+**To:** observability governance · **From:** platform-reactcommon (`@bcbp-solutions-fzc-llc/frontend-sdk`) · **Status:** submitted, awaiting ratification · **Standard:** Enterprise Platform Observability Standard, Registry Ratification Requirement
 
 The web shells and their micro-frontends have no platform metrics today. This submission proposes seven `platform_web_*` metrics, four labels, one bucket preset and two amendments to existing entries. Each entry gives the semantic definition, the required labels, the allowed label values and the aggregation expectations. It also lists the dashboards, alerts, recording rules and SLOs that depend on each metric, and what each metric depends on. Nothing is emitted until you ratify it: the SDK records these through an internal instrument port that is a no-op, and every rule that depends on them carries `metric_status: proposed`.
 
