@@ -142,3 +142,16 @@ jobs:
         env:
           PLATFORM_ROOT: ${{ github.workspace }}
         run: pnpm metrics:parity
+
+      # The Tier 1 registry proposal (monitoring/registry/platform-web.proposal.json), merged into the
+      # pinned gincommon registry, passes metricslint registry / check -strict, and monitoring/ only
+      # references registered or proposed metrics (metricslint refs).
+      - name: Tier 1 registry proposal (metricslint)
+        working-directory: react/platform-reactcommon
+        env:
+          PLATFORM_ROOT: ${{ github.workspace }}
+        run: |
+          if ! pnpm metrics:proposal; then
+            echo "::error file=monitoring/registry/platform-web.proposal.json,title=Registry proposal::The Tier 1 proposal or monitoring/ fails gincommon's metricslint — run 'pnpm metrics:proposal' locally."
+            exit 1
+          fi

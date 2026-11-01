@@ -356,6 +356,8 @@ pnpm verify
 | `pnpm contracts:sync` / `contracts:check` | Regenerate / check `contracts/` (`--update-pins` moves the pins to the checkouts' HEAD) |
 | `pnpm docs:sync` / `docs:check` | Generated docs and the diagram blocks in ARCHITECTURE.md |
 | `pnpm metrics:parity` | The SDK's metric checks vs gincommon's `metricslint` |
+| `pnpm metrics:proposal` | The Tier 1 registry proposal merged into gincommon's registry, judged by `metricslint` (`registry`, `check -strict`, `refs` on `monitoring/`); `--emit <file>` writes the candidate `registry.json` |
+| `pnpm run rules-check` / `dashboards-check` | `promtool` check and unit tests for `monitoring/prometheus`, and the dashboards' PromQL syntax (Docker) |
 | `pnpm examples:check` | CSP and sharing checks on the example builds (after `pnpm build`) |
 | `pnpm changeset` | Record a change to a published package |
 | `pnpm run version-packages` | Release PR only: `changeset version` + `exports:sync` |
@@ -552,7 +554,7 @@ This follows the [Enterprise Platform Observability Standard](docs/observability
   - `platform_web_errors_total`;
   - `platform_web_vitals_seconds`, `platform_web_vital_ratings_total`.
 
-  They're recorded through the instrument port and stay no-ops until governance ratifies the names (design doc §D5, §D6 K).
+  They're recorded through the instrument port and stay no-ops until governance ratifies the names (design doc §D5, §D6 K). The submission, with semantic definitions, labels, dependencies, SLOs and the interim logs-and-traces coverage: [tier1-ratification.md](docs/observability/tier1-ratification.md); the entries: [tier1-proposal.md](docs/observability/tier1-proposal.md) (generated from `monitoring/registry/platform-web.proposal.json`). The dashboard and rules that use them are in `monitoring/`.
 - **Tier 2, `<domain>_*`:** registry entries only, through `getDomainMeter`.
 - **Tier 3, `<domain>_<service>_*`:** free to add through `getServiceMeter`, validated at registration and by `metricslint` in the remote's CI.
 

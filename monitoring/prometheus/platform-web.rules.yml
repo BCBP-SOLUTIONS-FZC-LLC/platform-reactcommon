@@ -1,0 +1,181 @@
+# platform-reactcommon — reference Prometheus rules for web shells built on @platform/frontend-sdk
+# (load alongside the backend services' rules).
+#
+# Enterprise Platform Observability Standard. Every rule here queries a Tier 1 platform_web_* metric
+# from monitoring/registry/platform-web.proposal.json, which awaits governance ratification
+# (docs/observability/tier1-ratification.md), so all of them live in the *.proposed groups and every
+# alert carries metric_status: proposed, to be routed (not paged) until the registry marks the metric
+# approved. Then move the rule to a platform_web.recording / platform_web.alerts group and drop the
+# label. test/unit/monitoring checks the split; promtool validates syntax and the alert unit tests in
+# platform-web.rules.test.yml (pnpm run rules-check).
+#
+# Until ratification the SDK records none of these metrics (its instrument port is a no-op), so these
+# rules evaluate to nothing; the interim alerts on logs and traces are in tier1-ratification.md.
+#
+# Label note: every metric carries {domain, service, environment}, the page identity of the shell
+# (e.g. portal / web-app / prod). Remotes are told apart by mfe, never by domain. Aggregations keep
+# {domain, service, environment} (and mfe / route / vital where meaningful) so dashboards join cleanly.
+#
+# Counter note: the browser exports delta temporality and the Collector's deltatocumulative turns each
+# page identity's series cumulative; a series first seen at 1 is missed by increase(), so the
+# incompatible-remote alert uses the failures counter only to catch a sustained problem, and the
+# availability SLO uses the load histogram's _count, which has traffic on every page view.
+
+groups:
+  - name: platform_web.proposed.recording
+    interval: 30s
+    rules:
+      # ── Remote availability SLI: loads that succeeded, of loads attempted (kill switch excluded) ──
+      - record: platform_web:remote_load_error_ratio:rate5m
+        expr: |
+          sum by (domain, service, environment, mfe) (rate(platform_web_remote_load_seconds_count{outcome="error"}[5m]))
+            /
+          sum by (domain, service, environment, mfe) (rate(platform_web_remote_load_seconds_count{outcome!="failure"}[5m]))
+
+      - record: platform_web:remote_load_error_ratio:rate1h
+        expr: |
+          sum by (domain, service, environment, mfe) (rate(platform_web_remote_load_seconds_count{outcome="error"}[1h]))
+            /
+          sum by (domain, service, environment, mfe) (rate(platform_web_remote_load_seconds_count{outcome!="failure"}[1h]))
+
+      - record: platform_web:remote_loads:rate1h
+        expr: sum by (domain, service, environment, mfe) (rate(platform_web_remote_load_seconds_count{outcome!="failure"}[1h]))
+
+      - record: platform_web:remote_load_seconds:p95_15m
+        expr: histogram_quantile(0.95, sum by (le, domain, service, environment, mfe) (rate(platform_web_remote_load_seconds_bucket{outcome="success"}[15m])))
+
+      # ── Browser API SLI: calls that ended in a server error or no response (timeout, network) ──
+      # A caller abort is 4xx/client_error, so it is not an error here.
+      - record: platform_web:http_client_error_ratio:rate5m
+        expr: |
+          sum by (domain, service, environment) (rate(platform_web_http_client_duration_seconds_count{status_class="5xx"}[5m]))
+            /
+          sum by (domain, service, environment) (rate(platform_web_http_client_duration_seconds_count[5m]))
+
+      - record: platform_web:http_client_error_ratio:rate1h
+        expr: |
+          sum by (domain, service, environment) (rate(platform_web_http_client_duration_seconds_count{status_class="5xx"}[1h]))
+            /
+          sum by (domain, service, environment) (rate(platform_web_http_client_duration_seconds_count[1h]))
+
+      # Calls the server never saw, by reason (aborted is expected and not an error).
+      - record: platform_web:http_client_failures:rate5m
+        expr: sum by (domain, service, environment, reason) (rate(platform_web_http_client_failures_total[5m]))
+
+      - record: platform_web:http_client_calls:rate1h
+        expr: sum by (domain, service, environment) (rate(platform_web_http_client_duration_seconds_count[1h]))
+
+      # Same shape as the server's platform_http_request_duration_seconds, so the two compare per route.
+      - record: platform_web:http_client_duration_seconds:p95_5m
+        expr: histogram_quantile(0.95, sum by (le, domain, service, environment, route) (rate(platform_web_http_client_duration_seconds_bucket[5m])))
+
+      # ── Core Web Vitals: share of good page views, and the p75 the assessment uses ──
+      - record: platform_web:vital_good_ratio:rate1h
+        expr: |
+          sum by (domain, service, environment, vital) (rate(platform_web_vital_ratings_total{rating="good"}[1h]))
+            /
+          sum by (domain, service, environment, vital) (rate(platform_web_vital_ratings_total[1h]))
+
+      - record: platform_web:vital_ratings:rate1h
+        expr: sum by (domain, service, environment, vital) (rate(platform_web_vital_ratings_total[1h]))
+
+      - record: platform_web:vitals_seconds:p75_1h
+        expr: histogram_quantile(0.75, sum by (le, domain, service, environment, vital) (rate(platform_web_vitals_seconds_bucket[1h])))
+
+      # ── Errors captured in the page ──
+      - record: platform_web:errors:rate5m
+        expr: sum by (domain, service, environment, mfe, source) (rate(platform_web_errors_total[5m]))
+
+  - name: platform_web.proposed.alerts
+    rules:
+      # SLO: 99.9% of remote loads succeed (monthly). Burning 14.4× the budget exhausts it in ~2 days.
+      - alert: PlatformWebRemoteLoadErrorBudgetBurn
+        expr: |
+          (
+            platform_web:remote_load_error_ratio:rate1h > (14.4 * 0.001)
+            and
+            platform_web:remote_load_error_ratio:rate5m > (14.4 * 0.001)
+          )
+          and on (domain, service, environment, mfe)
+          platform_web:remote_loads:rate1h > (1 / 60)
+        for: 2m
+        labels:
+          severity: critical
+          metric_status: proposed
+        annotations:
+          summary: "Remote {{ $labels.mfe }} is failing to load fast enough to exhaust its monthly error budget"
+          description: "Over 1.44% of loads of {{ $labels.mfe }} in {{ $labels.service }} ({{ $labels.environment }}) failed in both the last hour and the last 5 minutes."
+          runbook_url: "https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/blob/main/docs/observability/runbooks.md#platformwebremoteloaderrorbudgetburn"
+
+      # A remote the shell refuses (SDK/React share negotiation) or that throws while evaluating: a
+      # release-order or build problem, not load. Sustained for 10 minutes so one stale tab does not alert.
+      - alert: PlatformWebRemoteIncompatible
+        expr: sum by (domain, service, environment, mfe) (rate(platform_web_remote_load_failures_total{reason="incompatible"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          metric_status: proposed
+        annotations:
+          summary: "Remote {{ $labels.mfe }} is incompatible with the shell"
+          description: "{{ $labels.service }} ({{ $labels.environment }}) has refused or failed to evaluate {{ $labels.mfe }} for 10 minutes: the remote was built against a newer SDK than the shell provides, or its module throws."
+          runbook_url: "https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/blob/main/docs/observability/runbooks.md#platformwebremoteincompatible"
+
+      # SLO: 99.5% of browser API calls get a non-5xx answer (monthly). Includes what the server never
+      # sees (timeouts, network failures); the backend services' own SLOs page for their 5xx, so this warns.
+      - alert: PlatformWebApiErrorBudgetBurn
+        expr: |
+          (
+            platform_web:http_client_error_ratio:rate1h > (14.4 * 0.005)
+            and
+            platform_web:http_client_error_ratio:rate5m > (14.4 * 0.005)
+          )
+          and on (domain, service, environment)
+          platform_web:http_client_calls:rate1h > 1
+        for: 2m
+        labels:
+          severity: warning
+          metric_status: proposed
+        annotations:
+          summary: "Browser API calls from {{ $labels.service }} are failing fast enough to exhaust the monthly error budget"
+          description: "Over 7.2% of API calls made by {{ $labels.service }} ({{ $labels.environment }}) ended in a 5xx, a timeout or a network failure in both the last hour and the last 5 minutes."
+          runbook_url: "https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/blob/main/docs/observability/runbooks.md#platformwebapierrorbudgetburn"
+
+      # Chunks of the running build are gone (a deploy removed old /assets, or a CDN/permissions fault).
+      - alert: PlatformWebChunkLoadErrors
+        expr: sum by (domain, service, environment) (rate(platform_web_errors_total{source="chunk_load"}[10m])) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+          metric_status: proposed
+        annotations:
+          summary: "{{ $labels.service }} pages cannot load their script chunks"
+          description: "{{ $labels.service }} ({{ $labels.environment }}) has reported chunk-load errors for 10 minutes; pages reload once to pick up the new build, so users see a reload or a broken screen."
+          runbook_url: "https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/blob/main/docs/observability/runbooks.md#platformwebchunkloaderrors"
+
+      # SLO (Core Web Vitals assessment): at least 75% of page views are good for LCP, INP and CLS.
+      - alert: PlatformWebCoreWebVitalFailing
+        expr: |
+          platform_web:vital_good_ratio:rate1h{vital=~"lcp|inp|cls"} < 0.75
+          and on (domain, service, environment, vital)
+          platform_web:vital_ratings:rate1h > 0.05
+        for: 1h
+        labels:
+          severity: warning
+          metric_status: proposed
+        annotations:
+          summary: "{{ $labels.service }} fails the Core Web Vitals assessment on {{ $labels.vital }}"
+          description: "Fewer than 75% of {{ $labels.service }} ({{ $labels.environment }}) page views rated good on {{ $labels.vital }} for over an hour."
+          runbook_url: "https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/blob/main/docs/observability/runbooks.md#platformwebcorewebvitalfailing"
+
+      # page_route or mfe values replaced to bound cardinality: routes not registered with
+      # useRouteTemplate, or more routes than the bound. Dashboards lose those pages to unknown.
+      - alert: PlatformWebLabelOverflow
+        expr: sum by (domain, service, environment, label) (rate(platform_telemetry_label_overflow_total{label=~"page_route|mfe"}[15m])) > 0
+        for: 15m
+        labels:
+          severity: info
+          metric_status: proposed
+        annotations:
+          summary: "{{ $labels.service }} is replacing {{ $labels.label }} values to bound cardinality"
+          description: "{{ $labels.service }} ({{ $labels.environment }}) has recorded {{ $labels.label }} values as unknown for 15 minutes: register the page's route template with useRouteTemplate."
+          runbook_url: "https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/blob/main/docs/observability/runbooks.md#platformweblabeloverflow"

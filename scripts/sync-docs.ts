@@ -1,7 +1,7 @@
 // Regenerates the generated documentation and keeps ARCHITECTURE.md's diagrams equal to their
 // .mmd sources (the counterpart of platform-gincommon's `make metrics-inventory` drift gate):
 //
-//   pnpm docs:sync    write docs/observability/metric-registry.md, docs/problem-details/registry.md
+//   pnpm docs:sync    write docs/observability/metric-registry.md, tier1-proposal.md, docs/problem-details/registry.md
 //                     and the diagram blocks of ARCHITECTURE.md
 //   pnpm docs:check   fail if any of them is stale (CI, Validate / Quality)
 //
@@ -9,7 +9,7 @@
 // docs/architecture/README.md.
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { inlineDiagrams, renderMetricRegistry, renderProblemRegistry, renderSubpathGraph, type SubpathsContract } from './lib/docs.ts';
+import { inlineDiagrams, renderMetricRegistry, renderProblemRegistry, renderSubpathGraph, renderTier1Proposal, type SubpathsContract, type Tier1Proposal } from './lib/docs.ts';
 import { REPO_ROOT, SDK_DIR } from './lib/subpaths.ts';
 
 const CONTRACTS = join(SDK_DIR, 'contracts');
@@ -22,6 +22,14 @@ function main(): void {
   files.set(
     'docs/observability/metric-registry.md',
     renderMetricRegistry(json('metric-registry.json'), 'packages/frontend-sdk/contracts/metric-registry.json'),
+  );
+  files.set(
+    'docs/observability/tier1-proposal.md',
+    renderTier1Proposal(
+      JSON.parse(readFileSync(join(REPO_ROOT, 'monitoring/registry/platform-web.proposal.json'), 'utf8')) as Tier1Proposal,
+      json('metric-registry.json'),
+      ['monitoring/registry/platform-web.proposal.json', 'packages/frontend-sdk/contracts/metric-registry.json'],
+    ),
   );
   files.set(
     'docs/problem-details/registry.md',

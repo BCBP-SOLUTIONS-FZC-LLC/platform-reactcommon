@@ -93,6 +93,11 @@ jobs:
       - name: Smoke tests (in-process)
         run: pnpm run test-smoke
 
+      # monitoring/: promtool check + alert unit tests, and the dashboards' PromQL syntax (as
+      # platform-events' rules-check / dashboards-check). Registry compliance is test/unit/monitoring.
+      - name: Monitoring rules and dashboards (promtool)
+        run: pnpm run rules-check && pnpm run dashboards-check
+
       # Runtime dependencies of the published packages only (dev tooling is not shipped).
       - name: Vulnerability check
         run: |

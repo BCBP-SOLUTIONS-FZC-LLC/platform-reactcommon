@@ -1,47 +1,65 @@
 # Runbooks: frontend symptoms and the proposed web alerts
 
-The browser's Tier 1 metrics (`platform_web_*`) are **proposed**, and their alerts don't exist yet (design doc §D5, §D6 K). Until they're ratified, these runbooks start from logs, which carry `trace_id`, `request_id`, `session_id`, `mfe` and `page_route`. Each section names the alert it becomes once the metrics are bound. Alert names follow gincommon's `Platform*` style.
+The browser's Tier 1 metrics (`platform_web_*`) are **proposed** (submission: [tier1-ratification.md](tier1-ratification.md)). Their alerts are written and tested (`monitoring/prometheus/platform-web.rules.yml`), but carry `metric_status: proposed` and evaluate to nothing until governance ratifies the names and the SDK binds them. Until then each section below also says how to see the same problem in **logs and traces**, which carry `trace_id`, `request_id`, `session_id`, `mfe` and `page_route`. Alert names follow gincommon's `Platform*` style; each section heading is the alert name the alert's `runbook_url` points to.
 
-## PlatformWebRemoteLoadFailures (proposed)
+## PlatformWebRemoteLoadErrorBudgetBurn
 
-**Signal:** `platform_web_remote_load_failures_total` by `mfe`, `reason`. Today: the `/mfe` log `remote failed to load` (`mfe`, `reason`), and users see a remote's fallback.
+**Status:** proposed (critical). **Fires when:** more than 1.44% of a remote's loads fail in both the last hour and the last 5 minutes (14.4× the 99.9% monthly SLO), with at least one load a minute.
+
+**Signal:** `platform_web_remote_load_seconds_count{outcome="error"}` over all loads (kill-switched loads excluded), by `mfe`; the cause is in `platform_web_remote_load_failures_total{reason}`. **Today:** the essential `/mfe` error log `remote failed to load` (`mfe`, `reason`); users see the remote's fallback.
 
 | `reason` | Likely cause | Action |
 |---|---|---|
-| `disabled` | Kill switch on (`remotes.killSwitch` or flag `remote.<name>.disabled`) | Expected if intentional; otherwise remove it from `runtime.json` |
-| `timeout` / `network` | Entry URL missing (deploy order), CloudFront, a slow network | Check `/remotes/<name>/<version>/remoteEntry.js` exists, and that the manifest was written **after** the upload |
-| `incompatible` | `strictVersion` share negotiation failed (SDK, React or OTel API range), or the module failed to evaluate | Compare the remote's shared versions with the shell's `platformShared`; rebuild the remote with the shell's preset version |
-| `aborted` | Navigation away during load | Normally harmless |
+| `timeout` / `network` | Entry URL missing (deploy order), CloudFront, an integrity mismatch, a slow network | Check `/remotes/<name>/<version>/remoteEntry.js` exists, that its SRI matches the manifest, and that the manifest was written **after** the upload |
+| `incompatible` | See [PlatformWebRemoteIncompatible](#platformwebremoteincompatible) | |
+| `aborted` | Navigation away during load | Not counted as an error |
+| `disabled` | Kill switch on (`remotes.killSwitch` or flag `remote.<name>.disabled`) | Not counted as an error; expected if intentional, otherwise remove it from `runtime.json` |
 
 Also check the `/mfe` error `remote dropped from the manifest`. It names an entry the shell refused (origin not allowed, bad version or `ownerDomain`, bad SRI).
 
-## PlatformWebChunkLoadErrors (proposed)
+## PlatformWebRemoteIncompatible
 
-**Signal:** `platform_web_errors_total{source="chunk_load"}`. Today: the page reloads once per version, by design.
+**Status:** proposed (warning). **Fires when:** a remote has been refused or has failed to evaluate for 10 minutes (`platform_web_remote_load_failures_total{reason="incompatible"}`). **Today:** `remote failed to load` with `reason=incompatible`.
 
-**Cause:** a tab still running the old build requested chunks a deploy removed, or a deploy is still uploading. **Action:** check that `/remotes/*` and `/assets/*` are versioned and never overwritten, and that `/version.json` is written **last**. A sustained rate after a deploy means files were deleted too early.
+**Cause:** `strictVersion` share negotiation refused the remote (it requires a newer SDK, React or OTel API than the shell provides), or the module threw while evaluating (a shared module missing from the shell's scope looked like this: docs/e2e report, Issue 2). **Action:** release the shell before the remote; compare the remote's shared versions with the shell's `platformShared`; rebuild the remote with the shell's preset version. One stale tab does not alert.
 
-## PlatformWebErrorsHigh (proposed)
+## PlatformWebApiErrorBudgetBurn
 
-**Signal:** `platform_web_errors_total` by `source`, `mfe`. Today: the `/react` logs `remote failed to render` (by `mfe`), `uncaught error` and `unhandled promise rejection`.
+**Status:** proposed (warning; the backend's own SLOs page for their 5xx). **Fires when:** more than 7.2% of browser API calls end in a 5xx, a timeout or a network failure in both the last hour and the last 5 minutes (14.4× the 99.5% monthly SLO), with at least one call a second.
 
-**Action:** group by `mfe` and `exception.type`. `boundary` errors are contained in one remote (route them to the owning team via the manifest's `ownerDomain`). `unhandled_error` is attributed to `shell` and needs the stack to find the owner.
-
-## PlatformWebHTTPClientErrorBudgetBurn (proposed)
-
-**Signal:** `platform_web_http_client_duration_seconds_count{error_class!="success"}` by `mfe`, `route`, compared with the server's `platform_http_requests_total` for the same route.
+**Signal:** `platform_web_http_client_duration_seconds_count{status_class="5xx"}` by `route`, `mfe`, compared with the server's `platform_http_requests_total` for the same route; calls the server never saw are in `platform_web_http_client_failures_total{reason}`. **Today:** backend 5xx are in the services' own logs and metrics; client-only failures (timeout, network) are visible only in sampled, consented `HTTP <method>` spans and, when a remote shows them, in its boundary's `remote showed an error` warning (consented). See the gaps in [tier1-ratification.md](tier1-ratification.md#interim-visibility-logs-and-traces).
 
 | Client vs server | Meaning |
 |---|---|
 | Both high | Backend problem: follow gincommon's `PlatformHTTPErrorBudget*` runbook |
-| Client high, server normal | The request never reached the service: gateway denials (`401`/`403` with deny codes), CloudFront, CORS, network. Check `platform_web_http_client_failures_total{reason}` |
-| `reason="timeout"` | Calls hit the 35 s client deadline (`api.timeoutMs`); compare with the server's latency for the route |
+| Client high, server normal | The request never reached the service: gateway (Envoy `ext_authz` 503 on a cold cache, docs/e2e report Issue 12), CloudFront, network. Check `platform_web_http_client_failures_total{reason}` |
+| `reason="timeout"` | Calls hit the client deadline (`api.timeoutMs`); compare with the server's latency for the route |
 
 Correlate a single failure with the `requestId` / `traceId` the error boundary shows the user. `X-Trace-ID` from the server is on every `ProblemError`.
 
-## PlatformWebLCPPoor / PlatformWebINPPoor (proposed)
+## PlatformWebChunkLoadErrors
 
-**Signal:** the share of `platform_web_vital_ratings_total{rating="poor"}` by `vital`, `page_route`. **Action:** look at the page's remotes (bundle size, the time the `loadRemote` span takes), API latency on its first calls, and the shell's CloudFront cache behaviour.
+**Status:** proposed (warning). **Fires when:** chunk-load errors exceed 0.01/s for 10 minutes (`platform_web_errors_total{source="chunk_load"}`). **Today:** nothing: the page reloads once per version, by design, and logs nothing for it (a gap: [tier1-ratification.md](tier1-ratification.md#interim-visibility-logs-and-traces)).
+
+**Cause:** a tab still running the old build requested chunks a deploy removed, or a deploy is still uploading. **Action:** check that `/remotes/*` and `/assets/*` are versioned and never overwritten or deleted early, and that `/version.json` is written **last**. A sustained rate after a deploy means files were deleted too early.
+
+## PlatformWebCoreWebVitalFailing
+
+**Status:** proposed (warning). **Fires when:** fewer than 75% of page views rate good on LCP, INP or CLS for over an hour (the Core Web Vitals assessment), with at least ~180 rated views an hour.
+
+**Signal:** `platform_web_vital_ratings_total` by `vital`, `page_route`; the p75 in `platform_web_vitals_seconds`. **Today:** no equivalent in logs or traces. **Action:** find the page routes on the dashboard's "Slowest pages"; look at the page's remotes (bundle size, the `remote load` span), API latency on its first calls, and the shell's CloudFront cache behaviour.
+
+## PlatformWebLabelOverflow
+
+**Status:** proposed (info). **Fires when:** `platform_telemetry_label_overflow_total{label=~"page_route|mfe"}` grows for 15 minutes.
+
+**Cause:** pages whose route template is not registered with `useRouteTemplate`, or more routes than the 500-value bound; their measurements are recorded under `page_route="unknown"`. **Action:** register the route templates in the remote or the shell.
+
+## Errors in the page (no alert)
+
+**Signal:** `platform_web_errors_total` by `source`, `mfe` (dashboard only: a rate without page views is not alertable). **Today:** the `/react` error logs `remote failed to render` (by `mfe`), `uncaught error` and `unhandled promise rejection`.
+
+**Action:** group by `mfe` and `exception.type`. `boundary` errors are contained in one remote (route them to the owning team via the manifest's `ownerDomain`). `unhandled_error` is attributed to `shell` and needs the stack to find the owner.
 
 ## Session ended spike
 

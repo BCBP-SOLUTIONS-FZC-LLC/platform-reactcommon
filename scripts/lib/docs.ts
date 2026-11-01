@@ -1,6 +1,7 @@
 // Pure renderers for the generated documentation (scripts/sync-docs.ts does the I/O; everything here
 // is unit-tested):
 // - docs/observability/metric-registry.md   from contracts/metric-registry.json
+// - docs/observability/tier1-proposal.md     from monitoring/registry/platform-web.proposal.json
 // - docs/problem-details/registry.md          from contracts/problem-types.json + gateway-deny-codes.json
 // - ARCHITECTURE.md                           each `> Source:` diagram block = its .mmd file
 import { pascalCase } from './contracts.ts';
@@ -101,6 +102,92 @@ export function renderMetricRegistry(reg: MetricRegistryContract, source: string
   if (reg.legacyNames && reg.legacyNames.length > 0) {
     out.push('## Legacy names', '', `${reg.legacyNames.length} removed pre-standard names may not be reused by a new metric: ${codes(reg.legacyNames)}.`, '');
   }
+  return out.join('\n');
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tier 1 registry proposal
+
+interface ProposalMetric extends RegistryMetric {
+  label_values?: Record<string, string[]>;
+  cardinality?: string;
+  governance_notes?: string;
+}
+/** monitoring/registry/platform-web.proposal.json: registry entries in gincommon's schema, plus amendments. */
+export interface Tier1Proposal {
+  submitted_by: string;
+  bucket_presets: Record<string, number[]>;
+  labels: Record<string, RegistryLabel>;
+  metrics: ProposalMetric[];
+  amendments: (
+    | { kind: 'label_values'; metric: string; label: string; add: string[]; governance_notes: string }
+    | { kind: 'label_description'; label: string; description: string; governance_notes: string }
+  )[];
+}
+
+/** The allowed values of `label` on `m`: its per-metric enum, else the label's vocabulary. */
+function allowedValues(m: ProposalMetric, label: string, l: RegistryLabel | undefined): string {
+  const enumValues = m.label_values?.[label] ?? l?.values;
+  if (enumValues) return codes(enumValues);
+  if (l?.pattern) return `pattern ${code(l.pattern)}${l.max_values ? `, at most ${l.max_values} values` : ''}`;
+  return '—';
+}
+
+/**
+ * The submission as governance reads it: one section per metric with the Registry Ratification
+ * Requirement's fields (semantic definition, required labels, allowed label values, aggregation), in
+ * the layout of platform-events' metrics-registry.md. Existing labels are described from `registry`.
+ */
+export function renderTier1Proposal(p: Tier1Proposal, registry: MetricRegistryContract, sources: readonly string[]): string {
+  const label = (name: string): { l: RegistryLabel | undefined; isNew: boolean } =>
+    p.labels[name] ? { l: p.labels[name], isNew: true } : { l: registry.labels[name], isNew: false };
+  const required = registry.requiredLabels.platform ?? [];
+  const out: string[] = [
+    `# Tier 1 browser metrics: registry proposal (${p.submitted_by})`,
+    '',
+    generatedNote(sources),
+    '',
+    `${p.submitted_by}'s entries for the Platform Observability Registry, submitted under the standard's Registry Ratification Requirement. Every entry is \`proposed\` until observability governance ratifies it; the SDK records none of them until then (its instrument port is a no-op). The submission, the dependencies of each metric and the interim logs-and-traces coverage are in [tier1-ratification.md](tier1-ratification.md).`,
+    '',
+    '## Summary',
+    '',
+    '| Metric | Type | Labels (after the required ones) | Status |',
+    '|---|---|---|---|',
+  ];
+  for (const m of p.metrics) out.push(`| ${code(m.name)} | ${m.type}${m.unit ? ` (${m.unit}, \`${m.buckets}\` buckets)` : ''} | ${codes(m.labels)} | ${m.status} |`);
+  out.push('', `Required labels on every entry, injected centrally by the SDK from the page identity: ${codes(required)}.`, '');
+
+  out.push('## New labels', '', '| Label | Meaning | Allowed values | Cardinality |', '|---|---|---|---|');
+  for (const [name, l] of Object.entries(p.labels)) {
+    const values = l.values ? codes(l.values) : `pattern ${code(l.pattern ?? '')}, at most ${l.max_values ?? '?'} values`;
+    out.push(`| ${code(name)} | ${cell(l.description)} | ${cell(values)} | ${cell(l.cardinality)} |`);
+  }
+  out.push('', '## New bucket presets', '');
+  for (const [name, b] of Object.entries(p.bucket_presets)) out.push(`- ${code(name)}: ${b.join(', ')} (seconds)`);
+  out.push('', '## Metrics', '');
+
+  for (const m of p.metrics) {
+    out.push(`### ${code(m.name)}`, '');
+    out.push(`- **Type:** ${m.type}${m.unit ? ` · **Unit:** ${m.unit} · **Buckets:** ${code(m.buckets ?? '')}` : ''} · **Tier:** ${m.tier} · **Status:** ${m.status} · **Owner:** ${m.owner ?? '—'}`);
+    out.push(`- **Semantic definition:** ${cell(m.help)}`);
+    out.push(`- **Required labels:** ${codes(required)}`);
+    out.push(`- **Labels:** ${codes(m.labels)}`);
+    for (const name of m.labels ?? []) {
+      const { l, isNew } = label(name);
+      out.push(`  - ${code(name)} (${isNew ? 'new' : 'existing'}): ${allowedValues(m, name, l)}`);
+    }
+    if (m.cardinality) out.push(`- **Cardinality:** ${cell(m.cardinality)}`);
+    if (m.aggregation) out.push(`- **Aggregation:** ${cell(m.aggregation)}`);
+    if (m.governance_notes) out.push(`- **Governance notes:** ${cell(m.governance_notes)}`);
+    out.push('');
+  }
+
+  out.push('## Amendments to existing entries', '');
+  for (const a of p.amendments) {
+    if (a.kind === 'label_values') out.push(`- ${code(a.metric)}: label ${code(a.label)} gains ${codes(a.add)}. ${cell(a.governance_notes)}`);
+    else out.push(`- Label ${code(a.label)}: description becomes "${cell(a.description)}" ${cell(a.governance_notes)}`);
+  }
+  out.push('');
   return out.join('\n');
 }
 

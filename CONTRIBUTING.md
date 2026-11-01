@@ -44,7 +44,8 @@ test/                       ← All tests, not beside production code (as platfo
   fixtures/                 ← Shared fakes and helpers
   testenv/                  ← Loads .env; sets OBSERVABILITY_DOMAIN, ENVIRONMENT defaults
 examples/                   ← shell, remote-tenders, cloudfront (built and checked in CI; not deployed)
-scripts/                    ← exports, contracts, docs, API reports, metrics parity, example checks
+scripts/                    ← exports, contracts, docs, API reports, metrics parity and proposal, example checks
+monitoring/                 ← Grafana dashboard, Prometheus rules (+ promtool tests), the Tier 1 registry proposal
 docker-compose.yml          ← The production-like stack for test/stack (start with `pnpm run stack-up`, not `docker compose up`)
 docker/                     ← Its configs: edge shim, Envoy, floci deploy, go-probe, org-membership seed, Collector
 .githooks/pre-commit        ← Local commit gates (`pnpm run install-hooks`)

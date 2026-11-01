@@ -4,6 +4,7 @@ This repository is where the standard is implemented for the browser: the shell 
 
 | Piece | Location |
 |---|---|
+| Dashboards, alert and recording rules, SLOs, the Tier 1 registry proposal | [`monitoring/`](../../monitoring) (as platform-events and platform-pgcommon) |
 | Platform Observability Registry (the SDK's copy, generated) | [`contracts/metric-registry.json`](../../packages/frontend-sdk/contracts/metric-registry.json), rendered as [`metric-registry.md`](metric-registry.md); source of truth: platform-gincommon `internal/obsregistry/registry.json` |
 | Page identity (`domain`, `service`, `environment`) | `/core` `initializeCore` (registry vocabulary); the shell is `domain: 'portal'` (design doc §D1) |
 | Domain-shared metrics (Tier 2, registry-driven) | `/metrics` `getDomainMeter({ mfe })` |
@@ -75,18 +76,15 @@ A violation throws `InvalidMetricError`. A Tier 3 label keeps at most 100 distin
 
 Recorded through an internal instrument port by `/http`, `/mfe` and `/react`, so those subpaths never import metric names. The port is a no-op until governance ratifies the names (design doc §D5, §D6 K). Ratifying them adds them to the registry, and from then they appear in [`metric-registry.md`](metric-registry.md).
 
-| Metric | Type | Labels | Recorded by |
-|---|---|---|---|
-| `platform_web_vitals_seconds` | histogram (`web_vitals` preset, new) | `vital` ∈ lcp, inp, ttfb, fcp · `page_route` | `startWebVitals()` |
-| `platform_web_vital_ratings_total` | counter | `vital` ∈ lcp, inp, cls, ttfb, fcp · `rating` ∈ good, needs_improvement, poor · `page_route` | `startWebVitals()` |
-| `platform_web_http_client_duration_seconds` | histogram (`request_duration`) | `method`, `route`, `status_class`, `error_class`, `mfe` | `/http`, once per logical call after retries |
-| `platform_web_http_client_failures_total` | counter | `route`, `reason` ∈ timeout, network, aborted, `mfe` | `/http`, calls with no HTTP status |
-| `platform_web_remote_load_seconds` | histogram (`dependency_request`) | `mfe`, `outcome` ∈ success, failure, error | `/mfe` `loadRemote` |
-| `platform_web_remote_load_failures_total` | counter | `mfe`, `reason` ∈ disabled, timeout, network, aborted, incompatible | `/mfe` `loadRemote` |
-| `platform_web_errors_total` | counter | `source` ∈ unhandled_error, unhandled_rejection, boundary, chunk_load · `mfe` | `/react` boundaries and global handlers |
-
-- **CLS** is unitless, so it appears only in the ratings counter.
-- **`route`** is always the call's template, and `page_route` is a template registered with `useRouteTemplate` (else `unknown`), so raw URLs never become labels.
+- **The submission:** [tier1-ratification.md](tier1-ratification.md). It covers the decisions requested, the dependencies of each metric (what it needs and what uses it), the proposed SLOs, and how far logs and traces go in the meantime.
+- **The entries:** [tier1-proposal.md](tier1-proposal.md), generated from [`monitoring/registry/platform-web.proposal.json`](../../monitoring/registry/platform-web.proposal.json). That file is in gincommon's registry schema and is merged as-is once ratified.
+- **What uses them:**
+  - the dashboard [`monitoring/grafana/platform-web.json`](../../monitoring/grafana/platform-web.json);
+  - the rules [`monitoring/prometheus/platform-web.rules.yml`](../../monitoring/prometheus/platform-web.rules.yml). They are all in `*.proposed` groups with `metric_status: proposed` until ratification;
+  - the runbooks in [runbooks.md](runbooks.md).
+- **Label notes:**
+  - **CLS** is unitless, so it appears only in the ratings counter.
+  - **`route`** is always the call's template, and `page_route` is a template registered with `useRouteTemplate` (else `unknown`), so raw URLs never become labels.
 - **Units** are set (`s`, `1`), so the OTLP → Prometheus translation keeps the registry name exactly.
 
 ## Logs
@@ -131,6 +129,9 @@ The `ParentBased` sampler uses **Go's `TraceIDRatioBased` algorithm** for roots 
 | The registry copy equals what the pinned gincommon commit generates | `pnpm contracts:check` (*Validate / Contracts*) |
 | The SDK's registration checks agree with `metricslint` | `pnpm metrics:parity` (*Validate / Contracts*) |
 | The SDK's own inventory passes `metricslint check -strict` | `pnpm metrics:parity` |
+| The Tier 1 proposal, merged into the pinned registry, passes `metricslint registry` and `check -strict`; `monitoring/` references only registered or proposed metrics (`metricslint refs`) | `pnpm metrics:proposal` (*Validate / Contracts*) |
+| Dashboards and rules: label vocabulary, `*.proposed` groups, runbooks, every proposed metric used, enums equal to the SDK's | `test/unit/monitoring` (`pnpm test`) |
+| Rules: `promtool check` and alert unit tests; dashboards: PromQL syntax | `pnpm run rules-check`, `pnpm run dashboards-check` (*Validate / Quality*) |
 | `metric-registry.md` is current | `pnpm docs:check` (*Validate / Quality*) |
 | A remote's metrics | In the remote's CI: `renderMetricInventory()` piped to `metricslint check` |
 
@@ -144,9 +145,11 @@ The `portal` domain followed this path: gincommon #51 (v2.3.0), then fastapicomm
 
 ### Items awaiting ratification
 
+Submitted in [tier1-ratification.md](tier1-ratification.md), which also lists two amendments: widening `route`'s description, and the `source` question.
+
 | Item | Design doc |
 |---|---|
-| The seven `platform_web_*` metrics above (`proposed`, `owner: platform-reactcommon`) | §C1 `/metrics`, §D5 |
+| The seven `platform_web_*` metrics ([tier1-proposal.md](tier1-proposal.md); `proposed`, `owner: platform-reactcommon`) | §C1 `/metrics`, §D5 |
 | Four new labels: `page_route`, `mfe`, `vital`, `rating` (the existing `reason`, `outcome` and `source` labels take the per-metric enums above) | §C1 `/metrics`, §D5 |
 | The `web_vitals` bucket preset | §D5 |
 | The SDK as an emitter of `platform_telemetry_label_overflow_total` | §D5 |

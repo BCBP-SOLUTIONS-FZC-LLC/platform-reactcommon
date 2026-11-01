@@ -253,6 +253,9 @@ importers:
       webpack:
         specifier: 5.112.0
         version: 5.112.0(clean-css@5.3.3)(esbuild@0.28.2)(html-minifier-terser@6.1.0)(lightningcss@1.33.0)(postcss@8.5.32)(uglify-js@3.19.3)
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   examples/cloudfront:
     dependencies:

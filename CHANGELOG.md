@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tier 1 metrics submitted for ratification** (`docs/observability/tier1-ratification.md`), as platform-events and platform-pgcommon did:
+  - the seven `platform_web_*` metrics, four labels, the `web_vitals` preset and two amendments, as registry entries in gincommon's schema (`monitoring/registry/platform-web.proposal.json`, rendered as `tier1-proposal.md`), validated by gincommon's `metricslint` (`pnpm metrics:proposal`, CI *Validate / Contracts*);
+  - `monitoring/`: a Grafana dashboard and Prometheus recording rules, alerts and SLOs (remote availability 99.9%, browser API success 99.5%, Core Web Vitals ≥ 75% good), all in `*.proposed` groups with `metric_status: proposed` until ratification; `promtool` unit tests and a PromQL gate (`pnpm run rules-check`, `dashboards-check`, CI *Validate / Quality*), and registry compliance in `test/unit/monitoring`;
+  - the runbooks renamed to the alert names, and an assessment of what logs and traces show until the metrics ship, with four gaps.
+
 **`@platform/frontend-sdk` — Foundation**
 
 - **`/core`:**
