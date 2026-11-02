@@ -14,7 +14,7 @@ import {
   gatewayDenyCode,
   parseProblemResponse,
 } from '../problem/index.ts';
-import { getTracer, injectTraceHeaders, type Span } from '../tracing/index.ts';
+import { bindTraceContext, getTracer, injectTraceHeaders, type Span } from '../tracing/index.ts';
 import { isOnline } from '../internal/online.ts';
 
 export { FORBIDDEN_REQUEST_HEADERS };
@@ -456,6 +456,8 @@ export function createApiClient(opts?: { baseUrl?: string; mfe?: string }): ApiC
   const mfe = opts?.mfe ?? 'shell';
   const request = async <T>(method: Method, template: RouteTemplate, o: RequestOptions = {}): Promise<ApiResponse<T>> => {
     if (method === 'GET' && o.dedupe !== false) {
+      // The token is awaited for the key: bind the request span to the caller's span first.
+      const start = bindTraceContext(startCall);
       // Key: method + URL + who is asking (the token), so two users never share a response.
       const url = buildUrl(opts?.baseUrl ?? tryGetConfig()?.api.baseUrl ?? '/api', template, o.params, o.query);
       const probe = { o, url } as Call;
@@ -464,7 +466,7 @@ export function createApiClient(opts?: { baseUrl?: string; mfe?: string }): ApiC
       let shared = inFlightGets.get(key);
       if (!shared) {
         const controller = new AbortController();
-        const call = startCall(method, template, { ...o, signal: controller.signal }, opts?.baseUrl, mfe);
+        const call = start(method, template, { ...o, signal: controller.signal }, opts?.baseUrl, mfe);
         const promise = execute<unknown>(call);
         const entry: Shared = { key, promise, controller, subscribers: 0, aborted: 0 };
         shared = entry;

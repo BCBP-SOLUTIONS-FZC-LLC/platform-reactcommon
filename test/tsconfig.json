@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "../packages/frontend-sdk/src/internal/globals.d.ts"
+  ],
+  "exclude": [
+    "fixtures/boundaries/**"
+  ]
+}

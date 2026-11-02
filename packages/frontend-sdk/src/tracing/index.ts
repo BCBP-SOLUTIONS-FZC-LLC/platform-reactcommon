@@ -6,6 +6,7 @@
  * @packageDocumentation
  */
 export {
+  bindTraceContext,
   currentTraceId,
   getTracer,
   initializeTracing,

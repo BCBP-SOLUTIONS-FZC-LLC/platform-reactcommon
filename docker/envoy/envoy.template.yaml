@@ -1,0 +1,243 @@
+# The ingress gateway (IAM HLD v1.58 §4.2, §4.3, §8.2.7, §8.3, §11.1), as the /api/* origin of the web
+# distribution. scripts/prepare.mjs fills the ${...} values and writes .state/envoy/envoy.yaml.
+#
+#   header_mutation   strips client-sent identity headers (HLD §11.1 strip-list) BEFORE jwt_authn/ext_authz,
+#                     so only AuthZ Enrichment can originate them. Route-level request_headers_to_remove
+#                     would run in the router, after ext_authz, and strip the enriched values too.
+#   local_ratelimit   PUB-1 per client IP (HLD §11.4: 20/IP/hour; here 20/IP/minute so a test can see the
+#                     bucket refill). The client IP is the CloudFront-appended X-Forwarded-For hop
+#                     (xff_num_trusted_hops: 1), never the viewer's own X-Forwarded-For.
+#   jwt_authn         per-realm issuer + remote JWKS from Keycloak (internal URL); verified claims go to
+#                     dynamic metadata under envoy.filters.http.jwt_authn/jwt_payload for ext_authz.
+#   ext_authz         gRPC to iam-authz-enrichment, 250 ms, fail closed (503 on error).
+#   tracing           OpenTelemetry to the Collector: the browser's traceparent continues through Envoy,
+#                     ext_authz and the upstream.
+# /api/v1/public/* bypasses jwt_authn and ext_authz (HLD §8.2.7). /api/v1/internal/* is never routed.
+admin:
+  address: { socket_address: { address: 0.0.0.0, port_value: 9901 } }
+
+static_resources:
+  listeners:
+    - name: ingress
+      address: { socket_address: { address: 0.0.0.0, port_value: 10000 } }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress
+                codec_type: AUTO
+                use_remote_address: true
+                xff_num_trusted_hops: 1
+                generate_request_id: true
+                preserve_external_request_id: ${PRESERVE_REQUEST_ID}
+                # Envoy's UUID request-id extension packs the trace decision into the request id's version
+                # nibble (pack_trace_reason, default true): the browser's x-request-id 1b917f2d-b96e-4d46-…
+                # reached the upstream as 1b917f2d-b96e-9d46-… (report issue "x-request-id rewritten").
+                request_id_extension:
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.request_id.uuid.v3.UuidRequestIdConfig
+                    pack_trace_reason: ${PACK_TRACE_REASON}
+                tracing:
+                  random_sampling: { value: 100 }
+                  provider:
+                    name: envoy.tracers.opentelemetry
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.config.trace.v3.OpenTelemetryConfig
+                      grpc_service: { envoy_grpc: { cluster_name: otel_collector }, timeout: 1s }
+                      service_name: envoy-gateway
+                access_log:
+                  - name: envoy.access_loggers.stdout
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                      log_format:
+                        json_format:
+                          kind: envoy-access
+                          time: "%START_TIME%"
+                          method: "%REQ(:METHOD)%"
+                          path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+                          status: "%RESPONSE_CODE%"
+                          flags: "%RESPONSE_FLAGS%"
+                          details: "%RESPONSE_CODE_DETAILS%"
+                          upstream: "%UPSTREAM_CLUSTER%"
+                          duration_ms: "%DURATION%"
+                          request_id: "%REQ(X-REQUEST-ID)%"
+                          traceparent: "%REQ(TRACEPARENT)%"
+                          client_ip: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"
+                          xff: "%REQ(X-FORWARDED-FOR)%"
+                          sub: "%DYNAMIC_METADATA(envoy.filters.http.jwt_authn:jwt_payload:sub)%"
+                          iss: "%DYNAMIC_METADATA(envoy.filters.http.jwt_authn:jwt_payload:iss)%"
+                          upstream_x_tenant_id: "%REQ(X-TENANT-ID)%"
+                          upstream_x_user_id: "%REQ(X-USER-ID)%"
+                          upstream_x_tenant_roles: "%REQ(X-TENANT-ROLES)%"
+                          response_content_type: "%RESP(CONTENT-TYPE)%"
+                http_filters:
+                  - name: envoy.filters.http.header_mutation
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                      mutations:
+                        request_mutations:
+                          - remove: x-tenant-id
+                          - remove: x-user-id
+                          - remove: x-departments
+                          - remove: x-tenant-roles
+                          - remove: x-plan
+                          - remove: x-feature-flags
+                          - remove: x-residency-mode
+                  - name: envoy.filters.http.local_ratelimit
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+                      stat_prefix: http_local_rate_limiter
+                  - name: envoy.filters.http.jwt_authn
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+                      providers:
+                        tenant_acme:
+                          issuer: ${ACME_ISSUER}
+                          ${AUDIENCES}
+                          payload_in_metadata: jwt_payload
+                          forward: false
+                          remote_jwks:
+                            http_uri:
+                              uri: http://keycloak:8080/realms/tenant-acme/protocol/openid-connect/certs
+                              cluster: keycloak
+                              timeout: 5s
+                            cache_duration: 300s
+                            async_fetch: {}
+                            retry_policy: { num_retries: 3 }
+                        trial:
+                          issuer: ${TRIAL_ISSUER}
+                          ${AUDIENCES}
+                          payload_in_metadata: jwt_payload
+                          forward: false
+                          remote_jwks:
+                            http_uri:
+                              uri: http://keycloak:8080/realms/trial/protocol/openid-connect/certs
+                              cluster: keycloak
+                              timeout: 5s
+                            cache_duration: 300s
+                            async_fetch: {}
+                            retry_policy: { num_retries: 3 }
+                      rules:
+                        - match: { prefix: /api/v1/public/ }
+                        - match: { prefix: /api/ }
+                          requires:
+                            requires_any:
+                              requirements:
+                                - provider_name: tenant_acme
+                                - provider_name: trial
+                  - name: envoy.filters.http.ext_authz
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                      transport_api_version: V3
+                      metadata_context_namespaces: [envoy.filters.http.jwt_authn]
+                      failure_mode_allow: false
+                      status_on_error: { code: ServiceUnavailable }
+                      grpc_service:
+                        envoy_grpc: { cluster_name: authz_enrichment }
+                        timeout: 0.25s
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: api
+                  virtual_hosts:
+                    - name: api
+                      domains: ["*"]
+                      routes:
+                        # PUB-1: anonymous, no jwt_authn (rule above), no ext_authz, per-IP rate limit.
+                        - match: { path: /api/v1/public/tenants/resolve }
+                          route:
+                            cluster: org_membership
+                            rate_limits:
+                              - actions: [{ remote_address: {} }]
+                          typed_per_filter_config:
+                            envoy.filters.http.ext_authz:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                              disabled: true
+                            envoy.filters.http.local_ratelimit:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+                              stat_prefix: pub1
+                              token_bucket: { max_tokens: 1000, tokens_per_fill: 1000, fill_interval: 60s }
+                              max_dynamic_descriptors: 1000
+                              descriptors:
+                                - entries: [{ key: remote_address }]
+                                  token_bucket: { max_tokens: 20, tokens_per_fill: 20, fill_interval: 60s }
+                              filter_enabled:
+                                runtime_key: pub1_enabled
+                                default_value: { numerator: 100, denominator: HUNDRED }
+                              filter_enforced:
+                                runtime_key: pub1_enforced
+                                default_value: { numerator: 100, denominator: HUNDRED }
+                              response_headers_to_add:
+                                - header: { key: x-local-rate-limit, value: "true" }
+                        # Test probe: what reaches an upstream on a route WITHOUT jwt_authn/ext_authz (strip-list check).
+                        - match: { path: /api/v1/public/echo }
+                          route: { cluster: go_probe, prefix_rewrite: /echo }
+                          typed_per_filter_config:
+                            envoy.filters.http.ext_authz:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                              disabled: true
+                        - match: { prefix: /api/v1/internal/ }
+                          direct_response:
+                            status: 404
+                            body: { inline_string: '{"type":"about:blank","title":"Not Found","status":404}' }
+                          response_headers_to_add:
+                            - header: { key: content-type, value: application/problem+json }
+                              append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                        # go-probe (platform-interop-tests, real gincommon): /whoami, /echo, /problem-extensions, /errors/*.
+                        - match: { prefix: /api/v1/probe/ }
+                          route: { cluster: go_probe, prefix_rewrite: / }
+                        # The tenders remote's API (examples/remote-tenders: GET /api/tenders/:id) → go-probe's
+                        # gincommon problem scenarios (404 TENDER_NOT_FOUND application/problem+json).
+                        - match: { prefix: /api/tenders/ }
+                          route: { cluster: go_probe, prefix_rewrite: /errors/tenders/ }
+                        - match: { prefix: /api/v1/ }
+                          route: { cluster: org_membership, timeout: 15s }
+                        - match: { prefix: / }
+                          direct_response:
+                            status: 404
+                            body: { inline_string: '{"type":"about:blank","title":"Not Found","status":404}' }
+                          response_headers_to_add:
+                            - header: { key: content-type, value: application/problem+json }
+                              append_action: OVERWRITE_IF_EXISTS_OR_ADD
+
+  clusters:
+    - name: keycloak
+      type: STRICT_DNS
+      connect_timeout: 2s
+      load_assignment:
+        cluster_name: keycloak
+        endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: keycloak, port_value: 8080 } } } }] }]
+    - name: org_membership
+      type: STRICT_DNS
+      connect_timeout: 2s
+      load_assignment:
+        cluster_name: org_membership
+        endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: org-membership, port_value: 8080 } } } }] }]
+    - name: go_probe
+      type: STRICT_DNS
+      connect_timeout: 2s
+      load_assignment:
+        cluster_name: go_probe
+        endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: go-probe, port_value: 8081 } } } }] }]
+    - name: authz_enrichment
+      type: STRICT_DNS
+      connect_timeout: 1s
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config: { http2_protocol_options: {} }
+      load_assignment:
+        cluster_name: authz_enrichment
+        endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: authz-enrichment, port_value: 9091 } } } }] }]
+    - name: otel_collector
+      type: STRICT_DNS
+      connect_timeout: 1s
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config: { http2_protocol_options: {} }
+      load_assignment:
+        cluster_name: otel_collector
+        endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: otel-collector, port_value: 4317 } } } }] }]

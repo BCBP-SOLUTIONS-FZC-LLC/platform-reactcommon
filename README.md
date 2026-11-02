@@ -163,6 +163,7 @@ packages/
     subpaths.json      subpaths, layers, functional areas, allowed imports (single source)
   webpack-preset/      Module Federation shared map, CSP-safe output
   eslint-plugin/       consumer lint rules
+test/                  unit · integration · e2e · smoke · fixtures · testenv (as platform-gincommon)
 examples/              shell, remote-tenders, cloudfront (built and checked in CI)
 scripts/               contracts, exports, docs, API reports, metrics parity, example checks
 .githooks/pre-commit   local commit gates (pnpm run install-hooks)
@@ -375,11 +376,16 @@ The same task names as platform-gincommon's Makefile, as `package.json` scripts.
 | `lint` | `make lint` | ESLint, with the layer rules generated from `subpaths.json` |
 | `vet` | `make vet` | Typecheck and dependency rules |
 | `vuln-check` | `make vuln-check` | `pnpm audit --prod --audit-level high` (as CI) |
-| `test` | `make test` | Every test: packages, examples, scripts |
-| `test-unit` | `make test-unit` | The packages' and scripts' tests |
-| `test-int` | `make test-int` | The examples' tests: the shell's IAM ports, CloudFront CSP and Lambda |
+| `test` | `make test` | Unit, integration and e2e tests, plus the examples' and scripts' tests (not smoke) |
+| `test-unit` | `make test-unit` | `test/unit` and the scripts' tests |
+| `test-int` | `make test-int` | `test/integration`: several subpaths wired together |
+| `test-e2e` | `make test-e2e` | `test/e2e`: the reference shell and remote booted end to end |
+| `test-examples` | (none) | The examples' own tests: the shell's IAM ports, CloudFront CSP and Lambda |
 | `test-cover` | `make test-cover` | Tests with coverage (`coverage/`) |
-| `test-smoke` | `make test-smoke-image` | Build, pack the tarballs and run CI's smoke tests against them (needs npm registry access) |
+| `test-smoke` | `make test-smoke` | `test/smoke`: the example builds served as CloudFront serves them (after `pnpm build`), or a deployed shell with `SMOKE_BASE_URL` |
+| `test-browser` | (none) | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP (`test-browser-install` installs the browsers once) |
+| `test-stack` | `stack-up` | `test/stack`: the example shell in the three browsers against Keycloak, Envoy with the real IAM services, the distribution on floci and an OTel Collector (`stack-up` / `stack-down` start and remove it) |
+| `test-smoke-package` | `make test-smoke-image` | Build, pack the tarballs and run CI's tarball smoke tests against them (needs npm registry access) |
 | `build` | `make build` | Packages, then the example builds |
 | `cover` / `cover-func` | `make cover` / `make cover-func` | Coverage HTML report (`coverage/index.html`) / per-file table |
 | `cover-check` | `make cover-check` | Coverage run + the ≥ 98% gate (CI's script) |
@@ -388,12 +394,12 @@ The same task names as platform-gincommon's Makefile, as `package.json` scripts.
 | `metrics-inventory` | `make metrics-inventory` | Regenerate `docs/observability/metric-registry.md` (`docs:sync`) |
 | `clean` | `make clean` | Remove `coverage/`, `dist-packages/`, every `dist/` and api-extractor's `temp/` |
 
-Not carried over: `run` and `docker-*` (there's no server and no local stack here; the [observability section](#against-a-local-collector) uses gincommon's), `godoc` (the API reports in `packages/frontend-sdk/api/` are the reference), `pin-base-images` (no Dockerfile), `test-e2e` and `race`/`test-ci` (no e2e suite or race detector in JavaScript).
+Not carried over: `run` and `docker-*` (there's no server here, and the root `docker-compose.yml` is the `test/stack` harness, started with `stack-up` / `stack-down`; the [observability section](#against-a-local-collector) uses gincommon's), `godoc` (the API reports in `packages/frontend-sdk/api/` are the reference), `pin-base-images` (no Dockerfile), and `race`/`test-ci` (no race detector in JavaScript).
 
 ### Running a single test
 
 ```bash
-pnpm exec vitest run packages/frontend-sdk/test/http
+pnpm exec vitest run test/unit/http
 pnpm exec vitest run -t "single-flight"
 ```
 
@@ -451,20 +457,38 @@ gincommon's local stack (`make docker-up` in platform-gincommon) runs a collecto
 
 ## Testing
 
+Tests live under `test/`, laid out as platform-gincommon's:
+
+```
+test/
+  unit/<subpath>/        one folder per SDK subpath; unit/sdk (root import, dependency rules),
+                         unit/webpack-preset, unit/eslint-plugin
+  integration/           several subpaths wired together in-process (bootstrap, auth + http + telemetry, consent, MFE)
+  e2e/                   the reference shell and remote booted end to end in-process (sign-in, remote, logout)
+  smoke/                 the example builds served as CloudFront serves them, or a deployed shell (SMOKE_BASE_URL)
+  browser/               Playwright: the SDK in Chromium, Firefox and WebKit under the production CSP (test/browser/README.md)
+  stack/                 Playwright against the production-like stack in docker-compose.yml and docker/
+                         (docs/e2e/integrated-deployment-report.md)
+  fixtures/              shared fakes and helpers (Keycloak, render, parity cases, the boundaries tree)
+  testenv/               loads .env and sets defaults (OBSERVABILITY_DOMAIN, ENVIRONMENT, SMOKE_BASE_URL)
+```
+
+`pnpm test` runs unit, integration and e2e (and the examples' and scripts' own tests); smoke is left out, as in gincommon, and runs with `pnpm run test-smoke`. The real-browser suite runs with `pnpm run test-browser` (`--project=chromium|firefox|webkit` for one engine; `pnpm run test-browser-install` installs the browsers once). Coverage is measured on `packages/*/src`.
+
 ### Canonical tests (do not break)
 
-- **`test/auth/oidc.test.ts`**: against a Keycloak fake that revokes the whole session on any refresh-token reuse. It covers:
+- **`test/unit/auth/oidc.test.ts`**: against a Keycloak fake that revokes the whole session on any refresh-token reuse. It covers:
   - single-flight refresh, and two tabs refreshing alternately without reuse;
   - ambiguous failures restoring silently, never resending a token;
   - every callback check, the loop guard and the signed-out mark;
   - that no token ever reaches storage or the channel.
-- **`test/http/http.test.ts`**: identity headers never sent, the token only to the page's origin, retries and `Retry-After`, the 401 refresh path, de-duplication.
-- **`test/core/identity.test.ts`**, **`sanitize.test.ts`**: the identity and redaction fixtures shared with Go (go-probe) and Python.
-- **`test/problem/parse.test.ts`**: real gincommon and fastapicommon error bodies decode as gincommon's own client decodes them.
-- **`test/config/schema-csp.test.ts`**: parsing the runtime config never constructs a `Function` (CSP `script-src 'self'`).
-- **`test/dependency-rules.test.ts`** + `scripts/lib/subpaths.test.ts`: the layer rules and functional areas from `subpaths.json`.
+- **`test/unit/http/http.test.ts`**: identity headers never sent, the token only to the page's origin, retries and `Retry-After`, the 401 refresh path, de-duplication.
+- **`test/unit/core/identity.test.ts`**, **`sanitize.test.ts`**: the identity and redaction fixtures shared with Go (go-probe) and Python.
+- **`test/unit/problem/parse.test.ts`**: real gincommon and fastapicommon error bodies decode as gincommon's own client decodes them.
+- **`test/unit/config/schema-csp.test.ts`**: parsing the runtime config never constructs a `Function` (CSP `script-src 'self'`).
+- **`test/unit/sdk/dependency-rules.test.ts`** + `scripts/lib/subpaths.test.ts`: the layer rules and functional areas from `subpaths.json`.
 - **`examples/shell/test/iam.test.ts`**: the shell's PUB-1 / P-35 ports against the contract cases (contract #18).
-- **`packages/webpack-preset/test/preset.test.ts`**: real webpack builds. Checks the container global, no SDK in remotes and no `eval`, and that the shared version ranges agree with webpack's own semver.
+- **`test/unit/webpack-preset/preset.test.ts`**: real webpack builds. Checks the container global, no SDK in remotes and no `eval`, and that the shared version ranges agree with webpack's own semver.
 - **`examples/cloudfront/test/cloudfront.test.ts`**: the CSP equals the design doc's, and covers the SPA rewrite and the `/csp-report` Lambda.
 
 ### Coverage

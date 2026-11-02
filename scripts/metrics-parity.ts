@@ -2,7 +2,7 @@
 //
 //   pnpm metrics:parity
 //
-// 1. Every case in packages/frontend-sdk/test/metrics/parity-cases.ts is rendered as a one-family
+// 1. Every case in test/unit/metrics/parity-cases.ts is rendered as a one-family
 //    Prometheus exposition (with the injected domain/service/environment) and judged by the real
 //    metricslint; its verdict (any error or none) must match the SDK's, except where a case
 //    records why the construction-time and scrape-time rules legitimately differ.
@@ -23,7 +23,7 @@ const { initializeCore } = await import('../packages/frontend-sdk/src/core/index
 const { bucketPreset } = await import('../packages/frontend-sdk/src/metrics/checks.ts');
 const { renderFamily, renderMetricInventory } = await import('../packages/frontend-sdk/src/metrics/inventory.ts');
 const { getServiceMeter } = await import('../packages/frontend-sdk/src/metrics/index.ts');
-const { PARITY_CASES, sdkVerdict } = await import('../packages/frontend-sdk/test/metrics/parity-cases.ts');
+const { PARITY_CASES, sdkVerdict } = await import('../test/fixtures/metrics-parity-cases.ts');
 
 function buildMetricslint(dir: string): string {
   const gincommon = join(resolve(process.env.PLATFORM_ROOT ?? join(REPO_ROOT, '../..')), 'go/platform-gincommon');

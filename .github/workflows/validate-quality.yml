@@ -88,6 +88,11 @@ jobs:
       - name: Example builds (CSP checks)
         run: pnpm examples:check
 
+      # test/smoke in-process: the example builds served as CloudFront serves them (headers, SPA
+      # rewrite, runtime.json, remote manifest). Set SMOKE_BASE_URL to run it against an environment.
+      - name: Smoke tests (in-process)
+        run: pnpm run test-smoke
+
       # Runtime dependencies of the published packages only (dev tooling is not shipped).
       - name: Vulnerability check
         run: |

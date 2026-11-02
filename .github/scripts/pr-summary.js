@@ -21,6 +21,7 @@ const rows = [
   ['Package tarballs', 'package'],
   ['Trivy (dependencies · secrets · config)', 'trivy'],
   ['Smoke tests (packed tarballs)', 'smoke'],
+  ['Browser tests (Chromium · Firefox · WebKit)', 'browser'],
   ['Cross-language compatibility', 'interop'],
 ];
 

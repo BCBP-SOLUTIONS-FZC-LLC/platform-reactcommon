@@ -6,3 +6,9 @@ temp/
 *.tsbuildinfo
 .DS_Store
 dist-packages/
+.env
+# Playwright (pnpm run test-browser)
+playwright-report/
+test-results/
+test/browser/.build/
+/.state/

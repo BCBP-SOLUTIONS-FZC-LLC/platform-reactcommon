@@ -82,7 +82,13 @@ class Boundary extends Component<BoundaryProps, { error: { e: unknown } | undefi
     recordWebError('boundary', this.props.mfe, e);
     if (reloadOnceForChunkError(e)) return; // the old build's chunks are gone: load the new one
     const log = getLogger({ mfe: this.props.mfe });
-    const attrs = { error: e, ...(info.componentStack ? { component_stack: info.componentStack.slice(0, 2_000) } : {}) };
+    // An API error carries its call's request id: the log joins the backend's line for that call.
+    const requestId = (e as { requestId?: unknown } | null)?.requestId;
+    const attrs = {
+      error: e,
+      ...(typeof requestId === 'string' && (isProblemError(e) || e instanceof TimeoutError || e instanceof NetworkError) ? { request_id: requestId } : {}),
+      ...(info.componentStack ? { component_stack: info.componentStack.slice(0, 2_000) } : {}),
+    };
     // An API error is the server's answer (already traced); a render bug is ours.
     if (isProblemError(e) || e instanceof TimeoutError || e instanceof NetworkError) log.warn('remote showed an error', attrs);
     else log.error('remote failed to render', attrs);

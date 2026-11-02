@@ -7,7 +7,6 @@
   },
   "include": [
     "src/**/*.ts",
-    "test/**/*.ts",
     "tsup.config.ts",
     "../frontend-sdk/src/internal/globals.d.ts"
   ]
