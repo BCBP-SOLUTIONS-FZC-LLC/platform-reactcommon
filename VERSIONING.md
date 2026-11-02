@@ -128,9 +128,29 @@ The same tarballs are attached to the GitHub Release, with Cosign-signed `checks
 4. **Then the GitHub Release** (`publish`), as before. The irreversible registry step comes first, as platform-fastapicommon's PyPI publish does.
 
 **One-time setup** (repository admin):
-- Create the environment **`npm`** (*Settings → Environments*) with required reviewers. `npm-publish` waits for an approval there, and refuses to publish if the environment has no required reviewers (`.github/scripts/check-npm-environment.sh`): a job that names a missing environment gets an unprotected one created on the spot, so without that check the gate would silently disappear.
+- Gate the **`npm`** environment (*Settings → Environments*). `npm-publish` refuses to publish unless one of two gates is in place (`.github/scripts/check-npm-environment.sh`): a job that names a missing environment gets an unprotected one created on the spot, so without that check the gate would silently disappear.
+  - **Required reviewers** (an approval per release). GitHub offers them for public repositories, and for private ones only on GitHub Enterprise.
+  - **The tag gate** (this repository: private, on GitHub Team). The environment accepts only release tags, and a tag ruleset decides who may push them: who may push a `vX.Y.Z` tag is who may publish. There is no separate approval click.
+    ```sh
+    REPO=BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
+    # 1. npm accepts only release tags
+    gh api -X PUT "repos/$REPO/environments/npm" --input - <<'EOF'
+    { "deployment_branch_policy": { "protected_branches": false, "custom_branch_policies": true } }
+    EOF
+    gh api -X POST "repos/$REPO/environments/npm/deployment-branch-policies" -f name='v*.*.*' -f type=tag
+    # 2. only repository admins may create, move or delete v* tags
+    gh api -X POST "repos/$REPO/rulesets" --input - <<'EOF'
+    { "name": "release tags", "target": "tag", "enforcement": "active",
+      "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+      "rules": [{ "type": "creation" }, { "type": "update" }, { "type": "deletion" }],
+      "bypass_actors": [{ "actor_type": "RepositoryRole", "actor_id": 5, "bypass_mode": "always" }] }
+    EOF
+    # 3. what release.yml checks
+    REPO=$REPO bash .github/scripts/check-npm-environment.sh
+    ```
+    `actor_id` 5 is the repository *Admin* role; list a team (`"actor_type": "Team"`) instead to name the releasers. Under this gate a `workflow_dispatch` from `main` cannot reach `npm` (the environment admits tags only): publish from the tag push, or re-run that run.
 - After the first publish, on each package's page (*Package settings*), check that it is linked to this repository (from `repository` in `package.json`), and grant *Actions access* to the repositories that consume it.
-- Packages linked to a repository inherit its visibility. **This repository is public, so the packages are public too**: anyone with a GitHub token can install them (GitHub Packages always asks for one). Their `license` is `UNLICENSED`; decide on a license (platform-fastapicommon publishes as Apache-2.0) or make the repository private before the first release. Deleting a version is possible in the UI, but never reuse its number.
+- Packages linked to a repository inherit its visibility. **This repository is private, so the packages are private**: installing them needs a token with `read:packages` from someone who can read them, and a consuming repository's workflows need *Actions access* on the package (above). `license` stays `UNLICENSED` while they are private; choose one (platform-fastapicommon publishes as Apache-2.0) before making the repository public. Deleting a version is possible in the UI, but never reuse its number.
 
 Run locally: `pnpm build && bash .github/scripts/pack-packages.sh && pnpm publish:check`. `.github/scripts/npm-publish.sh` takes `DRY_RUN=1`, or `NPM_REGISTRY=<a local registry>` (it was exercised against Verdaccio: a first publish, an idempotent re-run, and a refused different tarball under the same version).
 

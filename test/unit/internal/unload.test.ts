@@ -2,7 +2,9 @@
 // real senders sharing it (known browser bug 1: spans and log beacons each took the whole 64 KiB).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeCore, setConsentProvider } from '../../../packages/frontend-sdk/src/core/index.ts';
-import { PAGE_KEEPALIVE_BYTES, onUnload } from '../../../packages/frontend-sdk/src/internal/unload.ts';
+import { KEEPALIVE_IN_FLIGHT_MS, METRICS_SHARE_DEFAULT_BYTES, METRICS_SHARE_MAX_BYTES, METRICS_SHARE_MIN_BYTES, PAGE_KEEPALIVE_BYTES, keepaliveLeft, metricsShare, onUnload, reserveKeepalive, setMetricsShare, spendKeepalive } from '../../../packages/frontend-sdk/src/internal/unload.ts';
+import { getServiceMeter, initializeMetrics } from '../../../packages/frontend-sdk/src/metrics/index.ts';
+import { shutdownMetrics } from '../../../packages/frontend-sdk/src/metrics/metrics.ts';
 import { resetRuntimeForTests } from '../../../packages/frontend-sdk/src/internal/runtime.ts';
 import { getLogger, initializeLogging } from '../../../packages/frontend-sdk/src/logging/index.ts';
 import { shutdownLogging } from '../../../packages/frontend-sdk/src/logging/logging.ts';
@@ -18,6 +20,7 @@ beforeEach(() => {
 afterEach(async () => {
   await shutdownTracing().catch(() => {});
   await shutdownLogging().catch(() => {});
+  await shutdownMetrics().catch(() => {});
   vi.unstubAllGlobals();
   resetRuntimeForTests();
 });
@@ -55,6 +58,108 @@ describe('onUnload', () => {
     next.mockClear();
     target.dispatchEvent(new Event('pagehide'));
     expect(next).not.toHaveBeenCalled();
+  });
+});
+
+describe('the keepalive ledger: what the hidden phase sent is not handed out again on pagehide', () => {
+  it('the metrics share: none without metrics, the default before the first interval, then the last one\'s size x1.25 within bounds', () => {
+    expect(metricsShare()).toBe(0);
+    setMetricsShare(undefined);
+    expect(metricsShare()).toBe(METRICS_SHARE_DEFAULT_BYTES);
+    setMetricsShare(100);
+    expect(metricsShare()).toBe(METRICS_SHARE_MIN_BYTES);
+    setMetricsShare(4_000);
+    expect(metricsShare()).toBe(5_000);
+    setMetricsShare(100_000);
+    expect(metricsShare()).toBe(METRICS_SHARE_MAX_BYTES);
+    setMetricsShare(0);
+    expect(metricsShare()).toBe(0);
+  });
+
+  it('a reservation is left to its holder until released, once', () => {
+    const release = reserveKeepalive(8_000);
+    expect(keepaliveLeft()).toBe(PAGE_KEEPALIVE_BYTES - 8_000);
+    release();
+    release();
+    expect(keepaliveLeft()).toBe(PAGE_KEEPALIVE_BYTES);
+  });
+
+  it('pagehide without a hidden phase: metrics (first) reserves its share before logs and spans are served', async () => {
+    initializeCore({ serviceName: 'web-app', domain: 'portal', environment: 'test', buildVersion: '1.0.0' });
+    setConsentProvider({ has: () => true, subscribe: () => () => {} });
+    const beacons: { url: string; size: number }[] = [];
+    vi.stubGlobal('navigator', { sendBeacon: (url: string, data: Blob) => (beacons.push({ url, size: data.size }), true) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 200 })));
+    initializeLogging({ otlpBaseUrl: '/otel', level: 'debug', flushMs: 60_000, batchSize: 512 });
+    initializeTracing({ otlpBaseUrl: '/otel', sampleRatio: 1 });
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    const filler = 'x'.repeat(800);
+    for (let i = 0; i < 80; i++) getLogger().error(`log ${i} ${filler}`);
+    for (let i = 0; i < 300; i++) getTracer('t').startSpan(`s${i}`, { a: filler }).end();
+    getServiceMeter().counter('portal_web_app_closes_total', 'Closes.', []).add(1);
+
+    target.dispatchEvent(new Event('pagehide'));
+    const sync = beacons.map((b) => b.size).reduce((n, b) => n + b, 0); // logs and spans, started in the listener
+    expect(sync).toBeLessThanOrEqual(PAGE_KEEPALIVE_BYTES - METRICS_SHARE_DEFAULT_BYTES);
+    await vi.waitFor(() => expect(beacons.map((b) => b.url)).toContain('http://localhost/otel/v1/metrics'));
+    expect(beacons.map((b) => b.size).reduce((n, b) => n + b, 0)).toBeLessThanOrEqual(PAGE_KEEPALIVE_BYTES);
+  });
+
+  it('a spend lowers what is left until it is assumed done (KEEPALIVE_IN_FLIGHT_MS)', () => {
+    expect(keepaliveLeft(1_000)).toBe(PAGE_KEEPALIVE_BYTES);
+    spendKeepalive(20_000, 1_000);
+    spendKeepalive(0, 1_000); // nothing sent: nothing recorded
+    spendKeepalive(10_000, 3_000);
+    expect(keepaliveLeft(1_000 + KEEPALIVE_IN_FLIGHT_MS - 1)).toBe(PAGE_KEEPALIVE_BYTES - 30_000);
+    expect(keepaliveLeft(1_000 + KEEPALIVE_IN_FLIGHT_MS)).toBe(PAGE_KEEPALIVE_BYTES - 10_000);
+    expect(keepaliveLeft(3_000 + KEEPALIVE_IN_FLIGHT_MS)).toBe(PAGE_KEEPALIVE_BYTES);
+    spendKeepalive(PAGE_KEEPALIVE_BYTES * 2, 10_000);
+    expect(keepaliveLeft(10_000)).toBe(0); // never negative
+  });
+
+  it('pagehide right after a hidden phase hands the senders only what it left, and records their spending', () => {
+    const seen: number[] = [];
+    onUnload({ priority: 0, send: (b) => (seen.push(b), 5_000) });
+    spendKeepalive(40_000); // the hidden phase's beacons, just sent
+    target.dispatchEvent(new Event('pagehide'));
+    expect(seen).toEqual([PAGE_KEEPALIVE_BYTES - 40_000]);
+    expect(keepaliveLeft()).toBe(PAGE_KEEPALIVE_BYTES - 45_000);
+  });
+});
+
+describe('logs, spans and metrics when the page is hidden: one budget, the metrics\' share kept', () => {
+  it('logs and spans leave the metrics share, a pagehide meanwhile leaves it too; the metrics interval, collected last, goes by beacon in it', async () => {
+    initializeCore({ serviceName: 'web-app', domain: 'portal', environment: 'test', buildVersion: '1.0.0' });
+    setConsentProvider({ has: () => true, subscribe: () => () => {} });
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+    vi.stubGlobal('document', doc);
+    const beacons: { url: string; size: number }[] = [];
+    vi.stubGlobal('navigator', { sendBeacon: (url: string, data: Blob) => (beacons.push({ url, size: data.size }), true) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 200 })));
+    initializeLogging({ otlpBaseUrl: '/otel', level: 'debug', flushMs: 60_000, batchSize: 512 });
+    initializeTracing({ otlpBaseUrl: '/otel', sampleRatio: 1 });
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    const filler = 'x'.repeat(800);
+    for (let i = 0; i < 80; i++) getLogger().error(`log ${i} ${filler}`); // ~110 KiB: more than the whole budget
+    for (let i = 0; i < 300; i++) getTracer('t').startSpan(`s${i}`, { a: filler }).end();
+    getServiceMeter().counter('portal_web_app_hides_total', 'Hides.', []).add(1);
+
+    doc.visibilityState = 'hidden';
+    doc.dispatchEvent(new Event('visibilitychange'));
+    // The metrics' share is held while the interval is collected: logs and spans left it, and a pagehide
+    // arriving now would see only what is beyond it.
+    const beyondTheReserve = keepaliveLeft();
+    expect(beyondTheReserve).toBeGreaterThanOrEqual(0);
+    target.dispatchEvent(new Event('pagehide'));
+    const afterPagehide = keepaliveLeft(); // the pagehide senders had only what was beyond the reserve
+    expect(afterPagehide).toBeLessThanOrEqual(beyondTheReserve);
+    await vi.waitFor(() => expect(beacons.map((b) => b.url)).toContain('http://localhost/otel/v1/metrics'));
+
+    const metrics = beacons.filter((b) => b.url.endsWith('/v1/metrics'));
+    expect(metrics).toHaveLength(1); // the pagehide during the collection started no second send
+    expect(metrics[0]!.size).toBeLessThanOrEqual(METRICS_SHARE_DEFAULT_BYTES);
+    expect(keepaliveLeft()).toBe(afterPagehide + METRICS_SHARE_DEFAULT_BYTES - metrics[0]!.size); // all three within the page budget
+    expect(metricsShare()).toBe(Math.max(METRICS_SHARE_MIN_BYTES, Math.ceil(metrics[0]!.size * 1.25))); // the next share: this interval's size
   });
 });
 

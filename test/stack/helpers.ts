@@ -170,6 +170,25 @@ export function spans(): Span[] {
   return out;
 }
 
+export interface MetricPoint { name: string; resource: Record<string, string>; temporality: number; value: number; labels: Record<string, string> }
+
+/** Sum data points as the stack Collector received them (the browser's: through otel-gateway and otel-aggregator). */
+export function metricPoints(): MetricPoint[] {
+  const out: MetricPoint[] = [];
+  type Doc = { resourceMetrics?: { resource?: { attributes?: Attr[] }; scopeMetrics?: { metrics?: { name: string; sum?: { aggregationTemporality: number; dataPoints?: { asInt?: string; asDouble?: number; attributes?: Attr[] }[] } }[] }[] }[] };
+  for (const doc of jsonl('otel/metrics.jsonl') as Doc[]) {
+    for (const rm of doc.resourceMetrics ?? []) {
+      const resource = attrs(rm.resource?.attributes);
+      for (const sm of rm.scopeMetrics ?? []) {
+        for (const m of sm.metrics ?? []) {
+          for (const p of m.sum?.dataPoints ?? []) out.push({ name: m.name, resource, temporality: m.sum!.aggregationTemporality, value: Number(p.asInt ?? p.asDouble), labels: attrs(p.attributes) });
+        }
+      }
+    }
+  }
+  return out;
+}
+
 export function logRecords(): LogRecord[] {
   const out: LogRecord[] = [];
   for (const doc of jsonl('otel/logs.jsonl') as { resourceLogs?: { resource?: { attributes?: Attr[] }; scopeLogs?: { logRecords?: { traceId?: string; body?: AnyValue; severityText?: string; attributes?: Attr[] }[] }[] }[] }[]) {

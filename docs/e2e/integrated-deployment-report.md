@@ -34,7 +34,7 @@ flowchart LR
   GP["go-probe http-serve (real platform-gincommon)"]
   PG[(Postgres 17 + PgBouncer)]
   VK[(Valkey 8)]
-  OT["OTel Collector contrib 0.164.0 → JSON files"]
+  OT["OTel Collector contrib 0.164.0: /otel gateway → aggregator (examples/collector) → sink → JSON files"]
   B -->|HTTPS| E1 & E2
   E1 -->|"S3 behaviors (+ viewer-request function run by the shim)"| CF --> S3
   E1 -->|"/api/* (custom origin, by the shim)"| ENV
@@ -61,7 +61,7 @@ flowchart LR
 | "Tenders" API | **Real gincommon**: platform-interop-tests `go-probe http-serve`. Envoy maps `/api/tenders/{id}` to its `/errors/tenders/{id}` (404 `TENDER_NOT_FOUND` problem+json) and `/api/v1/probe/*` to `/whoami`, `/echo` | `platform-interop-tests@93e3481`, `platform-gincommon@98957b8` (v2) |
 | S3, CloudFront (API + S3 data plane), Lambda, Secrets Manager, WAFv2 API, SNS/SQS/Glue | **Emulated**: floci | `floci/floci:2.1.0-compat` |
 | CloudFront Functions execution, custom origins | **Shim** (`docker/edge/server.mjs`). See §6. | node:22-alpine |
-| OTel Collector | **Real**, with file exporters (`.state/otel/*.jsonl`) | `otel/opentelemetry-collector-contrib:0.164.0` |
+| OTel Collector | **Real**. `/otel/*` goes to the reference two-tier configuration (`examples/collector`: `otel-gateway`, then `otel-aggregator` for metrics), which hands everything to a sink Collector with file exporters (`.state/otel/*.jsonl`) | `otel/opentelemetry-collector-contrib:0.164.0` |
 | Valkey, Postgres, PgBouncer | Real | `valkey/valkey:8-alpine`, `postgres:17-alpine`, `edoburu/pgbouncer:latest` |
 | Not deployed | iam-catalog-admin, iam-tender-acl, iam-realm-provisioner (its realm output is reproduced statically), user profile, audit log, Billing | — |
 
@@ -138,6 +138,7 @@ The emulator rows `E-n` are in §6.
 | 18 | Real CSP violation → `/csp-report` → Lambda → Collector | ⚠️ E-6 | ✅ (Issue 11 fixed) | ✅ |
 | 19 | The deployed Lambda: `x-origin-verify` enforced (403 without it), both report formats → `csp.violation` OTLP logs without query strings | ✅ | ✅ | ✅ |
 | 20 | Browser clock 3 min fast, 60 s token: signs in (token times judged on the provider's clock) | ✅ (Issue 8 fixed) | ✅ | ⏭ (Playwright clock hangs WebKit teardown) |
+| 24 | `/otel` through the reference Collector: two tabs' delta metrics (one with its clock 10 minutes slow) become one cumulative series without per-browser attributes; a minted metric name is dropped | ✅ | ✅ | ✅ |
 | 21 | `@gateway` PUB-1 per-IP rate limit: 429 after 20 requests. A viewer-sent `X-Forwarded-For` does not reset the bucket. The bucket refills | ✅ (gateway project, Chromium) | | |
 | 22 | `@gateway` WAF ACL associated, and its rate rule blocks a flood | ⚠️ E-3/E-4 | | |
 | 23 | `@gateway` Keycloak key rotation vs Envoy JWKS cache | ⚠️ Issue 9 | | |
@@ -388,7 +389,7 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 - **Issuer and hostname:** With `KC_HOSTNAME=https://auth.localtest.me` and `KC_PROXY_HEADERS=xforwarded`, the issuer is identical for the browser, the `iss` callback parameter (RFC 9207, checked by the SDK) and Envoy. Envoy fetches JWKS from the internal `http://keycloak:8080` URL, and the issuer still matches.
 - **CORS:** Keycloak's token endpoint CORS (web origin `https://app.localtest.me`) works in all three engines. `/api`, `/otel` and `/csp-report` are same-origin, so neither the gateway nor the Collector needs CORS.
 - **Cookies across hosts:** Silent `prompt=none` restore (top-level navigation to `auth.`) works in WebKit (ITP) as well as Chromium and Firefox. No third-party cookie is needed.
-- **Collector path:** CloudFront cannot strip `/otel` (an origin path only prepends). The Collector's OTLP/HTTP receiver must use `traces_url_path: /otel/v1/traces` etc., as `docker/otel/collector.yaml` does. JSON content type and beacons are accepted.
+- **Collector path:** CloudFront cannot strip `/otel` (an origin path only prepends). The Collector's OTLP/HTTP receiver must use `traces_url_path: /otel/v1/traces` etc., as the reference gateway (`examples/collector/gateway.yaml`) does. JSON content type and beacons are accepted.
 - **No browser spans without consent:** The example CMP grants only `essential` and has no consent UI, so browser spans never leave the page. Correlation works through the `traceparent` header: Envoy, authz-enrichment, org-membership and go-probe spans carry the browser's trace id. Essential error logs arrive.
 - **Strip-list placement:** The HLD strip-list must run *before* jwt_authn/ext_authz. Envoy's route-level `request_headers_to_remove` runs in the router and would also strip the enriched values. The stack uses the `header_mutation` HTTP filter first (test 2).
 - **Per-IP rate limit:** Per-IP limits need `xff_num_trusted_hops: 1` (CloudFront appends the viewer IP). A viewer-forged `X-Forwarded-For` does not buy a new bucket (test 21). HLD's 20/IP/hour shared by an office behind one NAT is very tight for identifier-first login; the stack uses 20/IP/minute.
@@ -473,6 +474,7 @@ After review round 4, with the machine awake and on AC power:
 |---|---|---|---|---|
 | 4 (host awake, on AC, review round 4) | 51 | 8 → 3 test defects, fixed | 15.9 min | `/auth/callback` regex predates the HTML `integrity` pin; the one-tab refresh wait (90 s) was shorter than two refreshes of a 60 s token can take; cross-tab sign-out left the previous user's app mounted under the dialog (shell fixed: it unmounts the app) |
 | 5 (the same, after the fixes) | **62** | **0** (1 skipped) | 15.2 min | |
+| 6 (review round 5: `/otel` through the reference two-tier Collector) | **65** | **0** (1 skipped) | 15.2 min | test 24 added in each browser |
 
 To re-verify, rerun with the machine awake and on AC power:
 

@@ -27,9 +27,11 @@
 # Publishes to GitHub Packages (npm-publish: @bcbp-solutions-fzc-llc/*, the same tarballs, with a
 # build-provenance attestation each), then the GitHub Release (tarballs, SBOM, signed checksums).
 # Order of the irreversible steps, as platform-fastapicommon's PyPI release: npm-publish (a version
-# can never be re-published) → publish (GitHub Release). npm-publish runs in the protected `npm`
-# environment (required reviewers) and is idempotent: a re-run skips versions already published with
-# the same integrity and refuses any other (VERSIONING.md, "Publishing").
+# can never be re-published) → publish (GitHub Release). npm-publish runs in the gated `npm`
+# environment (required reviewers, or on GitHub Team with a private repository: release tags only,
+# whose creation a tag ruleset restricts) and is idempotent: a re-run skips versions already published
+# with the same integrity and refuses any other (VERSIONING.md, "Publishing"). Under the tag gate a
+# workflow_dispatch from main cannot reach `npm`: publish from the tag push, or re-run that run.
 #
 # workflow_dispatch: GitHub runs this file and the reusable validate-*.yml from the DISPATCHING
 # ref, not from the tag, so verify refuses a dispatch unless github.ref is refs/heads/main or
@@ -285,10 +287,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [verify, validate-test, validate-quality, validate-contracts, package, trivy, smoke, interop, react-floor]
     timeout-minutes: 10
-    environment: npm   # protected: required reviewers approve the irreversible publish
+    environment: npm   # gated: required reviewers, or release tags only + a tag ruleset (VERSIONING.md)
     permissions:
       contents: read
-      actions: read         # read the npm environment's protection rules
+      actions: read         # read the npm environment's protection rules and deployment policies
       packages: write       # npm publish to npm.pkg.github.com with GITHUB_TOKEN
       id-token: write       # build-provenance attestation (Sigstore)
       attestations: write
@@ -301,8 +303,8 @@ jobs:
           token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
       # A job naming an environment that does not exist gets one created, unprotected: never publish
-      # without the approval the environment is there for.
-      - name: The npm environment requires approval
+      # without the gate the environment is there for (required reviewers, or the tag ruleset gate).
+      - name: Publishing is gated (npm environment)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}

@@ -4,10 +4,10 @@
 // drainOnUnload) and logs by sendBeacon (logging/processor.ts drainOnHide). jsdom/happy-dom have no
 // keepalive budget and no tab close, so this runs in real engines.
 import type { Page } from '@playwright/test';
-import { distinct, logSeqs, spanSeqs } from './otlp.ts';
+import { counterValues, distinct, logSeqs, spanSeqs } from './otlp.ts';
 import { expect, test } from './fixtures.ts';
 import type { CollectedRequest, RunLog } from './server.ts';
-import { CLOSE_LOSS } from './engine-notes.ts';
+import { CLOSE_LOSS, METRICS_AFTER_PAGEHIDE } from './engine-notes.ts';
 
 const KEEPALIVE_MAX_BYTES = 60 * 1024;
 const range = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => from + i);
@@ -62,9 +62,9 @@ test.describe('tab close', () => {
     expect(seqs).toEqual(range(SPANS - seqs.length, SPANS));
   });
 
-  test('spans and logs: the logs go first by beacon, the spans take what is left of the page budget', async ({ openHarness, collected, browserName }) => {
+  test('spans, logs and metrics: the logs go first by beacon, the spans take what is left short of the metrics\' share, the metrics fit it', async ({ openHarness, collected, browserName }) => {
     const page = await openHarness();
-    await page.evaluate(([s, l]) => (window.harness.spans(s, 1500), window.harness.logs(l, 800)), [SPANS, LOGS] as const);
+    await page.evaluate(([s, l]) => (window.harness.spans(s, 1500), window.harness.logs(l, 800), window.harness.count(3)), [SPANS, LOGS] as const);
     await closeTab(page);
     const arrived = await traceRequests(collected);
     // Either request can be lost with the closing page (Firefox drops the logs' beacon in about 1 close
@@ -90,7 +90,70 @@ test.describe('tab close', () => {
     expect(['beacon', 'keepalive']).toContain(first.via);
     expect(seqs.length).toBeGreaterThan(0);
     expect(seqs).toEqual(range(SPANS - seqs.length, SPANS));
-    expect(logs.reduce((n, r) => n + r.bytes, 0) + first.bytes).toBeLessThanOrEqual(KEEPALIVE_MAX_BYTES);
+    // The metrics interval, collected after both, went by beacon in the share they left it
+    // (src/internal/unload.ts metricsShare), and all three fit the page's budget together.
+    const clicks = async () => ofSignal(await collected(), 'metrics').filter((r) => counterValues(r, 'portal_browser_harness_clicks_total').length > 0);
+    await expect.poll(async () => (await clicks()).length, { timeout: 5_000 }).toBeGreaterThan(0).catch(() => {});
+    const metrics = await clicks();
+    test.skip(metrics.length === 0, `${browserName}: ${METRICS_AFTER_PAGEHIDE}`);
+    expect(metrics.map((r) => r.via)).toEqual(['beacon']);
+    expect(metrics.flatMap((r) => counterValues(r, 'portal_browser_harness_clicks_total'))).toEqual([3]);
+    expect(logs.reduce((n, r) => n + r.bytes, 0) + first.bytes + metrics[0]!.bytes).toBeLessThanOrEqual(KEEPALIVE_MAX_BYTES);
+  });
+});
+
+test.describe('metrics', () => {
+  // The interval is collected and sent when the page is hidden or closing (metrics.ts sendOnHide):
+  // by sendBeacon, so it outlives the tab. The exporter's own interval is 60 s, so nothing else sends.
+  const CLICKS = 'portal_browser_harness_clicks_total';
+
+  test('a tab switch sends the interval by beacon, once', async ({ openHarness, collected }) => {
+    const page = await openHarness();
+    await page.evaluate(() => window.harness.count(5));
+    await page.evaluate(() => window.harness.setVisibility('hidden'));
+    await expect.poll(async () => ofSignal(await collected(), 'metrics').flatMap((r) => counterValues(r, CLICKS)), { timeout: 10_000 }).toEqual([5]);
+    const sent = ofSignal(await collected(), 'metrics').filter((r) => counterValues(r, CLICKS).length > 0);
+    expect(sent.map((r) => r.via)).toEqual(['beacon']);
+    await page.evaluate(() => window.harness.setVisibility('visible'));
+    await page.evaluate(() => window.harness.setVisibility('hidden')); // nothing new: no second point
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect(ofSignal(await collected(), 'metrics').flatMap((r) => counterValues(r, CLICKS))).toEqual([5]);
+    expect((await page.evaluate(() => window.harness.stats())).metrics.beacons).toBe(1);
+  });
+
+  test('a tab close delivers the last interval by beacon', async ({ openHarness, collected, browserName }) => {
+    const page = await openHarness();
+    await page.evaluate(() => window.harness.count(7));
+    await closeTab(page);
+    let values: number[] = [];
+    await expect.poll(async () => (values = ofSignal(await collected(), 'metrics').flatMap((r) => counterValues(r, CLICKS))).length, { timeout: 5_000 }).toBeGreaterThan(0).catch(() => {});
+    test.skip(values.length === 0, `${browserName}: ${CLOSE_LOSS}`);
+    expect(values).toEqual([7]);
+    const via = ofSignal(await collected(), 'metrics').filter((r) => counterValues(r, CLICKS).length > 0).map((r) => r.via);
+    expect(via).toEqual(['beacon']);
+  });
+});
+
+test.describe('a close as browsers do it: hidden, then pagehide', () => {
+  // Headless engines keep every page visible and Playwright's close fires no visibilitychange, so the
+  // hidden phase a real tab close starts with is emulated (harness.setVisibility), then the tab closes.
+  test('spans, logs and metrics all leave the page, within one keepalive budget', async ({ openHarness, collected, browserName }) => {
+    const page = await openHarness();
+    await page.evaluate(() => (window.harness.spans(400, 1500), window.harness.logs(40, 800), window.harness.count(3)));
+    await page.evaluate(() => window.harness.setVisibility('hidden'));
+    await closeTab(page);
+    const metricsOf = async () => ofSignal(await collected(), 'metrics').filter((r) => counterValues(r, 'portal_browser_harness_clicks_total').length > 0);
+    // Sent while the page was alive (hidden), so no engine loses these: no skip.
+    await expect.poll(async () => (await metricsOf()).flatMap((r) => counterValues(r, 'portal_browser_harness_clicks_total')), { timeout: 10_000 }).toEqual([3]);
+    await expect.poll(async () => ofSignal(await collected(), 'logs').length, { timeout: 10_000 }).toBeGreaterThan(0);
+    await expect.poll(async () => ofSignal(await collected(), 'traces').length, { timeout: 10_000 }).toBeGreaterThan(0);
+    const metrics = await metricsOf();
+    expect(metrics.map((r) => r.via), browserName).toEqual(['beacon']);
+    // The hidden phase's keepalive requests (the first of each signal) fit the page budget together.
+    const log = await collected();
+    const keepalive = log.requests.filter((r) => r.via === 'beacon' || r.via === 'keepalive');
+    const firstOf = (signal: string) => keepalive.find((r) => r.signal === signal)?.bytes ?? 0;
+    expect(firstOf('logs') + firstOf('traces') + metrics[0]!.bytes).toBeLessThanOrEqual(KEEPALIVE_MAX_BYTES);
   });
 });
 

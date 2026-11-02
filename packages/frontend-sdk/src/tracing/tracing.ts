@@ -19,7 +19,7 @@ import { getRuntime } from '../internal/runtime.ts';
 import { collectorUrl, isExactOrigin } from '../internal/urls.ts';
 import { DEFAULT_QUEUE, DropOldestBatchSpanProcessor, EXPORTER_CONCURRENCY, type QueueOptions, type TracingStats } from './processor.ts';
 import { platformSampler } from './sampler.ts';
-import { onUnload } from '../internal/unload.ts';
+import { keepaliveLeft, metricsShare, onUnload, spendKeepalive } from '../internal/unload.ts';
 
 export interface TracingOptions {
   /** Same-origin path of the OTLP/HTTP collector, e.g. '/otel'; spans go to `${otlpBaseUrl}/v1/traces`. */
@@ -111,11 +111,12 @@ export function initializeTracing(o: TracingOptions): void {
   otelContext.setGlobalContextManager(contextManager);
   trace.setGlobalTracerProvider(provider);
 
-  // Hidden (a tab switch; the page may come back): flush the whole queue through the Batcher, so
-  // nothing is dropped. Unloading: one keepalive request in what the logs left of the page's budget.
+  // Hidden (a tab switch; the page may come back): the newest spans in one keepalive request, in what the
+  // logs left of the page's budget short of the metrics' reserve, the rest through the Batcher, so nothing
+  // is dropped. Unloading: one keepalive request in what the logs left of the page's budget.
   const stopUnload = onUnload({ priority: 1, send: (budget) => processor.drainOnUnload(budget) });
   const onVisibility = () => {
-    if (globalThis.document?.visibilityState === 'hidden') processor.flushOnHidden();
+    if (globalThis.document?.visibilityState === 'hidden') spendKeepalive(processor.flushOnHidden(Math.max(0, keepaliveLeft() - metricsShare())));
   };
   globalThis.document?.addEventListener?.('visibilitychange', onVisibility);
   const removeListeners = () => {

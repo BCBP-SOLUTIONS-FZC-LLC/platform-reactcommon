@@ -7,7 +7,7 @@ where earlier bugs came from:
 
 | Spec | What it checks |
 |---|---|
-| `keepalive.spec.ts` | The 64 KiB keepalive budget on tab close: the newest spans that fit go in one keepalive request; queued logs go by beacon. A tab switch delivers every queued span and log with no export failure. |
+| `keepalive.spec.ts` | The 64 KiB keepalive budget on tab close: logs by beacon first, the newest spans that fit in one keepalive request, and the metrics interval by beacon in the share they leave it, all within the budget. A close as browsers do it (hidden, then `pagehide`) delivers all three in every engine. A tab switch delivers every queued span and log with no export failure, and the metrics interval once. |
 | `events.spec.ts` | The order of `beforeunload`, `pagehide` and `visibilitychange` on close and on navigation in each engine. The SDK delivers in either order, and with `pagehide` alone. |
 | `http.spec.ts` | `/http` deadlines and aborts (before the response and while reading the body), with and without `AbortSignal.any` (Safari < 17.4), under GC pressure. Also checks that a long-lived caller signal does not keep growing its listener list. |
 | `platform-apis.spec.ts` | Trusted Types (`sanitizeHtml` returns TrustedHTML where the engine has it), `BroadcastChannel` and `storage` events across tabs, `crypto.subtle` SHA-256. |
@@ -108,3 +108,8 @@ Each was kept as a failing test (`test.fail`) until its fix landed; those tests 
   about 1 close in 3 in Playwright's Firefox and 1 in 30 elsewhere (measured over 30 closes each).
   The SDK starts the requests synchronously; the "starts … within the pagehide listener" test is
   not skipped.
+- The metrics part of the close test that fires `pagehide` alone (`METRICS_AFTER_PAGEHIDE` in
+  `engine-notes.ts`). Metrics are collected asynchronously, so with no hidden phase first their
+  beacon starts after the listener returns, and a closing Chromium tab that also sent large log and
+  span beacons usually drops it (1 delivery in 15). Real browsers hide a tab before closing it; the
+  "close as browsers do it" test covers that path in every engine without a skip.

@@ -25,14 +25,29 @@ All three signals leave the page over **OTLP/HTTP** (JSON) to the same-origin `/
 
 | Signal | Batching | Page hide |
 |---|---|---|
-| Traces | batch 512, every 5 s, queue 2048 | flush |
-| Logs | batch 50, every 5 s, queue 1000 | drained by `navigator.sendBeacon` (≤ 60 KiB per beacon) |
-| Metrics | every 60 s, **delta** temporality | — |
+| Traces | batch 512, every 5 s, queue 2048 | the newest spans in one keepalive request, the rest through the batcher |
+| Logs | batch 50, every 5 s, queue 1000 | the newest records in one `navigator.sendBeacon`, the rest by fetch |
+| Metrics | every 60 s, **delta** temporality | the interval, collected then, in one `navigator.sendBeacon` |
 
-The Collector:
-- converts delta metrics to cumulative (`deltatocumulative`);
-- allowlists label values;
-- drops per-browser resource attributes (`service.instance.id`, `browser.*`, `user_agent.*`), because anyone can POST to `/otel`.
+Only keepalive requests (sendBeacon, fetch `keepalive`) outlive a closing tab, and the browser allows
+64 KiB of them in flight per page. The three signals share one 60 KiB budget (`src/internal/unload.ts`):
+on hide and on `pagehide`, logs first, then spans; both leave the metrics interval its share, sized
+from the last interval it sent (1–8 KiB), because metrics are collected asynchronously and send last.
+
+The Collector runs as two tiers. The reference configuration is `examples/collector`, tested in the
+real Collector image by `pnpm test-collector` (CI job `collector`) and used by the integrated stack:
+- **gateway** (`gateway.yaml`, behind `/otel/*`, any number of replicas):
+  - drops per-browser resource attributes (`service.instance.id`, `browser.*`, `user_agent.*`), because anyone can POST to `/otel`;
+  - allowlists metric names (`platform_web_*` or a registered `<domain>_*` matching the `domain` label, with a unit suffix);
+  - allowlists label values (the registry vocabulary, this deployment's environment) and cuts any value at 128 characters;
+  - routes every point of one metric stream to the same aggregator (`loadbalancing`, `routing_key: streamID`).
+- **aggregator** (`aggregator.yaml`): stamps each delta with the time it arrived, then converts delta to
+  cumulative (`delta_to_cumulative`) for Mimir. The conversion keeps each stream's running total in one
+  Collector's memory, so two Collectors converting the same stream would write two different totals for one
+  series; hence the routing. Device clocks are not trusted: with the browser's own timestamps, a slow clock
+  or a late beacon had its points dropped silently.
+- `examples/collector/test` keeps the gateway's allowlists equal to the metric registry: a domain added
+  there must reach the gateway too.
 
 ## Identity
 

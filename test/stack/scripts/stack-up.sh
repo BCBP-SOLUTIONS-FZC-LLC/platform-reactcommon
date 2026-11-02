@@ -25,7 +25,7 @@ unset GO_PRIVATE_TOKEN
 rm -f "$ROOT/.state/logs/"*.jsonl "$ROOT/.state/cloudfront/distribution.json"
 for f in traces logs metrics; do : > "$ROOT/.state/otel/$f.jsonl"; done
 GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up -d --wait --wait-timeout 600 \
-  floci otel-collector keycloak valkey postgres pgbouncer org-membership authz-enrichment go-probe envoy
+  floci otel-collector otel-aggregator otel-gateway keycloak valkey postgres pgbouncer org-membership authz-enrichment go-probe envoy
 GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up --no-deps org-membership-seed web-deploy
 GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up -d --wait --wait-timeout 120 edge
 

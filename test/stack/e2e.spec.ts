@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import {
-  cspViolations, decodeJwt, docker, STATE, deployed, edgeLog, envoyAccess, eventually, keycloakLogin, kcAdmin, logRecords,
+  cspViolations, decodeJwt, docker, STATE, deployed, edgeLog, envoyAccess, eventually, keycloakLogin, kcAdmin, logRecords, metricPoints,
   gotoDeepLink, navigateOnce, signInFromScratch, SIGNED_OUT_KEY, spans, traceIdOf, Traffic, watchCsp,
 } from './helpers.ts';
 import { STACK } from './stack-constants.ts';
@@ -391,6 +391,34 @@ test.describe('sign-out and the shared device', () => {
     // Issue 7 (fixed): the example follows a cross-tab sign-out (anonymous, signed-out) off the app.
     await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible({ timeout: 5_000 });
     await expect(page.getByRole('heading', { name: 'acme' })).toHaveCount(0);
+  });
+});
+
+test.describe('/otel: browser → CloudFront → the reference Collector (examples/collector: gateway → aggregator)', () => {
+  test('two tabs\' delta metrics become one cumulative series without per-browser attributes; a minted name is dropped', async ({ request, browserName }) => {
+    const kind = `${browserName}-${Date.now()}`;
+    const point = (tab: string, value: number, offsetS: number, name = 'portal_web_app_e2e_total') => {
+      const t = BigInt(Date.now() + offsetS * 1000) * 1_000_000n;
+      const kv = (o: Record<string, string>) => Object.entries(o).map(([key, v]) => ({ key, value: { stringValue: v } }));
+      return {
+        resourceMetrics: [{
+          resource: { attributes: kv({ 'service.name': 'web-app', 'service.instance.id': tab, 'user_agent.original': 'e2e' }) },
+          scopeMetrics: [{ scope: { name: 'e2e' }, metrics: [{ name, sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [{
+            startTimeUnixNano: String(t - 10_000_000_000n), timeUnixNano: String(t), asInt: String(value),
+            attributes: kv({ domain: 'portal', service: 'web_app', environment: STACK.environment, kind }),
+          }] } }] }],
+        }],
+      };
+    };
+    for (const body of [point('a', 2, 0), point('b', 3, -600), point('a', 4, 0), point('x', 9, 0, `evil_${kind.replace(/\W/g, '_')}_total`)]) {
+      expect((await request.post('/otel/v1/metrics', { data: body })).status()).toBe(200);
+    }
+    const mine = () => metricPoints().filter((p) => p.labels.kind === kind);
+    const points = await eventually(() => (mine().length >= 3 ? mine() : undefined), 30_000, 'three cumulative points');
+    expect(points.map((p) => p.value).at(-1)).toBe(9); // b's clock 10 minutes slow: counted all the same
+    expect(new Set(points.map((p) => p.temporality))).toEqual(new Set([2]));
+    expect(points[0]!.resource).toEqual({ 'service.name': 'web-app' });
+    expect(metricPoints().filter((p) => p.name.startsWith('evil_'))).toEqual([]);
   });
 });
 

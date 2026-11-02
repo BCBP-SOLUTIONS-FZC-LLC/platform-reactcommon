@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeConfigSchema, setRuntimeConfig } from '../../../packages/frontend-sdk/src/config/index.ts';
 import { NotInitializedError, getSessionId, initializeCore, setConsentProvider, type ConsentCategory } from '../../../packages/frontend-sdk/src/core/index.ts';
 import { getRuntime, resetRuntimeForTests } from '../../../packages/frontend-sdk/src/internal/runtime.ts';
+import { PAGE_KEEPALIVE_BYTES, keepaliveLeft } from '../../../packages/frontend-sdk/src/internal/unload.ts';
 import { getLogger, initializeLogging, serializeError, setRouteTemplate } from '../../../packages/frontend-sdk/src/logging/index.ts';
 import { loggingStats, setLoggingInternalsForTests, shutdownLogging } from '../../../packages/frontend-sdk/src/logging/logging.ts';
 import { cleanString, scrubSecrets } from '../../../packages/frontend-sdk/src/logging/redact.ts';
@@ -532,25 +533,26 @@ describe('transport', () => {
     }
   });
 
-  it('on page hidden, splits beacons over 60 KiB', async () => {
+  it('on page hidden, one beacon of the newest records within the page budget; the rest by fetch', async () => {
     const target = Object.assign(new EventTarget(), { visibilityState: 'visible' });
     vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
     vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
     vi.stubGlobal('document', target);
-    let count = 0;
+    const beacons: number[] = [];
     vi.stubGlobal('navigator', {
-      sendBeacon: (_url: string, data: Blob) => {
-        expect(data.size).toBeLessThanOrEqual(60 * 1024);
-        count++;
-        return true;
-      },
+      sendBeacon: (_url: string, data: Blob) => (beacons.push(data.size), true),
     });
     start({ flushMs: 60_000, batchSize: 512 });
     for (let i = 0; i < 400; i++) getLogger().info('x'.repeat(250), { i });
     target.visibilityState = 'hidden';
     target.dispatchEvent(new Event('visibilitychange'));
-    expect(count).toBeGreaterThan(1);
-    expect(loggingStats()!.exported).toBe(400);
+    // One beacon, within the page budget (src/internal/unload.ts; no metrics here, so no share for them).
+    expect(beacons).toHaveLength(1);
+    expect(beacons[0]).toBeLessThanOrEqual(PAGE_KEEPALIVE_BYTES);
+    expect(beacons[0]).toBeGreaterThan(PAGE_KEEPALIVE_BYTES - 2_000);
+    expect(keepaliveLeft()).toBe(PAGE_KEEPALIVE_BYTES - beacons[0]!);
+    // Nothing is lost while the page stays: the rest goes by fetch.
+    await vi.waitFor(() => expect(loggingStats()!.exported).toBe(400));
   });
 
   it('on pagehide with no budget left, or a refused beacon, every record goes back for fetch', async () => {

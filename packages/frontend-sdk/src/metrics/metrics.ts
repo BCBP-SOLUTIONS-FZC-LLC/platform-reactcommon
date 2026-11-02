@@ -5,11 +5,13 @@
 // after governance ratifies them (§D6 K); until then the SDK records none.
 import type { Counter as OtelCounter, Histogram as OtelHistogram } from '@opentelemetry/api';
 import { AggregationTemporalityPreference, OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
+import { JsonMetricsSerializer } from '@opentelemetry/otlp-transformer';
 import { resourceFromAttributes } from '@opentelemetry/resources';
-import { MeterProvider, PeriodicExportingMetricReader, type PushMetricExporter } from '@opentelemetry/sdk-metrics';
+import { MeterProvider, PeriodicExportingMetricReader, type PushMetricExporter, type ResourceMetrics } from '@opentelemetry/sdk-metrics';
 import { tryGetConfig } from '../config/index.ts';
 import { NotInitializedError, getIdentity, hasConsent, sanitizeString, type MfeScope } from '../core/index.ts';
 import { getRuntime } from '../internal/runtime.ts';
+import { keepaliveLeft, metricsShare, onUnload, reserveKeepalive, setMetricsShare, spendKeepalive } from '../internal/unload.ts';
 import { collectorUrl } from '../internal/urls.ts';
 import {
   CONST_LABELS,
@@ -62,6 +64,8 @@ export interface MetricsStats {
   labelOverflow: number;
   /** Export intervals skipped because telemetry consent was not granted. */
   droppedNoConsent: number;
+  /** Intervals sent by sendBeacon when the page was hidden or closing. */
+  beacons: number;
 }
 
 interface MetricsState {
@@ -93,7 +97,7 @@ export function metricsState(): MetricsState {
     provider: undefined,
     meter: undefined,
     instruments: new Map(),
-    stats: { droppedInvalid: 0, labelOverflow: 0, droppedNoConsent: 0 },
+    stats: { droppedInvalid: 0, labelOverflow: 0, droppedNoConsent: 0, beacons: 0 },
     warned: new Set(),
     removeListeners: () => {},
   } satisfies MetricsState;
@@ -328,6 +332,46 @@ function consentGated(inner: PushMetricExporter, stats: MetricsStats): PushMetri
 }
 
 /**
+ * The page is hidden or going away: collects the interval now and sends it by sendBeacon, which
+ * outlives a closing tab (the exporter's fetch does not). Collecting resolves in microtasks, which
+ * run before the event's dispatch returns, after the logs and spans sent theirs: they left
+ * metricsShare() of the page's keepalive budget for this (src/internal/unload.ts), sized from the last
+ * interval. Delta: what
+ * is collected here is not exported again. Empty intervals send nothing; without consent the interval
+ * is dropped (counted); a body over what the budget has left, or a refused beacon, goes through the
+ * exporter.
+ */
+async function sendOnHide(reader: PeriodicExportingMetricReader, exporter: PushMetricExporter, url: string, stats: MetricsStats): Promise<void> {
+  // Held from the event until the beacon: a pagehide that comes while collecting leaves it alone.
+  const release = reserveKeepalive(metricsShare());
+  let resourceMetrics: ResourceMetrics;
+  try {
+    ({ resourceMetrics } = await reader.collect());
+  } finally {
+    release();
+  }
+  if (!resourceMetrics.scopeMetrics.some((sm) => sm.metrics.some((m) => m.dataPoints.length > 0))) return;
+  if (!hasConsent('telemetry')) {
+    stats.droppedNoConsent++;
+    return;
+  }
+  const nav = globalThis.navigator;
+  let sent = false;
+  try {
+    const body = JsonMetricsSerializer.serializeRequest(resourceMetrics);
+    if (body) setMetricsShare(body.byteLength); // the next interval's share
+    if (body && body.byteLength <= keepaliveLeft() && typeof nav?.sendBeacon === 'function') {
+      sent = nav.sendBeacon(url, new Blob([body as BlobPart], { type: 'application/json' }));
+      if (sent) spendKeepalive(body.byteLength);
+    }
+  } catch {
+    sent = false;
+  }
+  if (sent) stats.beacons++;
+  else exporter.export(resourceMetrics, () => {});
+}
+
+/**
  * Shell only: starts exporting to `${otlpBaseUrl}/v1/metrics` every `exportIntervalMs`
  * (default 60 s), with delta temporality. Requires initializeCore. A second call is a no-op. With
  * `telemetry.enabled: false` in the runtime config it is a no-op: nothing is exported.
@@ -343,8 +387,9 @@ export function initializeMetrics(o: { otlpBaseUrl: string; exportIntervalMs?: n
   }
   const url = collectorUrl(o.otlpBaseUrl, 'metrics');
   if (tryGetConfig()?.telemetry.enabled === false) return; // the runtime config's off switch
+  const exporter = consentGated(exporterFactory(url), s.stats);
   const reader = new PeriodicExportingMetricReader({
-    exporter: consentGated(exporterFactory(url), s.stats),
+    exporter,
     exportIntervalMillis: interval,
     exportTimeoutMillis: Math.min(interval, 10_000),
   });
@@ -359,14 +404,25 @@ export function initializeMetrics(o: { otlpBaseUrl: string; exportIntervalMs?: n
   });
   s.provider = provider;
   s.meter = provider.getMeter('@bcbp-solutions-fzc-llc/frontend-sdk');
-  const flush = () => void provider.forceFlush().catch(() => {});
-  const onVisibility = () => {
-    if (globalThis.document?.visibilityState === 'hidden') flush();
+  setMetricsShare(undefined); // the default share until an interval has been sent
+  // One send at a time: a pagehide during the hidden phase's collection is covered by it.
+  let sending: Promise<void> | undefined;
+  const send = () => {
+    sending ??= sendOnHide(reader, exporter, url, s.stats)
+      .catch(() => {})
+      .finally(() => {
+        sending = undefined;
+      });
   };
-  globalThis.addEventListener?.('pagehide', flush);
+  const onVisibility = () => {
+    if (globalThis.document?.visibilityState === 'hidden') send();
+  };
+  // Unloading: first in the page's keepalive budget (src/internal/unload.ts), so its share is reserved
+  // before the logs and spans are handed theirs; the beacon follows once the interval is collected.
+  const stopUnload = onUnload({ priority: -1, send: () => (send(), 0) });
   globalThis.document?.addEventListener?.('visibilitychange', onVisibility);
   s.removeListeners = () => {
-    globalThis.removeEventListener?.('pagehide', flush);
+    stopUnload();
     globalThis.document?.removeEventListener?.('visibilitychange', onVisibility);
   };
 }
@@ -377,6 +433,7 @@ export async function shutdownMetrics(): Promise<void> {
   const provider = s.provider;
   if (!provider) return;
   s.removeListeners();
+  setMetricsShare(0);
   s.provider = undefined;
   s.meter = undefined;
   for (const rec of s.instruments.values()) rec.otel = undefined;

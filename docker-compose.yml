@@ -57,7 +57,7 @@ services:
       - ./.state:/work
     depends_on:
       floci: { condition: service_healthy }
-      otel-collector: { condition: service_started }
+      otel-gateway: { condition: service_started }
     restart: "no"
 
   # ── Telemetry ────────────────────────────────────────────────────────────────────────────────
@@ -68,6 +68,36 @@ services:
     volumes:
       - ./docker/otel/collector.yaml:/etc/otelcol/config.yaml:ro
       - ./.state/otel:/out
+
+  # The browser's /otel: the reference two-tier configuration (examples/collector). The gateway scrubs
+  # and allowlists, then routes each metric stream to one aggregator, which converts delta → cumulative.
+  # Both hand their output to otel-collector above, which files it for the suite.
+  otel-gateway:
+    image: otel/opentelemetry-collector-contrib:0.164.0
+    command: ["--config=/etc/otelcol/reference.yaml", "--config=/etc/otelcol/stack.yaml"]
+    environment:
+      PLATFORM_ENVIRONMENT: staging
+      TRACES_OTLP_ENDPOINT: http://otel-collector:4319
+      LOGS_OTLP_ENDPOINT: http://otel-collector:4319
+      AGGREGATOR_HOSTNAME: otel-aggregator
+      AGGREGATOR_TLS_INSECURE: "true"
+    volumes:
+      - ./examples/collector/gateway.yaml:/etc/otelcol/reference.yaml:ro
+      - ./docker/otel/gateway.stack.yaml:/etc/otelcol/stack.yaml:ro
+    depends_on:
+      otel-collector: { condition: service_started }
+      otel-aggregator: { condition: service_started }
+
+  otel-aggregator:
+    image: otel/opentelemetry-collector-contrib:0.164.0
+    command: ["--config=/etc/otelcol/reference.yaml", "--config=/etc/otelcol/stack.yaml"]
+    environment:
+      METRICS_REMOTE_WRITE_URL: http://mimir.invalid/api/v1/push   # replaced by otlp/collector (aggregator.stack.yaml)
+    volumes:
+      - ./examples/collector/aggregator.yaml:/etc/otelcol/reference.yaml:ro
+      - ./docker/otel/aggregator.stack.yaml:/etc/otelcol/stack.yaml:ro
+    depends_on:
+      otel-collector: { condition: service_started }
 
   # ── Identity ─────────────────────────────────────────────────────────────────────────────────
   keycloak:

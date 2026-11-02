@@ -10,7 +10,7 @@ import { getRuntime } from '../internal/runtime.ts';
 import { collectorUrl } from '../internal/urls.ts';
 import { DropOldestLogProcessor, type LogQueueOptions, type LoggingStats } from './processor.ts';
 import { cleanString, redactAttributes, serializeError, type LogValue } from './redact.ts';
-import { onUnload } from '../internal/unload.ts';
+import { keepaliveLeft, metricsShare, onUnload, spendKeepalive } from '../internal/unload.ts';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -100,10 +100,11 @@ export function initializeLogging(o: { otlpBaseUrl: string; level?: LogLevel; ba
     processors: [processor],
   });
 
-  // Unloading: first in the page's keepalive budget (src/internal/unload.ts). Hidden: everything by beacon.
+  // Unloading: first in the page's keepalive budget (src/internal/unload.ts). Hidden: the newest records
+  // by beacon in what is left of it, short of the metrics' reserve; the rest by fetch.
   const stopUnload = onUnload({ priority: 0, send: (budget) => processor.drainOnUnload(budget) });
   const onVisibility = () => {
-    if (globalThis.document?.visibilityState === 'hidden') processor.drainOnHide();
+    if (globalThis.document?.visibilityState === 'hidden') spendKeepalive(processor.drainOnHide(Math.max(0, keepaliveLeft() - metricsShare())));
   };
   globalThis.document?.addEventListener?.('visibilitychange', onVisibility);
   const removeListeners = () => {

@@ -1,0 +1,195 @@
+# Nightly — the integrated deployment (test/stack, docker-compose.yml): the example shell in Chromium,
+# Firefox and WebKit against Keycloak, Envoy with the real IAM services, the distribution on floci and the
+# reference two-tier Collector (docs/e2e/integrated-deployment-report.md). About 20 minutes, so not per PR.
+#
+# The services are built from source, checked out next to this repo in the local workspace layout
+# (SHARED_ROOT = the workspace root, IAM_ROOT = iam/), as validate-contracts.yml does:
+#   pinned (default)  the commits contracts/sources.json pins; iam-realm-provisioner (not pinned) at main
+#   main              every repository at its default branch: catches upstream changes before a pin moves
+#
+# Token: PLATFORM_REPOS_TOKEN if set, else CI_REPO_READ_TOKEN. It needs Contents:Read on the eight
+# repositories below and is the IAM services' private Go modules token (GO_PRIVATE_TOKEN, a BuildKit
+# secret: never written to a file). A failed scheduled run opens (or comments on) one issue.
+name: Nightly / Stack
+
+"on":
+  schedule:
+    - cron: '30 1 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream:
+        description: 'Backend refs: pinned (contracts/sources.json) or main (every default branch)'
+        type: choice
+        options: [pinned, main]
+        default: pinned
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stack-nightly
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  stack:
+    name: stack (Chromium, Firefox, WebKit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      issues: write   # the failure issue
+    env:
+      UPSTREAM: ${{ inputs.upstream || 'pinned' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: react/platform-reactcommon
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Backend refs
+        id: refs
+        working-directory: react/platform-reactcommon
+        run: |
+          pin() { if [ "$UPSTREAM" = main ]; then echo ''; else jq -r --arg g "$1" --arg n "$2" '.[$g][$n].sha' packages/frontend-sdk/contracts/sources.json; fi; }
+          {
+            for n in platform-gincommon platform-events platform-pgcommon platform-interop-tests; do echo "$n=$(pin platform "$n")"; done
+            for n in iam-authz-enrichment iam-org-membership; do echo "$n=$(pin iam "$n")"; done
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout platform-gincommon
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/platform-gincommon
+          ref: ${{ steps.refs.outputs.platform-gincommon }}
+          path: go/platform-gincommon
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      - name: Checkout platform-events
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/platform-events
+          ref: ${{ steps.refs.outputs.platform-events }}
+          path: go/platform-events
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      - name: Checkout platform-pgcommon
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon
+          ref: ${{ steps.refs.outputs.platform-pgcommon }}
+          path: go/platform-pgcommon
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      - name: Checkout platform-interop-tests (go-probe)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/platform-interop-tests
+          ref: ${{ steps.refs.outputs.platform-interop-tests }}
+          path: platform-interop-tests
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      - name: Checkout iam-org-membership
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/iam-org-membership
+          ref: ${{ steps.refs.outputs.iam-org-membership }}
+          path: iam/iam-org-membership
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      - name: Checkout iam-authz-enrichment
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/iam-authz-enrichment
+          ref: ${{ steps.refs.outputs.iam-authz-enrichment }}
+          path: iam/iam-authz-enrichment
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      # The realm template and its audience mappers (test/stack/scripts/prepare.mjs); not pinned in sources.json.
+      - name: Checkout iam-realm-provisioner
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BCBP-SOLUTIONS-FZC-LLC/iam-realm-provisioner
+          path: iam/iam-realm-provisioner
+          persist-credentials: false
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+
+      - name: Record the backend commits
+        run: |
+          {
+            echo "### Backend commits ($UPSTREAM)"
+            for d in go/platform-gincommon go/platform-events go/platform-pgcommon platform-interop-tests iam/iam-org-membership iam/iam-authz-enrichment iam/iam-realm-provisioner; do
+              echo "- \`$d\` $(git -C "$d" rev-parse --short HEAD)"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Setup
+        uses: ./react/platform-reactcommon/.github/actions/setup
+        with:
+          working-directory: react/platform-reactcommon
+
+      - name: Build packages
+        working-directory: react/platform-reactcommon
+        run: pnpm build
+
+      - name: Install browsers
+        working-directory: react/platform-reactcommon
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
+
+      - name: Stack up
+        working-directory: react/platform-reactcommon
+        env:
+          IAM_ROOT: ${{ github.workspace }}/iam
+          SHARED_ROOT: ${{ github.workspace }}
+          GO_PRIVATE_TOKEN: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+        run: pnpm run stack-up
+
+      - name: Stack tests
+        working-directory: react/platform-reactcommon
+        run: pnpm run test-stack
+
+      - name: Container logs
+        if: failure()
+        working-directory: react/platform-reactcommon
+        run: docker compose -f docker-compose.yml --env-file .state/stack.env logs --no-color --timestamps > stack-logs.txt 2>&1 || true
+
+      - name: Upload results
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stack-${{ github.run_id }}
+          path: |
+            react/platform-reactcommon/test-results/stack/
+            react/platform-reactcommon/.state/otel/
+            react/platform-reactcommon/.state/logs/
+            react/platform-reactcommon/stack-logs.txt
+          retention-days: 14
+
+      - name: Stack down
+        if: always()
+        working-directory: react/platform-reactcommon
+        run: pnpm run stack-down
+
+      - name: Open or update the failure issue
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title='Nightly stack run failing'
+          n="$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$n" ]; then
+            gh issue comment "$n" -R "$GITHUB_REPOSITORY" --body "Failed again: $RUN_URL"
+          else
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --body "The nightly integrated-deployment run failed: $RUN_URL. Results and container logs are attached to the run (docs/e2e/integrated-deployment-report.md)."
+          fi

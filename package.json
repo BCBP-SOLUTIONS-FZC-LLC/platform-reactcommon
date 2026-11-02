@@ -48,6 +48,7 @@
     "stack-up": "bash test/stack/scripts/stack-up.sh",
     "stack-down": "bash test/stack/scripts/stack-down.sh",
     "test-stack": "playwright test -c test/stack/playwright.config.ts",
+    "test-collector": "vitest run -c test/collector/vitest.config.ts",
     "rules-check": "bash .github/scripts/rules-check.sh",
     "dashboards-check": "bash .github/scripts/dashboard-promql.sh",
     "test-smoke-package": "pnpm build && bash .github/scripts/pack-packages.sh && bash .github/scripts/smoke-tests.sh",

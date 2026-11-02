@@ -100,15 +100,26 @@ export class DropOldestBatchSpanProcessor implements SpanProcessor {
 
   /**
    * Page hidden: it may come back, or be closing (visibilitychange fires before pagehide). The
-   * newest spans that fit go first in one keepalive request, which outlives a closing tab; the
-   * rest are flushed MAX_IN_FLIGHT requests at a time, which completes while the page stays.
+   * newest spans that fit `budget` (what the page's keepalive budget has left, src/internal/unload.ts)
+   * go first in one keepalive request, which outlives a closing tab; the rest are flushed MAX_IN_FLIGHT
+   * requests at a time from the next task, which completes while the page stays. Returns the first
+   * request's bytes.
    */
-  flushOnHidden(): void {
+  flushOnHidden(budget: number = KEEPALIVE_MAX_BYTES): number {
     const queue = this.batcher.takeAll();
-    const first = this.newestThatFit(queue);
+    const first = this.newestThatFit(queue, Math.min(budget, KEEPALIVE_MAX_BYTES));
     this.batcher.requeue(queue.slice(0, queue.length - first.length));
+    let bytes: number;
+    try {
+      bytes = first.length > 0 ? (JsonTraceSerializer.serializeRequest(first)?.byteLength ?? 0) : 0;
+    } catch {
+      bytes = 0;
+    }
     this.sendOne(first);
-    void this.batcher.flush();
+    // The rest a task later, after the metrics interval took its share of the keepalive budget (the
+    // exporter sends with keepalive whenever its own count allows); a closing tab sends it on pagehide.
+    setTimeout(() => void this.batcher.flush(), 0);
+    return bytes;
   }
 
   /**

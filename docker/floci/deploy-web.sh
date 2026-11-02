@@ -157,12 +157,12 @@ origins = [
     {"Id": "s3-web", "DomainName": f'{E["BUCKET"]}.s3.ap-south-1.amazonaws.com', "OriginPath": "",
      "S3OriginConfig": {"OriginAccessIdentity": ""}, "CustomHeaders": {"Quantity": 0}, "OriginAccessControlId": ""},
     custom("api-gateway", "envoy", 10000),
-    custom("otel-collector", "otel-collector", 4318),
+    custom("otel-gateway", "otel-gateway", 4318),
     custom("csp-report", E["LAMBDA_HOST"], 4566, [{"HeaderName": "x-origin-verify", "HeaderValue": E["RESOLVED"]}]),
 ]
 behaviors = [
     behavior("/api/*", "api-gateway", CACHING_DISABLED, ALL, rhp=False, orp=ALL_VIEWER_EXCEPT_HOST),
-    behavior("/otel/*", "otel-collector", CACHING_DISABLED, ALL),
+    behavior("/otel/*", "otel-gateway", CACHING_DISABLED, ALL),
     behavior("/csp-report", "csp-report", CACHING_DISABLED, ALL),
     behavior("/config/runtime.json", "s3-web", CACHING_DISABLED),
     behavior("/version.json", "s3-web", CACHING_DISABLED),

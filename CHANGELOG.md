@@ -177,8 +177,18 @@ Fixed before the first release, after a security and production-readiness review
   - **`/logging`** (Issue 18): logged errors carry `exception.cause`.
   - **Example shell** (Issues 6, 7): a Sign out control (`useSignOut`), and the signed-out screen after a sign-out here or in another tab, with the app unmounted rather than left under the dialog (a shared device).
   - **CloudFront deploy steps** (Issue 15): `--cache-control` on every upload.
-  - **Release:** `npm-publish` refuses to publish unless the `npm` environment requires reviewers.
+  - **Release:** `npm-publish` refuses to publish unless publishing is gated: the `npm` environment requires reviewers, or (a private repository on GitHub Team, which has no reviewers there) it accepts only release tags and an active tag ruleset limits who may create, move or delete `v*` tags to admins and named teams.
   - **Contracts:** the `iam-org-membership` pin moves to `98cf517` (#47). The two interop fixtures are regenerated, because the scope rename had edited their copied comments.
+
+- Production-readiness review, round 5:
+  - **`/metrics` on page hide:** the interval is collected when the page is hidden or closing and sent by `sendBeacon`, which outlives a closing tab. Before, the hide flush went through the exporter's plain fetch, and a closing tab lost the last interval of Tier 2 and Tier 3 metrics.
+  - **One keepalive budget for all three signals** (`src/internal/unload.ts`): what the hidden phase sends is recorded, so `pagehide` hands out only what is left (it handed out a fresh 60 KiB). Logs and spans leave the metrics interval its share, sized from the last interval (1–8 KiB). On hide, the logs no longer send several beacons past the budget: the newest that fit go by beacon, the rest by fetch a task later.
+  - **Reference Collector configuration** (`examples/collector`, two tiers):
+    - the gateway allowlists metric names and label values from the metric registry, drops per-browser attributes, and routes each metric stream to one aggregator;
+    - the aggregator converts delta to cumulative. One converter per stream, or replicas write conflicting totals for one series.
+    - Points are re-stamped on arrival: with device timestamps, `delta_to_cumulative` silently dropped a slow clock's or a late beacon's points.
+    - Tested in the Collector image with two gateways and two aggregators (`pnpm test-collector`, CI job `collector`), and used by the integrated stack.
+  - **Nightly integrated-deployment run** (`.github/workflows/stack-nightly.yml`): the stack suite against the pinned backend commits, or every default branch on dispatch; a failing scheduled run opens an issue.
 
 - `@bcbp-solutions-fzc-llc/webpack-preset`: `ProvideSdkPlugin` no longer runs in child compilations (HtmlWebpackPlugin's), which had emitted a second, unused copy of every provided SDK chunk into the shell's build (16 extra files, about 1.5 MB with maps, outside the integrity map).
 

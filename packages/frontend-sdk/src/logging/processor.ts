@@ -70,7 +70,7 @@ export class DropOldestLogProcessor implements LogRecordProcessor {
    * the newest queued records that fit `budget` go in one beacon; the rest, and anything the browser
    * refuses, go back to the queue for fetch. Returns the bytes the beacon took.
    */
-  drainOnUnload(budget: number): number {
+  drainOnUnload(budget: number, deferRest = false): number {
     const queue = this.batcher.takeAll();
     const max = Math.min(budget, BEACON_MAX_BYTES);
     const size = (n: number) => {
@@ -91,18 +91,23 @@ export class DropOldestLogProcessor implements LogRecordProcessor {
     const rest = [...queue.slice(0, queue.length - lo), ...this.beacon(batch)];
     if (rest.length > 0) {
       this.batcher.requeue(rest);
-      void this.batcher.flush();
+      // Hidden: the rest goes a task later, after the metrics interval took its share of the keepalive
+      // budget (the exporter sends with keepalive whenever its own count allows). A tab that closes first
+      // sends it on pagehide (drainOnUnload), within what the budget has left.
+      if (deferRest) setTimeout(() => void this.batcher.flush(), 0);
+      else void this.batcher.flush();
     }
     return rest.length === queue.length || lo === 0 ? 0 : size(lo);
   }
 
-  /** Page hidden (it may come back): queued records go by beacon; what the browser refuses, by fetch. */
-  drainOnHide(): void {
-    const rest = this.beacon(this.batcher.takeAll());
-    if (rest.length > 0) {
-      this.batcher.requeue(rest);
-      void this.batcher.flush();
-    }
+  /**
+   * Page hidden (it may come back, or be closing): the newest queued records that fit `budget` (what
+   * the page's keepalive budget has left, src/internal/unload.ts) go in one beacon, which outlives a
+   * closing tab; the rest by fetch a task later, which completes while the page stays. Returns the
+   * beacon's bytes.
+   */
+  drainOnHide(budget: number): number {
+    return this.drainOnUnload(budget, true);
   }
 
   async forceFlush(): Promise<void> {

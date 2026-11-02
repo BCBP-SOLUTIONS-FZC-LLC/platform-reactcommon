@@ -48,3 +48,18 @@ export function logSeqs(r: CollectedRequest): number[] {
 
 /** Distinct values, sorted. */
 export const distinct = (xs: number[]): number[] => [...new Set(xs)].sort((a, b) => a - b);
+
+interface OtlpMetrics {
+  resourceMetrics?: { scopeMetrics?: { metrics?: { name: string; sum?: { dataPoints?: { asInt?: number | string; asDouble?: number }[] } }[] }[] }[];
+}
+
+/** The data-point values of counter `name` in one /otel/v1/metrics request. */
+export function counterValues(r: CollectedRequest, name: string): number[] {
+  const body = r.json as OtlpMetrics | undefined;
+  return (body?.resourceMetrics ?? [])
+    .flatMap((rm) => rm.scopeMetrics ?? [])
+    .flatMap((sm) => sm.metrics ?? [])
+    .filter((m) => m.name === name)
+    .flatMap((m) => m.sum?.dataPoints ?? [])
+    .map((p) => Number(p.asInt ?? p.asDouble));
+}
