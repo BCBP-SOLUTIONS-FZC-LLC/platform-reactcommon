@@ -90,7 +90,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "NODE_OPTIONS=--max-old-space-size=4096 tsup",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "api": "tsx ../../scripts/api-report.ts",
     "api:check": "tsx ../../scripts/api-report.ts --check"
