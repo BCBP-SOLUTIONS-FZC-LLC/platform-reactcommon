@@ -6,11 +6,11 @@
 // Observed with Playwright's engines (headless): see README.md "Lifecycle events". The expectations
 // below pin that behaviour, so an engine change shows up here first, and the SDK's delivery is
 // asserted whatever the order.
-import { UNLOAD_LOSS } from './known-bugs.ts';
 import { distinct, spanSeqs } from './otlp.ts';
 import { expect, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
 import type { PageEventLog, RunLog } from './server.ts';
+import { CLOSE_LOSS } from './engine-notes.ts';
 
 /** The page's unload-related events (pageshow and resume are left out), as type(visibilityState). */
 const order = (p: PageEventLog | undefined) =>
@@ -39,11 +39,11 @@ function expectUnloadOrder(seen: string[]): void {
   expect(seen.slice(2).every((e) => e === 'visibilitychange(hidden)')).toBe(true);
 }
 
-/** Waits for all `n` spans; skips (with the bug's note) when the unload request never came (UNLOAD_LOSS). */
+/** Waits for all `n` spans (the unload request is started inside the pagehide listener, so it always comes). */
 async function expectSpansDelivered(collected: () => Promise<RunLog>, n: number, browserName: string): Promise<void> {
   const until = Date.now() + 5_000;
   while (Date.now() < until && traceSeqs(await collected()).length === 0) await new Promise((r) => setTimeout(r, 100));
-  test.skip(traceSeqs(await collected()).length === 0, `${browserName}: ${UNLOAD_LOSS}`);
+  test.skip(traceSeqs(await collected()).length === 0, `${browserName}: ${CLOSE_LOSS}`);
   await expect.poll(async () => traceSeqs(await collected()), { timeout: 10_000 }).toEqual(Array.from({ length: n }, (_, i) => i));
   const requests = (await collected()).requests.filter((r) => r.signal === 'traces');
   expect(requests.flatMap(spanSeqs)).toHaveLength(n); // each span once
@@ -93,12 +93,12 @@ test('pagehide alone: with visibilitychange kept from the SDK, closing still sen
 
   const until = Date.now() + 5_000;
   while (Date.now() < until && traceSeqs(await collected()).length === 0) await new Promise((r) => setTimeout(r, 100));
-  test.skip(traceSeqs(await collected()).length === 0, `${browserName}: ${UNLOAD_LOSS}`);
+  test.skip(traceSeqs(await collected()).length === 0, `${browserName}: ${CLOSE_LOSS}`);
   await new Promise((r) => setTimeout(r, 500));
   const traces = (await collected()).requests.filter((r) => r.signal === 'traces');
   // drainOnUnload: one keepalive request with the newest spans that fit; the rest are counted as dropped.
   expect(traces).toHaveLength(1);
-  expect(traces[0]!.via).toBe('keepalive');
+  expect(['beacon', 'keepalive']).toContain(traces[0]!.via);
   expect(traces[0]!.bytes).toBeLessThanOrEqual(60 * 1024);
   const seqs = distinct(spanSeqs(traces[0]!));
   expect(seqs.length).toBeGreaterThan(10);

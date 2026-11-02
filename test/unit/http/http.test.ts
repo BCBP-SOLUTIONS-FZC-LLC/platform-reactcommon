@@ -9,6 +9,7 @@ import {
   subscribeOnline,
   type TokenSource,
 } from '../../../packages/frontend-sdk/src/http/index.ts';
+import { anySignal } from '../../../packages/frontend-sdk/src/http/client.ts';
 import { subscribeRuntime } from '../../../packages/frontend-sdk/src/internal/events.ts';
 import { getRuntime, resetRuntimeForTests } from '../../../packages/frontend-sdk/src/internal/runtime.ts';
 import { AbortedError, NetworkError, PlatformProblemTypes, ProblemError, TimeoutError } from '../../../packages/frontend-sdk/src/problem/index.ts';
@@ -343,6 +344,49 @@ describe('failures', () => {
       const done = new AbortController();
       done.abort();
       await expect(api.get('/a', { signal: done.signal, dedupe: false })).rejects.toBeInstanceOf(AbortedError);
+    });
+  });
+
+  describe('the caller signal next to the deadline (known browser bug 4: WebKit\'s AbortSignal.any loses aborts)', () => {
+    it('never uses the native AbortSignal.any', async () => {
+      const any = vi.spyOn(AbortSignal, 'any');
+      await createApiClient().get('/a', { signal: new AbortController().signal });
+      expect(any).not.toHaveBeenCalled();
+    });
+
+    it('a long-lived caller signal keeps no listeners once its calls end (success, failure, retry)', async () => {
+      const caller = new AbortController();
+      const live = new Set<unknown>();
+      const add = caller.signal.addEventListener.bind(caller.signal);
+      const remove = caller.signal.removeEventListener.bind(caller.signal);
+      caller.signal.addEventListener = ((t: string, l: EventListener, o?: AddEventListenerOptions) => (live.add(l), add(t, l, o))) as typeof add;
+      caller.signal.removeEventListener = ((t: string, l: EventListener, o?: EventListenerOptions) => (live.delete(l), remove(t, l, o))) as typeof remove;
+      const api = createApiClient();
+      for (let i = 0; i < 5; i++) await api.get('/a', { signal: caller.signal, dedupe: false });
+      handler = () => problem(404);
+      await api.get('/a', { signal: caller.signal, dedupe: false, retry: false }).catch(() => undefined);
+      let n = 0;
+      handler = () => (n++ === 0 ? problem(503) : Response.json({ ok: true }));
+      await api.get('/a', { signal: caller.signal, dedupe: false }); // a retry: two attempts, two combined signals
+      expect(live.size).toBe(0);
+    });
+
+    it('anySignal: aborts with the first source\'s reason, and release detaches it', () => {
+      const a = new AbortController();
+      const b = new AbortController();
+      const { signal, release } = anySignal(a.signal, b.signal);
+      b.abort('deadline');
+      expect(signal.aborted).toBe(true);
+      expect(signal.reason).toBe('deadline');
+      const c = new AbortController();
+      const d = anySignal(c.signal, new AbortController().signal);
+      d.release();
+      c.abort('late');
+      expect(d.signal.aborted).toBe(false); // released: the source no longer reaches it
+      release();
+      const done = new AbortController();
+      done.abort('before');
+      expect(anySignal(done.signal, new AbortController().signal).signal.reason).toBe('before');
     });
   });
 

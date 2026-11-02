@@ -20,7 +20,7 @@ platform's infrastructure repository owns the distribution; it takes these files
 | `/config/runtime.json` | S3 | TTL 0, honour `Cache-Control: no-cache` + ETag | — | security headers | One object per environment (see `examples/shell/public/config/runtime.json`) |
 | `/version.json` | S3 | as above | — | security headers | Written **last** by the deploy |
 | `/remotes/manifest.json` | S3 | as above | — | security headers | Written after every remote has uploaded |
-| `/remotes/*` | S3 | CachingOptimized, `max-age=31536000, immutable` | — | security headers | `/remotes/<name>/<version>/…`, never overwritten |
+| `/remotes/*` | S3 | CachingOptimized | — | security headers | `/remotes/<name>/<version>/…`, never overwritten; objects carry `Cache-Control: public, max-age=31536000, immutable` (see *Deploy order*) |
 | `/assets/*` | S3 | CachingOptimized, immutable | — | security headers | Content-hashed |
 | `Default (*)` | S3 | `no-cache` | — | security headers | `spa-rewrite.js` on viewer request. **No** custom 403/404 → `index.html` error responses: they would turn `/api/*` 404s into HTML |
 
@@ -30,8 +30,31 @@ platform's infrastructure repository owns the distribution; it takes these files
    overwrite a version.
 2. Write `/remotes/manifest.json`:
    `{ "tenders": { "entry": "/remotes/tenders/<version>/remoteEntry.js", "version": "<version>", "ownerDomain": "tender_management", "integrity": "sha384-…" } }`.
+   The `integrity` (sha384 of the uploaded `remoteEntry.js`) is the root of the chain of trust: `remoteEntry.js` carries the sha384 of each of the remote's chunks (`@bcbp-solutions-fzc-llc/webpack-preset`'s `ChunkIntegrityPlugin`), and the browser refuses a chunk that doesn't match. Never rewrite a file after the build (no minify-on-upload, no injected banners), or every load of it fails. A remote on **another origin** must also send `Access-Control-Allow-Origin` for the shell's origin on its `.js` files: an integrity-checked cross-origin script is fetched with CORS.
 3. Upload the shell (`examples/shell/dist`): hashed files first, `index.html` last.
 4. Write `/version.json` (`{ "version": "<shell build version>" }`), which tells open tabs an update exists.
+
+**`Cache-Control` is set on every object at upload.** A CloudFront cache policy sets only the *edge* TTL:
+it never adds a `Cache-Control` header to the viewer response. Without object metadata browsers fall back
+to heuristic caching, so a stale `index.html` or manifest can outlive a deploy, and hashed files are never
+cached for long (docs/e2e/integrated-deployment-report.md, Issue 15). The same steps as commands
+(`$BUCKET`, `$NAME`, `$VERSION`):
+
+```bash
+IMMUTABLE='public, max-age=31536000, immutable'   # content-hashed or versioned: never changes
+NO_CACHE='no-cache'                               # revalidated on every load (ETag)
+
+# 1. The remote, under its version (never overwrite one), without source maps.
+aws s3 cp --recursive remote-dist/ "s3://$BUCKET/remotes/$NAME/$VERSION/" --exclude '*.map' --cache-control "$IMMUTABLE"
+# 2. The manifest, after every remote is up.
+aws s3 cp manifest.json "s3://$BUCKET/remotes/manifest.json" --content-type application/json --cache-control "$NO_CACHE"
+# 3. The shell: hashed files first, then the per-environment config, index.html last.
+aws s3 cp --recursive shell-dist/assets/ "s3://$BUCKET/assets/" --exclude '*.map' --cache-control "$IMMUTABLE"
+aws s3 cp runtime.json "s3://$BUCKET/config/runtime.json" --content-type application/json --cache-control "$NO_CACHE"
+aws s3 cp shell-dist/index.html "s3://$BUCKET/index.html" --content-type 'text/html; charset=utf-8' --cache-control "$NO_CACHE"
+# 4. Last: tells open tabs a new version exists.
+aws s3 cp version.json "s3://$BUCKET/version.json" --content-type application/json --cache-control "$NO_CACHE"
+```
 
 Source maps (`*.map`) are emitted by the build (`hidden-source-map`) and never referenced. Upload them
 to the error-tracking store, never to S3 behind the distribution.
@@ -42,7 +65,7 @@ to the error-tracking store, never to S3 behind the distribution.
 default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self';
 connect-src 'self' https://auth.bcbpsolutions.com; manifest-src 'self'; worker-src 'self';
 base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests;
-require-trusted-types-for 'script'; trusted-types platform-sdk platform-webpack dompurify;
+require-trusted-types-for 'script'; trusted-types platform-sdk platform-webpack dompurify 'allow-duplicates';
 report-uri /csp-report; report-to csp
 ```
 
@@ -59,12 +82,13 @@ report-uri /csp-report; report-to csp
   runtime.json is attack surface. Each must be an exact `https://host[:port]` origin (no wildcard, path,
   trailing slash or `http:`; runtime.json's `http://localhost` dev origins have no place in a deployed
   CSP), or `buildCsp` throws. Both default to none, which gives the policy above.
-- The three Trusted Types policies are the SDK's (`/security`), webpack's (`@platform/webpack-preset`)
-  and DOMPurify's.
+- The three Trusted Types policies are the SDK's (`/security`), webpack's (`@bcbp-solutions-fzc-llc/webpack-preset`)
+  and DOMPurify's. `'allow-duplicates'` is required: the shell's webpack runtime and every remote's
+  create `platform-webpack`, and without it no remote can load. A name outside the list is still refused.
 - Nothing in the SDK or the example builds needs `eval`: the preset removes webpack's `new Function`
   fallback (`output.environment.globalThis`), and the SDK runs Zod jitless. `pnpm examples:check`
   checks the built output.
-- `style-src 'self'` stays strict (§D3): zero-runtime CSS only; `@platform/eslint-plugin`'s
+- `style-src 'self'` stays strict (§D3): zero-runtime CSS only; `@bcbp-solutions-fzc-llc/eslint-plugin`'s
   `no-runtime-css-in-js` rule enforces it in code.
 
 ## `/csp-report`
@@ -74,7 +98,7 @@ or `application/csp-report`. The handler keeps the effective directive, disposit
 of the blocked, document and source URLs (no query string, fragment or credentials), runs every value
 through the SDK's redaction (`sanitizeString`), and posts OTLP/HTTP JSON logs
 (`event.name=csp.violation`, severity WARN) to `COLLECTOR_LOGS_URL`. Bundle it with its
-`@platform/frontend-sdk/core` import (e.g. esbuild, `--platform=node`). Environment:
+`@bcbp-solutions-fzc-llc/frontend-sdk/core` import (e.g. esbuild, `--platform=node`). Environment:
 `ORIGIN_VERIFY_SECRET`, `COLLECTOR_LOGS_URL`, `SERVICE_NAMESPACE` (`portal`, §D1), `DEPLOYMENT_ENVIRONMENT`.
 
 ### Origin authentication: a secret origin header, not OAC

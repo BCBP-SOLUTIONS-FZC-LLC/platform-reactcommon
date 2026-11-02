@@ -40,7 +40,7 @@ function warnOnce(key: string, message: string): void {
   if (warned.has(key)) return;
   warned.add(key);
   const env = getIdentity()?.environment;
-  if (env === undefined || env === 'local' || env === 'dev') console.warn(`@platform/frontend-sdk/storage: ${message}`);
+  if (env === undefined || env === 'local' || env === 'dev') console.warn(`@bcbp-solutions-fzc-llc/frontend-sdk/storage: ${message}`);
 }
 
 function browserStorage(area: Area): Storage | undefined {

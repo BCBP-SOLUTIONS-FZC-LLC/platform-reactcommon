@@ -1,5 +1,5 @@
 ---
-'@platform/frontend-sdk': minor
+'@bcbp-solutions-fzc-llc/frontend-sdk': minor
 ---
 
 `/core`: `DOMAINS` gains `portal` (platform-gincommon v2.3.0), so a shell that fronts several business

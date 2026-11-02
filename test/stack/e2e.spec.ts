@@ -6,8 +6,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import {
-  cspViolations, decodeJwt, docker, STATE, deployed, edgeLog, envoyAccess, eventually, keycloakLogin, kcAdmin, logRecords,
-  navigateOnce, signInFromScratch, SIGNED_OUT_KEY, spans, traceIdOf, Traffic, watchCsp,
+  cspViolations, decodeJwt, docker, STATE, deployed, edgeLog, envoyAccess, eventually, keycloakLogin, kcAdmin, logRecords, metricPoints,
+  gotoDeepLink, navigateOnce, signInFromScratch, SIGNED_OUT_KEY, spans, traceIdOf, Traffic, watchCsp,
 } from './helpers.ts';
 // The SDK's problem parsing from source, as the unit tests use it: typechecked, no build needed first.
 import { gatewayDenyCode, parseProblemResponse } from '../../packages/frontend-sdk/src/problem/index.ts';
@@ -40,10 +40,16 @@ test.describe('sign-in through PUB-1, Keycloak and the gateway', () => {
     expect(id.sub).toBe(alice.id);
     const access = decodeJwt(exchange!.body.access_token);
     expect(access.iss).toBe(STACK.issuer('tenant-acme'));
+    // Issue 16 (fixed upstream, realm-provisioner #49): the access token, sent to the gateway on every call,
+    // carries no name or e-mail; the ID token does, where the SDK reads them.
+    for (const claim of ['name', 'email', 'given_name', 'family_name', 'preferred_username', 'email_verified']) expect(access, claim).not.toHaveProperty(claim);
+    expect(access).toHaveProperty('auth_time'); // AuthZ Enrichment's MFA-freshness gate reads it
+    expect(id).toMatchObject({ name: `${alice.firstName} ${alice.lastName}`, email: alice.email });
 
-    // P-35 with the JWT: jwt_authn → ext_authz (AuthZ Enrichment → I-8) → iam-org-membership.
-    // The SDK retries a 503 (Issue 12: a cold I-8 lookup can exceed AuthZ Enrichment's 40 ms budget).
-    const ctx = await eventually(() => t.api.find((a) => a.url.pathname === '/api/v1/me/session-context' && a.status !== 503), 20_000, 'P-35');
+    // P-35 with the JWT: jwt_authn → ext_authz (AuthZ Enrichment → I-8) → iam-org-membership. Issue 12
+    // (fixed upstream, authz-enrichment #40): the first call, on a cold AuthZ cache, is answered, never 503.
+    const ctx = await eventually(() => t.api.find((a) => a.url.pathname === '/api/v1/me/session-context'), 20_000, 'P-35');
+    expect(t.api.filter((a) => a.url.pathname === '/api/v1/me/session-context').map((a) => a.status)).not.toContain(503);
     expect(ctx.status).toBe(200);
     expect(ctx.request.headers()['authorization']).toMatch(/^Bearer /);
     const body = ctx.json() as { tenant_id: string; slug: string; roles: string[]; departments: { id: string; level: string }[]; plan: string };
@@ -86,15 +92,6 @@ test.describe('sign-in through PUB-1, Keycloak and the gateway', () => {
   });
 });
 
-/**
- * The suggested fix for Issue 1, for this test only (the deployed policy is untouched): the edge shim adds
- * Trusted Types 'allow-duplicates' to the CSP when this cookie is present (a test hook; see edge/server.mjs).
- * A cookie, not page.route: the documents after a Keycloak redirect are not routable.
- */
-async function withTrustedTypesAllowDuplicates(page: Page): Promise<void> {
-  await page.context().addCookies([{ name: 'e2e-csp-fix', value: 'tt-allow-duplicates', domain: STACK.appHost, path: '/', secure: true, sameSite: 'Lax' }]);
-}
-
 interface Loaded { url: string; status: number; type: string; cache: string }
 function watchStatic(page: Page): Loaded[] {
   const out: Loaded[] = [];
@@ -117,10 +114,8 @@ test.describe('the tenders remote, deep links and the API through Envoy → go-p
     const deep = '/t/acme/tenders/1/edit';
     // WebKit may report the goto as interrupted by the SDK's own prompt=none round trip: read the document
     // response from the network instead of goto's return value.
-    const docResponse = page.waitForResponse((r) => new URL(r.url()).pathname === deep && r.request().resourceType() === 'document');
-    await page.goto(deep, { waitUntil: 'commit' }).catch((e: Error) => {
-      if (!/interrupted by another navigation|NS_BINDING_ABORTED/.test(e.message)) throw e;
-    });
+    const docResponse = page.waitForResponse((r) => new URL(r.url()).pathname === deep && r.request().resourceType() === 'document', { timeout: 45_000 });
+    await gotoDeepLink(page, deep);
     const doc = await docResponse;
     expect(doc.status()).toBe(200);
     expect(doc.headers()['content-type']).toContain('text/html');
@@ -138,28 +133,21 @@ test.describe('the tenders remote, deep links and the API through Envoy → go-p
     expect(loaded.find((a) => a.url.endsWith('/remoteEntry.js'))).toMatchObject({ status: 200, cache: 'public, max-age=31536000, immutable' });
     expect(await page.evaluate(() => document.querySelector<HTMLScriptElement>('script[src*="remoteEntry.js"]')?.integrity)).toMatch(/^sha384-/);
 
-    // Under the production CSP, the remote's webpack runtime cannot create its Trusted Types policy.
-    const blocked = (await cspViolations(page)).filter((v) => v.directive === 'trusted-types');
-    test.fail(blocked.length > 0, 'Issue 1: the remote\'s webpack runtime re-creates the platform-webpack Trusted Types policy; the production CSP has no \'allow-duplicates\'');
+    // Issue 1 (fixed): the remote's webpack runtime creates platform-webpack again under the production CSP.
     expect(await cspViolations(page)).toEqual([]);
     await expect(page.getByRole('alert')).not.toHaveText(/Something went wrong/);
   });
 
-  test('with the Issue 1 fix: the remote renders the gateway\'s problem+json; ids and logs correlate end to end', async ({ page }) => {
-    await withTrustedTypesAllowDuplicates(page);
+  test('the remote renders the gateway\'s problem+json; ids and logs correlate end to end', async ({ page }) => {
     await watchCsp(page);
     const t = new Traffic(page);
     const loaded = watchStatic(page);
     await signInFromScratch(page, alice, 'acme');
-    await page.goto('/t/acme/tenders/1/edit', { waitUntil: 'commit' });
+    await gotoDeepLink(page, '/t/acme/tenders/1/edit');
     await expect(page.getByRole('alert')).toBeVisible();
-    // Issue 2: the shell never imports @platform/frontend-sdk/problem, so its share scope does not provide it,
-    // and the remote (SDK import: false) cannot evaluate. Browser logs (essential errors) still arrive.
-    if (/Something went wrong/.test(await page.getByRole('alert').innerText())) {
-      const evalError = await eventually(() => logRecords().find((r) => r.service === 'web-app' && /failed to evaluate/.test(r.attributes['exception.message'] ?? '')), 30_000, 'the remote evaluate error in the Collector');
-      expect(evalError.severity).toBe('ERROR');
-      test.fail(true, 'Issue 2: the shell\'s share scope does not provide @platform/frontend-sdk/problem (it never imports it); the remote cannot evaluate');
-    }
+    // Issue 2 (fixed): the shell provides @bcbp-solutions-fzc-llc/frontend-sdk/problem although it never imports it, so the
+    // remote (SDK import: false) evaluates and renders the problem instead of the boundary's fallback.
+    await expect(page.getByRole('alert')).not.toHaveText(/Something went wrong/);
     // GET /api/tenders/1 → Envoy (jwt_authn, ext_authz) → go-probe: a gincommon 404 problem the remote shows.
     const tender = await eventually(() => t.apiCall('/api/tenders/1'), 10_000, '/api/tenders/1');
     expect(tender.status).toBe(404);
@@ -179,11 +167,8 @@ test.describe('the tenders remote, deep links and the API through Envoy → go-p
     for (const c of chunks) expect(c, c.url).toMatchObject({ status: 200, cache: 'public, max-age=31536000, immutable' });
     expect(await cspViolations(page)).toEqual([]);
 
-    // Telemetry: leave the page so the SDK flushes its queues (beacons), then read the Collector output.
-    await page.goto('/version.json');
-    const log = await eventually(() => logRecords().find((r) => r.service === 'web-app' && r.attributes['request_id'] === reqId), 60_000, 'the boundary\'s error log with the request id');
-    expect(log.severity).toBe('ERROR');
-    // The backend spans of that request carry the browser's trace id: Envoy, AuthZ Enrichment (ext_authz), go-probe.
+    // No browser log for it: the boundary logs an API error as a warning ("remote showed an error"), which
+    // needs telemetry consent, and the example CMP grants only 'essential'. The backend spans of that request carry the browser's trace id: Envoy, AuthZ Enrichment (ext_authz), go-probe.
     const services = await eventually(() => {
       const s = new Set(spans().filter((x) => x.traceId === sentTrace).map((x) => x.service));
       return s.has('envoy-gateway') && s.has('iam-authz-enrichment') && s.has('go-probe') ? s : undefined;
@@ -197,7 +182,8 @@ test.describe('the tenders remote, deep links and the API through Envoy → go-p
     const res = await page.goto('/auth/callback?code=x&state=nope');
     expect(res?.status()).toBe(200);
     const html = await res!.text();
-    expect(html).toMatch(/<script defer src=\/assets\/main\.[0-9a-f]+\.js>/);
+    // Pinned by the preset's ChunkIntegrityPlugin: a tampered main.js from the CDN is refused.
+    expect(html).toMatch(/<script defer src=\/assets\/main\.[0-9a-f]+\.js integrity="sha384-[A-Za-z0-9+/]{64}" crossorigin="anonymous">/);
     // An unknown state is ignored; the shell lands on the identifier screen.
     await expect(page.getByLabel('Company workspace or invitation email')).toBeVisible();
     expect(edgeLog().some((l) => l.url?.startsWith('/auth/callback') && l.rewrittenUri === '/index.html')).toBe(true);
@@ -241,11 +227,11 @@ test.describe('gateway responses as the SDK parses them', () => {
     await page.getByRole('button', { name: 'Continue' }).click();
     await keycloakLogin(page, dave);
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('acme');
-    // The SDK retries a 503 (Issue 12: a cold I-8 lookup exceeds AuthZ Enrichment's 40 ms budget); the last answer counts.
-    await eventually(() => t.api.some((a) => a.url.pathname === '/api/v1/me/session-context' && a.status !== 503), 20_000, 'P-35 answer');
+    await eventually(() => t.api.some((a) => a.url.pathname === '/api/v1/me/session-context'), 20_000, 'P-35 answer');
     const calls = t.api.filter((a) => a.url.pathname === '/api/v1/me/session-context');
     test.info().annotations.push({ type: 'observation', description: `P-35 statuses: ${calls.map((c) => c.status).join(', ')}; x-request-id reused: ${new Set(calls.map((c) => c.request.headers()['x-request-id'])).size === 1}` });
     const ctx = calls.at(-1)!;
+    expect(calls.map((c) => c.status)).not.toContain(503); // Issue 12 (fixed upstream): no cold-cache 503 first
     expect(ctx.status).toBe(403);
     expect(ctx.response.headers()['content-type']).toContain('application/problem+json');
     const p = await parseProblemResponse(new Response(ctx.text, { status: ctx.status, headers: ctx.response.headers() }));
@@ -281,7 +267,8 @@ test.describe('ext_authz budget', () => {
     const second = await page.request.get('/api/v1/probe/whoami', { headers: { authorization: `Bearer ${token}` } });
     test.info().annotations.push({ type: 'observation', description: `cold: ${r.status()} ${(await r.text()).slice(0, 160)}; warm: ${second.status()}` });
     expect(second.status()).toBe(200);
-    test.fail(r.status() === 503, 'Issue 12: the cold I-8 call exceeds ORG_MEMBERSHIP_TIMEOUT (40 ms): DENY_SERVICE_UNAVAILABLE (503) for the first request after a cache miss');
+    // Issue 12 (fixed upstream, authz-enrichment #40): with no cached entry to fall back on, the I-8 call
+    // gets ORG_MEMBERSHIP_COLD_TIMEOUT (120 ms) instead of 40 ms, inside the 250 ms ext_authz budget.
     expect(r.status()).toBe(200);
   });
 });
@@ -292,7 +279,8 @@ test.describe('token refresh against Keycloak (rotation, revokeRefreshToken=true
     await signInFromScratch(page, alice, 'acme');
     const first = t.latestTokens();
     expect(first.expires_in).toBe(STACK.acmeAccessTokenLifespan);
-    await eventually(() => t.tokenCalls.filter((c) => c.grant === 'refresh_token').length >= 2, 90_000, 'two refreshes');
+    // Each refresh comes 30–50 s into a 60 s token (Issue 4): two take up to 100 s.
+    await eventually(() => t.tokenCalls.filter((c) => c.grant === 'refresh_token').length >= 2, 120_000, 'two refreshes');
     const refreshes = t.tokenCalls.filter((c) => c.grant === 'refresh_token');
     for (const r of refreshes) expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(new Set(refreshes.map((r) => r.body.refresh_token)).size).toBe(refreshes.length); // rotated every time
@@ -304,12 +292,13 @@ test.describe('token refresh against Keycloak (rotation, revokeRefreshToken=true
     const t = new Traffic(page);
     await signInFromScratch(page, alice, 'acme');
     const start = Date.now();
-    await page.waitForTimeout(45_000);
+    await page.waitForTimeout(55_000);
     const n = t.tokenCalls.filter((c) => c.grant === 'refresh_token').length;
     test.info().annotations.push({ type: 'observation', description: `${n} refreshes in ${Math.round((Date.now() - start) / 1000)} s` });
-    // REFRESH_LEAD_MS (60 s) ≥ the token lifetime: every refresh is scheduled immediately (0–10 s jitter).
-    test.fail(n > 2, `Issue 4: ${n} refreshes in 45 s with a ${STACK.acmeAccessTokenLifespan} s token`);
-    expect(n).toBeLessThanOrEqual(2);
+    // Issue 4 (fixed): the lead is at most a third of the lifetime and the jitter half the lead, so a
+    // 60 s token is refreshed 30–50 s after it was issued: exactly once in the first 55 s, and it worked.
+    expect(n).toBe(1);
+    expect(t.tokenCalls.find((c) => c.grant === 'refresh_token')?.status).toBe(200);
   });
 
   test('two tabs of one browser: each keeps its own refresh lineage', async ({ page, context }) => {
@@ -331,11 +320,19 @@ test.describe('token refresh against Keycloak (rotation, revokeRefreshToken=true
 });
 
 test.describe('sign-out and the shared device', () => {
-  test('the example shell offers no way to call logout()', async ({ page }) => {
+  test('the example shell\'s Sign out control (Issue 6) ends the Keycloak session by default (Issue 10) and returns to the app', async ({ page }) => {
     await signInFromScratch(page, alice, 'acme');
-    const signOut = page.getByRole('button', { name: /sign out|log out/i }).or(page.getByRole('link', { name: /sign out|log out/i }));
-    test.fail((await signOut.count()) === 0, 'Issue 6: the example shell renders no sign-out control; IdentityProvider.logout() is unreachable from its UI');
+    const signOut = page.getByRole('button', { name: 'Sign out' });
     await expect(signOut).toHaveCount(1);
+    const endSession = page.waitForRequest((r) => r.url().startsWith(`${STACK.issuer('tenant-acme')}/protocol/openid-connect/logout`));
+    await navigateOnce(page, () => signOut.click());
+    const params = new URL((await endSession).url()).searchParams;
+    expect(params.get('client_id')).toBe('tender-web');
+    expect(params.get('post_logout_redirect_uri')).toBe(`${STACK.appOrigin}/`);
+    expect(params.get('id_token_hint')).toBeTruthy();
+    await page.waitForURL(`${STACK.appOrigin}/`);
+    await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible();
+    expect(await page.evaluate((k) => localStorage.getItem(k), SIGNED_OUT_KEY)).not.toBeNull();
   });
 
   test('global logout: Keycloak end-session with the SDK\'s parameters ends SSO and returns to the app', async ({ page }) => {
@@ -354,34 +351,29 @@ test.describe('sign-out and the shared device', () => {
     await expect(page.locator('#username')).toBeVisible();
   });
 
-  test('shared device: after a sign-out the next sign-in asks for credentials (prompt=login), even with live SSO', async ({ page }) => {
+  test('shared device (Issue 10, fixed): after Sign out the next person gets a fresh sign-in form, not the previous user\'s', async ({ page }) => {
     const t = new Traffic(page);
     await signInFromScratch(page, alice, 'acme');
-    // logout() (local) is unreachable from the example (Issue 6): reproduce its persistent effect, the
-    // signed-out mark, and reload. Keycloak's SSO session for alice is still alive.
-    await page.evaluate((k) => localStorage.setItem(k, String(Date.now())), SIGNED_OUT_KEY);
-    await navigateOnce(page, () => page.reload({ waitUntil: 'commit' }));
+    // The shell's Sign out, with the SDK's default: the Keycloak session ends too.
+    await navigateOnce(page, () => page.getByRole('button', { name: 'Sign out' }).click());
+    await page.waitForURL(`${STACK.appOrigin}/`);
     await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible();
     await page.getByRole('button', { name: 'Sign in' }).click();
     await page.waitForURL((u) => u.host === AUTH_HOST);
     expect(t.authorize[t.authorize.length - 1]!.searchParams.get('prompt')).toBe('login');
-    // Keycloak asks for credentials — but with alice's SSO session alive it is a re-authentication of
-    // alice ("Please re-authenticate to continue", her username shown, no username field).
-    await expect(page.locator('#password')).toBeVisible();
-    const previousUserShown = await page.locator('#kc-attempted-username').isVisible();
-    const shownName = previousUserShown ? ((await page.locator('#kc-attempted-username').textContent()) ?? '').trim() : '';
-    if (previousUserShown) await page.locator('#reset-login').click(); // "Restart login": the next person's only way in
+    // No session left to re-authenticate: the username field, and nothing of alice's.
+    await expect(page.locator('#username')).toBeVisible();
+    await expect(page.locator('#kc-attempted-username')).toHaveCount(0);
+    expect(await page.content()).not.toContain(alice.username);
     await keycloakLogin(page, bob);
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('acme');
-    await eventually(() => t.api.filter((a) => a.url.pathname === '/api/v1/me/session-context').length >= 2, 20_000, 'bob\'s P-35');
+    await eventually(() => t.api.filter((a) => a.url.pathname === '/api/v1/me/session-context' && a.status === 200).length >= 2, 20_000, 'bob\'s P-35');
     const bobCtx = t.api.filter((a) => a.url.pathname === '/api/v1/me/session-context').at(-1)!;
     expect((bobCtx.json() as { roles: string[] }).roles).toEqual(['member']);
     expect(decodeJwt(t.latestTokens().access_token).sub).toBe(bob.id);
-    test.fail(previousUserShown, `Issue 10: after a (local) sign-out, prompt=login shows the previous user (${shownName}) a re-authentication form; the next person must find "Restart login"`);
-    expect(previousUserShown).toBe(false);
   });
 
-  test('another tab\'s sign-out reaches this tab, but the example keeps rendering the app', async ({ page, context }) => {
+  test('another tab\'s sign-out reaches this tab: the app is unmounted, the signed-out screen shown (Issue 7, fixed)', async ({ page, context }) => {
     await signInFromScratch(page, alice, 'acme');
     const other = await context.newPage();
     await other.goto('/version.json');
@@ -392,14 +384,37 @@ test.describe('sign-out and the shared device', () => {
     }, SIGNED_OUT_KEY);
     await other.close();
     await page.waitForTimeout(1000);
-    const stillRendered = await page.getByRole('heading', { name: 'acme' }).isVisible();
-    test.fail(stillRendered, 'Issue 7: the example subscribes only to `expired`; on a cross-tab sign-out (`anonymous`, signed-out) it keeps the app on screen');
-    if (stillRendered) {
-      // Close the stranded app page first: leaving it open made context teardown hang in Firefox and Chromium.
-      await page.close();
-      throw new Error('Issue 7: the app is still rendered after the cross-tab sign-out');
-    }
+    // Issue 7 (fixed): the example follows a cross-tab sign-out (anonymous, signed-out) off the app.
     await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole('heading', { name: 'acme' })).toHaveCount(0);
+  });
+});
+
+test.describe('/otel: browser → CloudFront → the reference Collector (examples/collector: gateway → aggregator)', () => {
+  test('two tabs\' delta metrics become one cumulative series without per-browser attributes; a minted name is dropped', async ({ request, browserName }) => {
+    const kind = `${browserName}-${Date.now()}`;
+    const point = (tab: string, value: number, offsetS: number, name = 'portal_web_app_e2e_total') => {
+      const t = BigInt(Date.now() + offsetS * 1000) * 1_000_000n;
+      const kv = (o: Record<string, string>) => Object.entries(o).map(([key, v]) => ({ key, value: { stringValue: v } }));
+      return {
+        resourceMetrics: [{
+          resource: { attributes: kv({ 'service.name': 'web-app', 'service.instance.id': tab, 'user_agent.original': 'e2e' }) },
+          scopeMetrics: [{ scope: { name: 'e2e' }, metrics: [{ name, sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [{
+            startTimeUnixNano: String(t - 10_000_000_000n), timeUnixNano: String(t), asInt: String(value),
+            attributes: kv({ domain: 'portal', service: 'web_app', environment: STACK.environment, kind }),
+          }] } }] }],
+        }],
+      };
+    };
+    for (const body of [point('a', 2, 0), point('b', 3, -600), point('a', 4, 0), point('x', 9, 0, `evil_${kind.replace(/\W/g, '_')}_total`)]) {
+      expect((await request.post('/otel/v1/metrics', { data: body })).status()).toBe(200);
+    }
+    const mine = () => metricPoints().filter((p) => p.labels.kind === kind);
+    const points = await eventually(() => (mine().length >= 3 ? mine() : undefined), 30_000, 'three cumulative points');
+    expect(points.map((p) => p.value).at(-1)).toBe(9); // b's clock 10 minutes slow: counted all the same
+    expect(new Set(points.map((p) => p.temporality))).toEqual(new Set([2]));
+    expect(points[0]!.resource).toEqual({ 'service.name': 'web-app' });
+    expect(metricPoints().filter((p) => p.name.startsWith('evil_'))).toEqual([]);
   });
 });
 
@@ -416,14 +431,13 @@ test.describe('/csp-report: browser → CloudFront → Lambda (x-origin-verify) 
     const hop = await eventually(() => edgeLog().filter((l) => l.behavior === '/csp-report').slice(before)[0], 60_000, 'a report at /csp-report').catch(() => undefined);
     test.fail(!hop && browserName === 'chromium', 'E-6: Chromium delivers report-to (Reporting API) reports only to endpoints with a valid certificate; the stack\'s is self-signed');
     expect(hop, 'the browser posted a report to /csp-report').toBeDefined();
-    test.fail(hop!.status === 502, 'Issue 11: the Lambda runtime calls handler(event, context): the context lands in the `deps` parameter and every invocation throws (deps.env is undefined)');
-    expect(hop!.status).toBe(204);
+    expect(hop!.status).toBe(204); // Issue 11 (fixed): the runtime's handler(event, context) no longer throws
     const log = await eventually(() => logRecords().find((r) => r.service === 'csp-report' && (r.attributes['csp.blocked_uri'] ?? '').includes(marker)), 60_000, `csp.violation for ${marker}`);
     expect(log.attributes['csp.blocked_uri']).toBe(`https://blocked.example.org/${marker}.png`);
   });
 
-  test('with the Issue 11 fix: x-origin-verify is enforced, both report formats become OTLP logs', async ({ request }) => {
-    const host = (JSON.parse(readFileSync(join(STATE, 'cloudfront/lambda-fixed.json'), 'utf8')) as { cspReportFixedHost: string }).cspReportFixedHost;
+  test('the deployed Lambda: x-origin-verify is enforced, both report formats become OTLP logs', async ({ request }) => {
+    const host = (JSON.parse(readFileSync(join(STATE, 'cloudfront/lambda.json'), 'utf8')) as { cspReportHost: string }).cspReportHost;
     const secret = readFileSync(join(STATE, 'origin-verify.secret'), 'utf8').trim();
     const url = `http://127.0.0.1:${STACK.ports.floci}/`;
     const marker = `fixed-${Date.now()}`;
@@ -461,7 +475,7 @@ test.describe('clock skew', () => {
     const screen = (await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 160);
     test.info().annotations.push({ type: 'observation', description: `url=${page.url()} screen="${screen}"` });
     test.info().annotations.push({ type: 'observation', description: `${t.authorize.length} authorize redirects, ${exchanges} code exchanges in 8 s; signed in: ${signedIn}` });
-    test.fail(!signedIn, `Issue 8: ID token rejected ("exp": 60 s token + 60 s skew < 3 min); ${t.authorize.length} authorize redirects in 8 s`);
+    // Issue 8 (fixed): token times are judged on the provider's clock, so 3 minutes off still signs in.
     expect(signedIn).toBe(true);
   });
 });

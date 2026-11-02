@@ -1,8 +1,15 @@
 // The response headers of design doc §C3 (every behavior except /api/*, which the gateway owns), from
 // one source. response-headers-policy.json must match (test/csp.test.ts).
 
-/** Trusted Types policies the page creates: /security, @platform/webpack-preset, DOMPurify. */
+/** Trusted Types policies the page creates: /security, @bcbp-solutions-fzc-llc/webpack-preset, DOMPurify. */
 export const TRUSTED_TYPES_POLICIES = ['platform-sdk', 'platform-webpack', 'dompurify'];
+
+/**
+ * 'allow-duplicates': the shell's webpack runtime and each remote's create the `platform-webpack` policy
+ * (one name for every app, from @bcbp-solutions-fzc-llc/webpack-preset); without it the first remote's runtime fails to
+ * create its policy and no remote loads. Names outside the list stay refused.
+ */
+const TRUSTED_TYPES = `${TRUSTED_TYPES_POLICIES.join(' ')} 'allow-duplicates'`;
 
 /** An exact https origin (scheme://host[:port], no path, wildcard or trailing slash), or a TypeError. */
 function httpsOrigin(value, name) {
@@ -50,7 +57,7 @@ export function buildCsp({ idpOrigin = 'https://auth.bcbpsolutions.com', remoteO
     "object-src 'none'",
     'upgrade-insecure-requests',
     "require-trusted-types-for 'script'",
-    `trusted-types ${TRUSTED_TYPES_POLICIES.join(' ')}`,
+    `trusted-types ${TRUSTED_TYPES}`,
     // report-uri is the fallback for browsers without Reporting-API CSP reports (they ignore it otherwise).
     'report-uri /csp-report',
     'report-to csp',

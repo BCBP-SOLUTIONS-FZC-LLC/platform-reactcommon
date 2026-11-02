@@ -1,0 +1,54 @@
+# Reference OpenTelemetry Collector configuration, tier 2 of 2: the AGGREGATOR. It receives the
+# browser's metrics from the gateway (gateway.yaml), which routes every point of one stream to the same
+# aggregator, converts them from delta to cumulative and writes them to Mimir. Scale it out by adding
+# replicas behind AGGREGATOR_HOSTNAME: the gateways re-hash streams across them (a stream that moves
+# restarts its cumulative total, which Prometheus' rate() reads as a counter reset).
+#
+#   METRICS_REMOTE_WRITE_URL    e.g. http://mimir:9009/api/v1/push
+
+receivers:
+  otlp/gateway:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
+  # Browser timestamps come from the device's clock, and every tab writes the same stream once the
+  # gateway dropped service.instance.id. delta_to_cumulative drops a delta that starts before or ends at
+  # or before what the stream has seen, so a device with a slow clock, a tab whose interval began earlier
+  # than another's, or a late beacon would lose its points silently (test/collector shows each case).
+  # Each delta is re-stamped as the instant it reached this aggregator, the one Collector that sees the
+  # stream: arrival order here is the only order all writers share, and the cumulative sum does not
+  # need the interval's length.
+  transform/receive-time:
+    error_mode: ignore
+    metric_statements:
+      - context: datapoint
+        statements:
+          - set(time_unix_nano, UnixNano(Now()))
+          - set(start_time_unix_nano, time_unix_nano - 1)
+
+  delta_to_cumulative:
+    max_stale: 10m
+    max_streams: 100000
+
+  batch:
+    timeout: 5s
+
+exporters:
+  prometheusremotewrite:
+    endpoint: ${env:METRICS_REMOTE_WRITE_URL}
+    resource_to_telemetry_conversion:
+      enabled: false
+
+service:
+  pipelines:
+    metrics/browser:
+      receivers: [otlp/gateway]
+      processors: [memory_limiter, transform/receive-time, delta_to_cumulative, batch]
+      exporters: [prometheusremotewrite]

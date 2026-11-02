@@ -20,7 +20,7 @@ Without React: `createApiClient({ mfe: 'tenders' }).put('/tenders/:id', { params
 
 ## Guarantees
 
-- **Templates, not URLs:** the template is also the metric's `route` label, so a raw URL never becomes a label (`@platform/eslint-plugin` `api-route-template`).
+- **Templates, not URLs:** the template is also the metric's `route` label, so a raw URL never becomes a label (`@bcbp-solutions-fzc-llc/eslint-plugin` `api-route-template`).
 - **Identity headers are never sent** (`x-user-id`, `x-tenant-id`, …: the gateway sets them from the token). They're dropped, and in development they throw.
 - **The token goes to the page's own origin only.** Correlation headers (`x-request-id`, `x-session-id`, `traceparent`) go to the page's origin and to exact allowlisted origins.
 - **Retries** apply only to safe methods (or when asked): on timeouts, network errors, 429 and 502–504, honouring `Retry-After`. Every `POST` carries an `Idempotency-Key`.

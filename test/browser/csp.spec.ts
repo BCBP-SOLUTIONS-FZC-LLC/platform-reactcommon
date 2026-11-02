@@ -34,6 +34,34 @@ test('booting and using every signal under the production CSP: no violation, no 
   // The guard asserts: no securitypolicyviolation in the page, none reported to /csp-report, no console error.
 });
 
+type TrustedTypesFactory = { createPolicy(name: string, rules: { createScriptURL(u: string): string }): unknown };
+
+/** Creates the named Trusted Types policies in order; 'unsupported' where the engine has no Trusted Types. */
+const createPolicies = (page: import('@playwright/test').Page, names: string[]) =>
+  page.evaluate((list) => {
+    const tt = (window as unknown as { trustedTypes?: TrustedTypesFactory }).trustedTypes;
+    if (!tt) return 'unsupported';
+    return list.map((name) => {
+      try {
+        tt.createPolicy(name, { createScriptURL: (u) => u });
+        return 'created';
+      } catch (e) {
+        return (e as Error).name;
+      }
+    });
+  }, names);
+
+// docs/e2e/integrated-deployment-report.md, Issue 1: the shell's webpack runtime and every remote's create
+// the platform-webpack policy (one name from @bcbp-solutions-fzc-llc/webpack-preset). Without 'allow-duplicates' the
+// remote's runtime is refused and no remote loads.
+test("a remote's webpack runtime can create platform-webpack again after the shell's", async ({ openHarness }) => {
+  const page = await openHarness();
+  const r = await createPolicies(page, ['platform-webpack', 'platform-webpack', 'platform-webpack']);
+  test.skip(r === 'unsupported', 'no Trusted Types in this engine: the CSP directive does not apply');
+  expect(r).toEqual(['created', 'created', 'created']);
+  // The guard asserts: no securitypolicyviolation, nothing reported to /csp-report.
+});
+
 test.describe('detector controls', () => {
   // These provoke the violations the suite must catch; their run ids are excluded from the
   // end-of-run /csp-report check, and their own violations are asserted here instead.
@@ -62,5 +90,15 @@ test.describe('detector controls', () => {
     await expect
       .poll(() => page.evaluate(() => (window as unknown as { __violations: { effective: string }[] }).__violations))
       .toEqual([expect.objectContaining({ effective: 'require-trusted-types-for' })]);
+  });
+
+  test("'allow-duplicates' does not open the list: a policy name outside it is refused and reported", async ({ openHarness }) => {
+    const page = await openHarness({ boot: false });
+    const r = await createPolicies(page, ['not-listed']);
+    test.skip(r === 'unsupported', 'no Trusted Types in this engine');
+    expect(r).toEqual(['TypeError']);
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __violations: { effective: string }[] }).__violations))
+      .toEqual([expect.objectContaining({ effective: 'trusted-types' })]);
   });
 });

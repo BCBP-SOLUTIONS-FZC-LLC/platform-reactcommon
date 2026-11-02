@@ -1,0 +1,19 @@
+# test/collector: examples/collector/aggregator.yaml writing its cumulative metrics to a file the test
+# reads instead of Mimir, with a short batch timeout and a health check.
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+processors:
+  batch:
+    timeout: 200ms
+
+exporters:
+  file/metrics:
+    path: /out/metrics.jsonl
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics/browser:
+      exporters: [file/metrics]

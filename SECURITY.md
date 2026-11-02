@@ -7,7 +7,7 @@
 | `1.0.0-alpha.N` (current) | Yes: security fixes ship as the next `1.0.0-alpha.N` release of all three packages |
 | `1.x` (from `1.0.0`, the first environment) | Yes: security fixes ship as patch versions |
 
-The three packages (`@platform/frontend-sdk`, `@platform/webpack-preset`, `@platform/eslint-plugin`) always share one version, so a fix is released for all three at once. When a new major line (for example `2.x`) ships, the previous major receives security fixes only for six months after the new major's release.
+The three packages (`@bcbp-solutions-fzc-llc/frontend-sdk`, `@bcbp-solutions-fzc-llc/webpack-preset`, `@bcbp-solutions-fzc-llc/eslint-plugin`) always share one version, so a fix is released for all three at once. When a new major line (for example `2.x`) ships, the previous major receives security fixes only for six months after the new major's release.
 
 A fix reaches users only when the shell **and** every remote are rebuilt against it, because the shell provides the SDK to every remote as a shared singleton.
 
@@ -21,7 +21,7 @@ Include:
 
 - A description of the vulnerability and its potential impact.
 - Steps to reproduce or a proof of concept. A minimal Vitest test (the repo's `createTestPlatform` and `mockApi` help) or a short page snippet is enough; a HAR file for sign-in or token flows.
-- The version(s) affected, and the subpath (for example `@platform/frontend-sdk/auth`).
+- The version(s) affected, and the subpath (for example `@bcbp-solutions-fzc-llc/frontend-sdk/auth`).
 - The browser and version, if the issue depends on one (Trusted Types, BroadcastChannel and storage behave differently between browsers).
 - Any suggested fix, if you have one.
 
@@ -36,7 +36,7 @@ The SDK runs in the **browser, which is untrusted**. It protects the user's sess
 
 | Assumption | Implication |
 |-----------|-------------|
-| The gateway validates the token and strips client-supplied identity headers (`x-user-id`, `x-tenant-id`, `x-tenant-roles`, …) | The SDK never sends them (and `@platform/eslint-plugin` reports code that tries). Still, a backend reachable around the gateway would trust anything a script sends |
+| The gateway validates the token and strips client-supplied identity headers (`x-user-id`, `x-tenant-id`, `x-tenant-roles`, …) | The SDK never sends them (and `@bcbp-solutions-fzc-llc/eslint-plugin` reports code that tries). Still, a backend reachable around the gateway would trust anything a script sends |
 | UI permissions (`/authz`), feature flags and `useReadOnly` are hints | They hide or disable UI only. Any check that matters must be enforced by the gateway or the service; a user can always call the API directly |
 | Tokens are held in memory, in a closure | They're never in storage, globals, logs or the cross-tab channel, so storage-reading attacks and other tabs can't take them. **Script running in the page (XSS) can still act as the user** while the page is open: it can call the API or wait for a token. The defence against that is the CSP (`script-src 'self'`, `require-trusted-types-for 'script'`), DOMPurify through `sanitizeHtml`, and the lint rules, not the token storage |
 | Every remote runs with the page's full privileges | Module Federation remotes are same-origin script. A compromised remote build compromises the page. Remote entries are limited to the page's origin or exact allowed origins (checked twice), SRI is applied when the manifest gives a hash, and any remote can be switched off (`remotes.killSwitch`). Protecting the build and deploy pipeline is the real control |
@@ -60,7 +60,7 @@ The following are in scope for vulnerability reports:
 - One tenant's data readable by another through `/storage` on the same browser
 - A remote entry loaded from an origin that isn't allowed, or SRI not applied when the manifest gives it (`/mfe`)
 - Sensitive data in telemetry that the redaction rules should have removed (`/logging`, `/tracing`, `/core`)
-- SDK or `@platform/webpack-preset` output that needs `eval`, inline script or a policy outside the CSP
+- SDK or `@bcbp-solutions-fzc-llc/webpack-preset` output that needs `eval`, inline script or a policy outside the CSP
 - Denial-of-service conditions in the SDK: unbounded queues or memory, reload or redirect loops, retry storms
 
 Out of scope:

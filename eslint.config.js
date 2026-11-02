@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import js from '@eslint/js';
 import boundaries from 'eslint-plugin-boundaries';
 import tseslint from 'typescript-eslint';
-// The examples are linted as a shell and a remote would be: with @platform/eslint-plugin (from source;
+// The examples are linted as a shell and a remote would be: with @bcbp-solutions-fzc-llc/eslint-plugin (from source;
 // Node strips the types).
 import platform from './packages/eslint-plugin/src/index.ts';
 

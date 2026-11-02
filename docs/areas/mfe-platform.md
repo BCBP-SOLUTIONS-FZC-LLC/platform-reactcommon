@@ -10,7 +10,7 @@ What makes one shell and many independently deployed remotes behave as one app: 
 | `/flags` | Platform flags and kill switches from the runtime config, tenant feature flags from the session context | `getFlag`, `setFlagProvider`, `runtimeConfigFlagProvider`, `sessionContextFlagProvider`, `isRemoteKilled` |
 | `/nav` | Navigation between apps through the shell's router; redirect-target validation | `navigate`, `registerNavigator`, `isSafeRedirect` |
 
-Build time: [`@platform/webpack-preset`](../../packages/webpack-preset) gives every app the same Module Federation setup:
+Build time: [`@bcbp-solutions-fzc-llc/webpack-preset`](../../packages/webpack-preset) gives every app the same Module Federation setup:
 - **Shared modules:** React, the OTel API and the SDK as strict singletons.
 - **Remotes never bundle the SDK:** they take it from the shell.
 - **CSP-safe output:** Trusted Types, no `eval`, hidden source maps.

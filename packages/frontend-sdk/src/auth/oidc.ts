@@ -15,17 +15,34 @@ type Reason = 'step-up' | 'restore' | 'login' | 'switch';
 type Settled = Extract<SessionState, { status: 'authenticated' | 'anonymous' }>;
 
 // SDK-reserved keys, outside /storage namespaces.
-export const PENDING_PREFIX = '@platform/frontend-sdk:auth:pending:';
-export const RESTORE_MARK_KEY = '@platform/frontend-sdk:auth:restore-attempt'; // sessionStorage: the loop guard
-export const SIGNED_OUT_KEY = '@platform/frontend-sdk:auth:signed-out'; // localStorage, shared by tabs
-export const ACTIVITY_KEY = '@platform/frontend-sdk:auth:last-activity'; // localStorage, shared by tabs
-export const LAST_USER_KEY = '@platform/frontend-sdk:auth:last-user'; // localStorage: SHA-256 of realm + sub, never the sub
+export const PENDING_PREFIX = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:pending:';
+export const RESTORE_MARK_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:restore-attempt'; // sessionStorage: the loop guard
+export const SIGNED_OUT_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:signed-out'; // localStorage, shared by tabs
+export const ACTIVITY_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-activity'; // localStorage, shared by tabs
+export const LAST_USER_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-user'; // localStorage: SHA-256 of realm + sub, never the sub
 export const CHANNEL_NAME = 'platform-auth';
 
 const PENDING_TTL_MS = 10 * 60_000;
 const SKEW_S = 60;
+/**
+ * How far the device's clock may be from the identity provider's. An ID token comes straight from the
+ * token endpoint, so its iat is the provider's clock at receipt: the difference is the device's offset,
+ * and token times are judged on the provider's clock. Laptops drift by minutes; beyond this the clock
+ * is wrong, and the user is told so (reason 'device-clock') instead of landing back on sign-in.
+ */
+const MAX_CLOCK_OFFSET_S = 600;
+
+/** The device clock is too far off the provider's to judge the tokens. */
+class DeviceClockError extends Error {
+  override readonly name = 'DeviceClockError';
+  constructor(readonly offsetSeconds: number) {
+    super(`the device clock is ${Math.abs(Math.round(offsetSeconds))} s ${offsetSeconds > 0 ? 'ahead of' : 'behind'} the identity provider's`);
+  }
+}
 const REFRESH_LEAD_MS = 60_000;
 const REFRESH_JITTER_MS = 10_000;
+/** How long a page whose refresh a navigation away cancelled waits before restoring, in case it stays. */
+const LEAVING_GRACE_MS = 10_000;
 const TOKEN_TIMEOUT_MS = 15_000;
 const ACTIVITY_WRITE_MS = 5_000;
 const IDLE_CHECK_MS = 15_000;
@@ -49,6 +66,8 @@ interface Tokens {
   refresh: string | undefined;
   /** Epoch ms. */
   expiresAt: number;
+  /** The access token's lifetime (expires_in), ms. */
+  lifetimeMs: number;
   /** Epoch ms of the refresh token's own expiry (refresh_expires_in), when the server said. */
   refreshExpiresAt: number | undefined;
   /** The first ID token's sub and nonce: refreshed ID tokens must keep them. */
@@ -239,6 +258,8 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   let tokens: Tokens | undefined;
   let workspace: Workspace | undefined;
   let user: SessionUser | undefined;
+  /** Device clock minus the provider's, in seconds, from the last accepted ID token (auth_time checks). */
+  let clockOffsetS = 0;
   let inflight: Promise<boolean> | undefined;
   let restoring = false;
   let initPromise: Promise<Settled> | undefined;
@@ -315,8 +336,13 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   function scheduleRefresh(): void {
     clearTimeout(refreshTimer);
     if (!tokens) return;
-    const jitter = (internals.random() * 2 - 1) * REFRESH_JITTER_MS;
-    const delay = Math.max(0, tokens.expiresAt - REFRESH_LEAD_MS + jitter - internals.now());
+    // A minute before expiry, but never more than a third of the token's lifetime, with jitter of at most
+    // half the lead: a token is refreshed no sooner than half its lifetime after it was issued, however
+    // short the realm's access-token lifespan. (With a fixed 60 s lead, a 60 s token was due for refresh
+    // as soon as it arrived, and the tab refreshed many times a second.)
+    const lead = Math.min(REFRESH_LEAD_MS, tokens.lifetimeMs / 3);
+    const jitter = (internals.random() * 2 - 1) * Math.min(REFRESH_JITTER_MS, lead / 2);
+    const delay = Math.max(0, tokens.expiresAt - lead + jitter - internals.now());
     refreshTimer = setTimeout(() => void refresh(), delay);
   }
 
@@ -365,7 +391,9 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     if (idToken) {
       const claims = jwtPayload(idToken);
       const problem = idTokenProblem(claims, w, nonce, previous?.sub);
+      if (problem === 'device-clock') throw new DeviceClockError(internals.now() / 1000 - (claims!.iat as number));
       if (problem) throw new Error(`ID token rejected: ${problem}`);
+      clockOffsetS = internals.now() / 1000 - (claims!.iat as number);
       sub = claims!.sub as string;
       user = userFrom(claims!, w.trial);
     } else if (!previous) {
@@ -379,6 +407,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       // Keycloak rotates on every refresh; a response without one leaves the current token in place.
       refresh: typeof body.refresh_token === 'string' && body.refresh_token !== '' ? body.refresh_token : previous?.refresh,
       expiresAt: now + expiresIn * 1000,
+      lifetimeMs: expiresIn * 1000,
       refreshExpiresAt: refreshIn !== undefined ? now + refreshIn * 1000 : previous?.refreshExpiresAt,
       sub: sub!,
       nonce,
@@ -388,15 +417,18 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   /** Why the ID token's claims fail OIDC Core §3.1.3.7 (signature excepted), or undefined. */
   function idTokenProblem(c: Record<string, unknown> | undefined, w: Workspace, nonce: string, sub?: string): string | undefined {
     if (!c) return 'not a JWT';
-    const now = internals.now() / 1000;
     if (c.iss !== issuer(w.realm)) return 'iss';
     const aud = Array.isArray(c.aud) ? c.aud : [c.aud];
     if (!aud.includes(cfg.clientId)) return 'aud';
     if (c.azp !== undefined && c.azp !== cfg.clientId) return 'azp';
     // Refreshed ID tokens may omit the nonce; when present it must be the original one.
     if (c.nonce !== nonce && !(sub !== undefined && c.nonce === undefined)) return 'nonce';
+    if (typeof c.iat !== 'number' || !Number.isFinite(c.iat)) return 'iat';
+    // Judged on the provider's clock: iat is its time at receipt (the token just came from it).
+    const offset = internals.now() / 1000 - c.iat;
+    if (Math.abs(offset) > MAX_CLOCK_OFFSET_S) return 'device-clock';
+    const now = c.iat;
     if (typeof c.exp !== 'number' || c.exp + SKEW_S < now) return 'exp';
-    if (typeof c.iat !== 'number' || c.iat - SKEW_S > now) return 'iat';
     if (typeof c.sub !== 'string' || c.sub === '') return 'sub';
     if (sub !== undefined && c.sub !== sub) return 'sub changed';
     return undefined;
@@ -505,8 +537,11 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     }
   }
 
-  /** The refresh outcome was ambiguous: the token may have rotated. Drop the lineage and start a new one. */
-  function restoreLineage(): void {
+  /**
+   * The refresh outcome was ambiguous: the token may have rotated. Drop the lineage and start a new one,
+   * after `deferMs` when given (a page that is navigating away never gets there).
+   */
+  function restoreLineage(deferMs = 0): void {
     const w = workspace;
     dropTokens();
     if (!w) return;
@@ -517,19 +552,47 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
         if (!started) expire({ serverEnded: false, idle: false });
       });
     };
-    if (isOnline()) {
-      go();
-      return;
-    }
-    stopOnline = subscribeOnline((online) => {
-      if (!online) return;
-      stopOnline?.();
-      stopOnline = undefined;
-      go();
-    });
+    // Offline, the redirect would land on the browser's error page: wait for the network.
+    const whenOnline = () => {
+      if (!restoring) return;
+      if (isOnline()) {
+        go();
+        return;
+      }
+      stopOnline = subscribeOnline((online) => {
+        if (!online) return;
+        stopOnline?.();
+        stopOnline = undefined;
+        go();
+      });
+    };
+    if (deferMs > 0) setTimeout(whenOnline, deferMs);
+    else whenOnline();
   }
 
   // --- refresh -------------------------------------------------------------------------------
+  /**
+   * Notes whether the page starts leaving (beforeunload, pagehide) until stop(). Listening only while a
+   * request is in flight: a standing beforeunload listener keeps Firefox from keeping the page in its
+   * back/forward cache.
+   */
+  function watchLeaving(): { started(): boolean; stop(): void } {
+    const target = globalThis as { addEventListener?: typeof addEventListener; removeEventListener?: typeof removeEventListener };
+    let left = false;
+    const onLeave = () => {
+      left = true;
+    };
+    target.addEventListener?.('beforeunload', onLeave);
+    target.addEventListener?.('pagehide', onLeave);
+    return {
+      started: () => left,
+      stop: () => {
+        target.removeEventListener?.('beforeunload', onLeave);
+        target.removeEventListener?.('pagehide', onLeave);
+      },
+    };
+  }
+
   async function doRefresh(): Promise<boolean> {
     const t = tokens;
     const w = workspace;
@@ -551,14 +614,25 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     }
     let res: Response;
     let body: TokenResponse;
+    const leaving = watchLeaving();
     try {
       res = await tokenRequest(w.realm, { grant_type: 'refresh_token', refresh_token: t.refresh, client_id: cfg.clientId });
       body = (await res.json().catch(() => ({}))) as TokenResponse;
     } catch (e) {
       if (tokens !== t) return false;
-      log().warn('token refresh outcome unknown: restoring the session', { error: e });
+      if (leaving.started()) {
+        // The browser cancelled the request because the page is navigating away (WebKit does so as the
+        // navigation starts). Restoring now would send this page to the IdP and replace the user's
+        // navigation; the next page restores its own session. Only a page that stays restores.
+        log().info('token refresh cancelled by a navigation away', { error: e });
+        restoreLineage(LEAVING_GRACE_MS);
+        return false;
+      }
+      log().warn('token refresh outcome unknown: restoring the session', { error: e, essential: true });
       restoreLineage();
       return false;
+    } finally {
+      leaving.stop();
     }
     if (tokens !== t) return false; // logged out or switched meanwhile: discard the answer
     if (res.ok) {
@@ -575,11 +649,14 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     }
     if (body?.error === 'invalid_grant') {
       const serverEnded = t.refreshExpiresAt !== undefined && internals.now() < t.refreshExpiresAt;
-      log().info('session ended', { server_ended: serverEnded });
+      // Keycloak ending a live session (revocation, conversion, reuse detection) is operational and
+      // essential; a refresh token simply past its lifetime is routine and needs consent.
+      if (serverEnded) log().warn('session ended', { server_ended: true, essential: true });
+      else log().info('session ended', { server_ended: false });
       expire({ serverEnded, idle: false });
       return false;
     }
-    log().warn('token refresh failed: restoring the session', { status: res.status, error_code: typeof body?.error === 'string' ? body.error : undefined });
+    log().warn('token refresh failed: restoring the session', { status: res.status, error_code: typeof body?.error === 'string' ? body.error : undefined, essential: true });
     restoreLineage();
     return false;
   }
@@ -602,13 +679,13 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     const record = takePending(params.get('state'), now);
     purgePending(now);
     if (!record) {
-      log().warn('sign-in callback ignored: unknown or expired state');
+      log().warn('sign-in callback ignored: unknown or expired state', { essential: true });
       replaceUrl('/');
       return undefined; // the restore path continues as if there were no callback
     }
     replaceUrl(safeReturnUrl(record.returnUrl));
     const w = record.workspace;
-    const anonymous = (reason: 'none' | 'login-required'): Settled => {
+    const anonymous = (reason: 'none' | 'login-required' | 'device-clock'): Settled => {
       const s = { status: 'anonymous', reason, ...(reason === 'login-required' ? { workspace: w } : {}) } as const;
       setState(s);
       return s;
@@ -620,7 +697,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     const error = params.get('error');
     if (error !== null) {
       if (SILENT_ERRORS.has(error) && record.reason === 'restore') return anonymous('login-required');
-      log().warn('sign-in failed', { error_code: error.slice(0, 64), reason: record.reason });
+      log().warn('sign-in failed', { error_code: error.slice(0, 64), reason: record.reason, essential: true });
       return anonymous('none');
     }
     const code = params.get('code');
@@ -643,6 +720,10 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     } catch (e) {
       tokens = undefined;
       user = undefined;
+      if (e instanceof DeviceClockError) {
+        log().error('sign-in callback rejected: the device clock is off', { clock_offset_s: Math.round(e.offsetSeconds) });
+        return anonymous('device-clock');
+      }
       log().error('sign-in callback rejected', { error: e });
       return anonymous('none');
     }
@@ -699,7 +780,9 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       broadcast('logout');
       getRuntime().storageNamespace = 'anon';
       setState({ status: 'anonymous', ...(w ? { workspace: w } : {}), reason: 'signed-out' });
-      if (!o?.global || !w) return;
+      // Global by default (report Issue 10): a local logout leaves the provider's SSO session alive, and on a
+      // shared device the next person's sign-in then shows the previous user. { global: false } opts out.
+      if (o?.global === false || !w) return;
       const params = new URLSearchParams();
       if (idToken) params.set('id_token_hint', idToken);
       params.set('client_id', cfg.clientId);
@@ -735,7 +818,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     needsStepUp(maxAgeSeconds) {
       const authTime = state.status === 'authenticated' ? state.user.authTime : undefined;
       if (authTime === undefined || typeof maxAgeSeconds !== 'number' || !Number.isFinite(maxAgeSeconds)) return false;
-      return internals.now() / 1000 - authTime > maxAgeSeconds;
+      return internals.now() / 1000 - clockOffsetS - authTime > maxAgeSeconds; // on the provider's clock
     },
 
     subscribe(l) {

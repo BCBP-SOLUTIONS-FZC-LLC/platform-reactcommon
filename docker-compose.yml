@@ -57,7 +57,7 @@ services:
       - ./.state:/work
     depends_on:
       floci: { condition: service_healthy }
-      otel-collector: { condition: service_started }
+      otel-gateway: { condition: service_started }
     restart: "no"
 
   # ── Telemetry ────────────────────────────────────────────────────────────────────────────────
@@ -68,6 +68,36 @@ services:
     volumes:
       - ./docker/otel/collector.yaml:/etc/otelcol/config.yaml:ro
       - ./.state/otel:/out
+
+  # The browser's /otel: the reference two-tier configuration (examples/collector). The gateway scrubs
+  # and allowlists, then routes each metric stream to one aggregator, which converts delta → cumulative.
+  # Both hand their output to otel-collector above, which files it for the suite.
+  otel-gateway:
+    image: otel/opentelemetry-collector-contrib:0.164.0
+    command: ["--config=/etc/otelcol/reference.yaml", "--config=/etc/otelcol/stack.yaml"]
+    environment:
+      PLATFORM_ENVIRONMENT: staging
+      TRACES_OTLP_ENDPOINT: http://otel-collector:4319
+      LOGS_OTLP_ENDPOINT: http://otel-collector:4319
+      AGGREGATOR_HOSTNAME: otel-aggregator
+      AGGREGATOR_TLS_INSECURE: "true"
+    volumes:
+      - ./examples/collector/gateway.yaml:/etc/otelcol/reference.yaml:ro
+      - ./docker/otel/gateway.stack.yaml:/etc/otelcol/stack.yaml:ro
+    depends_on:
+      otel-collector: { condition: service_started }
+      otel-aggregator: { condition: service_started }
+
+  otel-aggregator:
+    image: otel/opentelemetry-collector-contrib:0.164.0
+    command: ["--config=/etc/otelcol/reference.yaml", "--config=/etc/otelcol/stack.yaml"]
+    environment:
+      METRICS_REMOTE_WRITE_URL: http://mimir.invalid/api/v1/push   # replaced by otlp/collector (aggregator.stack.yaml)
+    volumes:
+      - ./examples/collector/aggregator.yaml:/etc/otelcol/reference.yaml:ro
+      - ./docker/otel/aggregator.stack.yaml:/etc/otelcol/stack.yaml:ro
+    depends_on:
+      otel-collector: { condition: service_started }
 
   # ── Identity ─────────────────────────────────────────────────────────────────────────────────
   keycloak:
@@ -104,13 +134,15 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: org_membership_app
+      # As iam-org-membership's own compose since O&M #47: the superuser is a separate role; its
+      # init-db.sql creates the RLS-bound app role and the BYPASSRLS migrator, which runs the migrations.
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: devpassword
       POSTGRES_DB: org_membership
     volumes:
       - ${IAM_ROOT}/iam-org-membership/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U org_membership_app -d org_membership"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d org_membership"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -158,7 +190,7 @@ services:
       PG_MAX_CONNS: "20"
       PG_MIN_CONNS: "0"
       PG_BOUNCER_MODE: "true"
-      MIGRATION_DATABASE_URL: postgres://org_membership_app:devpassword@postgres:5432/org_membership?sslmode=disable
+      MIGRATION_DATABASE_URL: postgres://org_membership_migrator:devpassword@postgres:5432/org_membership?sslmode=disable
       VALKEY_URL: valkey:6379
       SNS_TOPIC_MEMBERSHIP_ARN: arn:aws:sns:ap-south-1:000000000000:iam-membership-events
       SNS_TOPIC_TENANT_ARN: arn:aws:sns:ap-south-1:000000000000:iam-tenant-events
@@ -213,6 +245,7 @@ services:
       VALKEY_URL: valkey:6379
       ORG_MEMBERSHIP_BASE_URL: http://org-membership:8080
       ORG_MEMBERSHIP_TIMEOUT: ${AUTHZ_ORG_MEMBERSHIP_TIMEOUT:-40ms}
+      ORG_MEMBERSHIP_COLD_TIMEOUT: ${AUTHZ_ORG_MEMBERSHIP_COLD_TIMEOUT:-120ms}   # no cached entry to fall back on (authz-enrichment #40, Issue 12)
       # iam-tender-acl is not in this stack: only restricted tenders call it (none here).
       TENDER_ACL_BASE_URL: http://tender-acl-not-deployed:8086
       MEMBERSHIP_AUTHZ_QUEUE_URL: http://floci:4566/000000000000/membership-authz-q

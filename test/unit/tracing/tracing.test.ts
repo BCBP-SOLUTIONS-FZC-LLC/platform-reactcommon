@@ -244,17 +244,37 @@ describe('initializeTracing', () => {
     expect(spans().map((s) => s.name)).toEqual(['on']);
   });
 
-  it('flushes on pagehide', async () => {
+  it('on pagehide sends the queue with fetch keepalive, started within the listener (known browser bug 2)', async () => {
     const target = new EventTarget();
     vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
     vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
+    const unload = stubUnloadFetch();
     start();
     getTracer('t').startSpan('queued').end();
     expect(spans()).toHaveLength(0); // waiting for the 5 s batch timer
     target.dispatchEvent(new Event('pagehide'));
-    await vi.waitFor(() => expect(spans().map((s) => s.name)).toEqual(['queued']));
+    // Already started, before any await: a closing tab may never run a later microtask.
+    expect(unload.calls).toHaveLength(1);
+    expect(unload.calls[0]!.url).toBe('http://localhost/otel/v1/traces');
+    expect(unload.calls[0]!.init).toMatchObject({ method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' } });
+    expect(unload.names(0)).toEqual(['queued']);
+    expect(spans()).toHaveLength(0); // not through the exporter
+    await vi.waitFor(() => expect(tracingStats()!.exported).toBe(1));
   });
 });
+
+/** Captures the unload request (fetch keepalive, started in the pagehide listener) and answers 200. */
+function stubUnloadFetch() {
+  const calls: { url: string; init: RequestInit }[] = [];
+  vi.stubGlobal('fetch', (url: string, init: RequestInit) => (calls.push({ url, init }), Promise.resolve(new Response(null, { status: 200 }))));
+  const json = (i: number) =>
+    JSON.parse(new TextDecoder().decode(calls[i]!.init.body as Uint8Array)) as { resourceSpans: { scopeSpans: { spans: { name: string }[] }[] }[] };
+  return {
+    calls,
+    names: (i: number) => json(i).resourceSpans.flatMap((r) => r.scopeSpans.flatMap((s) => s.spans.map((x) => x.name))),
+    bytes: (i: number) => (calls[i]!.init.body as Uint8Array).byteLength,
+  };
+}
 
 describe('export queue', () => {
   it('flushes when the page becomes hidden, not while visible, and stops listening after shutdown', async () => {
@@ -351,10 +371,35 @@ describe('export queue', () => {
     expect(tracingStats()).toMatchObject({ exported: 300, exportFailures: 0, droppedOnUnload: 0 });
   });
 
+  it('on pagehide prefers sendBeacon; a refused or throwing beacon falls back to fetch keepalive', async () => {
+    const target = new EventTarget();
+    vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
+    vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
+    for (const [beacon, viaFetch] of [
+      [() => true, false],
+      [() => false, true],
+      [() => {
+        throw new TypeError('beacon');
+      }, true],
+    ] as const) {
+      const beacons: string[] = [];
+      vi.stubGlobal('navigator', { sendBeacon: (url: string) => (beacons.push(url), beacon()) });
+      const unload = stubUnloadFetch();
+      start();
+      getTracer('t').startSpan('queued').end();
+      target.dispatchEvent(new Event('pagehide'));
+      expect(beacons).toEqual(['http://localhost/otel/v1/traces']);
+      expect(unload.calls).toHaveLength(viaFetch ? 1 : 0);
+      await vi.waitFor(() => expect(tracingStats()!.exported).toBe(1));
+      await shutdownTracing();
+    }
+  });
+
   it('on pagehide sends one keepalive-sized request with the newest spans and counts the rest as dropped', async () => {
     const target = new EventTarget();
     vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
     vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
+    const unload = stubUnloadFetch();
     const limited = limitedExporter(EXPORTER_CONCURRENCY);
     setTracingInternalsForTests({ exporter: () => limited.e });
     start();
@@ -366,25 +411,27 @@ describe('export queue', () => {
     expect(limited.batches).toHaveLength(0);
     const stats = tracingStats()!;
     target.dispatchEvent(new Event('pagehide'));
-    await vi.waitFor(() => expect(limited.batches).toHaveLength(1));
     await new Promise((r) => setTimeout(r, 10));
-    expect(limited.batches).toHaveLength(1); // one request, and nothing follows it
-    const [sent] = limited.batches as [ReadableSpan[]];
-    expect(JsonTraceSerializer.serializeRequest(sent)!.byteLength).toBeLessThanOrEqual(KEEPALIVE_MAX_BYTES);
+    expect(unload.calls).toHaveLength(1); // one request, and nothing follows it
+    expect(limited.batches).toHaveLength(0);
+    const sent = unload.names(0);
+    expect(unload.bytes(0)).toBeLessThanOrEqual(KEEPALIVE_MAX_BYTES);
     // The newest that fit, in queue order; one more would not have fitted.
     expect(sent.length).toBeGreaterThan(10);
     expect(sent.length).toBeLessThan(300);
-    expect(sent.map((x) => x.name)).toEqual(names(300 - sent.length, 300));
+    expect(sent).toEqual(names(300 - sent.length, 300));
     const withOneMore = spansBefore.slice(300 - sent.length - 1);
     expect(JsonTraceSerializer.serializeRequest(withOneMore)!.byteLength).toBeGreaterThan(KEEPALIVE_MAX_BYTES);
+    await vi.waitFor(() => expect(stats.exported).toBe(sent.length));
     expect(stats).toEqual({ exported: sent.length, droppedQueueFull: 0, droppedNoConsent: 0, droppedOnUnload: 300 - sent.length, exportFailures: 0 });
   });
 
-  it('on pagehide right after a hide flush, the unload request still fits the exporter concurrency limit', async () => {
+  it('on pagehide right after a hide flush, the unload request goes around the busy exporter', async () => {
     const target = Object.assign(new EventTarget(), { visibilityState: 'visible' });
     vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
     vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
     vi.stubGlobal('document', target);
+    const unload = stubUnloadFetch();
     expect(EXPORTER_CONCURRENCY).toBe(4); // what the production OTLP exporter is given
     const limited = limitedExporter(4);
     setTracingInternalsForTests({ exporter: () => limited.e, queue: { maxQueueSize: 2048, maxExportBatchSize: 20, scheduledDelayMillis: 60_000 } });
@@ -396,26 +443,26 @@ describe('export queue', () => {
     getTracer('t').startSpan('last').end();
     target.dispatchEvent(new Event('pagehide'));
     const stats = tracingStats()!;
-    await vi.waitFor(() => expect(spans()).toHaveLength(39));
+    expect(unload.names(0)).toEqual(['last']); // directly, while the exporter's slots are busy
+    await vi.waitFor(() => expect(spans()).toHaveLength(38));
     expect(limited.rejected()).toBe(0);
-    expect(stats).toMatchObject({ exported: 39, exportFailures: 0, droppedOnUnload: 0 });
+    await vi.waitFor(() => expect(stats).toMatchObject({ exported: 39, exportFailures: 0, droppedOnUnload: 0 }));
   });
 
-  it('on pagehide counts a refused or throwing export as a failure, and sends nothing for an empty queue', async () => {
+  it('on pagehide counts a refused, rejected or throwing request as a failure, and sends nothing for an empty queue', async () => {
     const target = new EventTarget();
     vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
     vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
     let calls = 0;
-    const refusing: SpanExporter = { export: (_b, cb) => (calls++, cb({ code: 1 })), shutdown: async () => {} };
-    const throwing: SpanExporter = {
-      export: () => {
-        calls++;
-        throw new Error('boom');
+    const answers: (() => Promise<Response>)[] = [
+      async () => new Response(null, { status: 503 }),
+      () => Promise.reject(new TypeError('Failed to fetch')),
+      () => {
+        throw new TypeError('keepalive refused');
       },
-      shutdown: async () => {},
-    };
-    for (const e of [refusing, throwing]) {
-      setTracingInternalsForTests({ exporter: () => e });
+    ];
+    for (const answer of answers) {
+      vi.stubGlobal('fetch', () => (calls++, answer()));
       start();
       const stats = tracingStats()!;
       getTracer('t').startSpan('lost').end();
@@ -424,7 +471,28 @@ describe('export queue', () => {
       await vi.waitFor(() => expect(stats).toMatchObject({ exported: 0, exportFailures: 1, droppedOnUnload: 0 }));
       await shutdownTracing();
     }
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
+  });
+
+  it('drainOnUnload fallbacks: without a direct URL through the exporter; with no beacon and no fetch, a failure', async () => {
+    const stats: TracingStats = { exported: 0, droppedQueueFull: 0, droppedNoConsent: 0, droppedOnUnload: 0, exportFailures: 0 };
+    const opts = { maxQueueSize: 10, maxExportBatchSize: 10, scheduledDelayMillis: 60_000 };
+    start(); // a real ReadableSpan, through the test exporter
+    getTracer('t').startSpan('s').end();
+    await shutdownTracing();
+    const real = spans()[0]!;
+    const span = () => real;
+    const viaExporter = new DropOldestBatchSpanProcessor(exporter, stats, opts); // no unload URL
+    viaExporter.onEnd(span());
+    expect(viaExporter.drainOnUnload()).toBeGreaterThan(0);
+    await vi.waitFor(() => expect(stats.exported).toBe(1));
+
+    vi.stubGlobal('navigator', {});
+    vi.stubGlobal('fetch', undefined);
+    const nothing = new DropOldestBatchSpanProcessor(exporter, stats, opts, 'http://localhost/otel/v1/traces');
+    nothing.onEnd(span());
+    expect(nothing.drainOnUnload()).toBe(0);
+    expect(stats.exportFailures).toBe(1);
   });
 
   it('on pagehide drops a span that cannot be serialised instead of throwing', () => {

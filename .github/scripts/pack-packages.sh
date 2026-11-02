@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Packs the three published packages (after `pnpm build`) into OUT_DIR (default dist-packages/):
 # exactly what a registry or the GitHub Release would ship. Fails when a package's tarball lacks
-# its built entry points. Writes packages.txt (name@version per line).
+# its built entry points. Writes packages.txt (name@version per line) and SHA256SUMS, which the
+# release's npm-publish job checks before publishing these exact files.
 set -euo pipefail
 
 OUT_DIR="${OUT_DIR:-dist-packages}"
@@ -25,6 +26,8 @@ for tgz in "${OUT_ABS}"/*.tgz; do
     grep -q "^${want}" <<<"${listing}" || { echo "::error title=Pack::$(basename "${tgz}") has no ${want}"; exit 1; }
   done
 done
+
+(cd "${OUT_ABS}" && if command -v sha256sum >/dev/null; then sha256sum ./*.tgz; else shasum -a 256 ./*.tgz; fi > SHA256SUMS)
 
 echo "::group::Packed"
 ls -l "${OUT_ABS}"

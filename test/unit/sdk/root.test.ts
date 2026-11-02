@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 describe('root entry point', () => {
   it('throws a helpful error telling the caller to import a subpath', async () => {
     await expect(import('../../../packages/frontend-sdk/src/root.ts')).rejects.toThrow(
-      "import a subpath such as '@platform/frontend-sdk/core'",
+      "import a subpath such as '@bcbp-solutions-fzc-llc/frontend-sdk/core'",
     );
   });
 

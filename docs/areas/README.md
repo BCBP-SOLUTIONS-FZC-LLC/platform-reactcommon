@@ -1,6 +1,6 @@
 # The SDK by functional area
 
-`@platform/frontend-sdk` has 17 subpaths. By function they fall into seven areas. Each area is documented on its own page: what it's for, its subpaths and main exports, how to use it, and what it guarantees.
+`@bcbp-solutions-fzc-llc/frontend-sdk` has 17 subpaths. By function they fall into seven areas. Each area is documented on its own page: what it's for, its subpaths and main exports, how to use it, and what it guarantees.
 
 The areas are recorded in [`packages/frontend-sdk/subpaths.json`](../../packages/frontend-sdk/subpaths.json) (`areas`, and `area` on every subpath), next to the layers and import rules. `pnpm test` checks that every subpath has an area and that each area's page covers its subpaths. An area is about documentation and ownership; it changes no dependency rule. The rules are the layers in the same file (design doc §C1 "Dependency rules").
 
@@ -28,4 +28,4 @@ Micro-frontend platform   Identity & access   UI support
                        Foundation
 ```
 
-The two build-time packages belong with the areas they serve: `@platform/webpack-preset` with the micro-frontend platform, and `@platform/eslint-plugin` with the developer surface.
+The two build-time packages belong with the areas they serve: `@bcbp-solutions-fzc-llc/webpack-preset` with the micro-frontend platform, and `@bcbp-solutions-fzc-llc/eslint-plugin` with the developer surface.

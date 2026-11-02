@@ -1,0 +1,183 @@
+# promtool unit tests for platform-web.rules.yml (pnpm run rules-check).
+rule_files:
+  - platform-web.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  # 2% of tenders loads fail: the 99.9% remote SLO burns > 14.4×. A healthy remote does not alert.
+  - interval: 1m
+    input_series:
+      - series: 'platform_web_remote_load_seconds_count{domain="portal",service="web-app",environment="prod",mfe="tenders",outcome="success"}'
+        values: '0+98x90'
+      - series: 'platform_web_remote_load_seconds_count{domain="portal",service="web-app",environment="prod",mfe="tenders",outcome="error"}'
+        values: '0+2x90'
+      - series: 'platform_web_remote_load_seconds_count{domain="portal",service="web-app",environment="prod",mfe="iam-admin",outcome="success"}'
+        values: '0+100x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: PlatformWebRemoteLoadErrorBudgetBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              metric_status: proposed
+              domain: portal
+              service: web-app
+              environment: prod
+              mfe: tenders
+            exp_annotations:
+              summary: "Remote tenders is failing to load fast enough to exhaust its monthly error budget"
+              description: "Over 1.44% of loads of tenders in web-app (prod) failed in both the last hour and the last 5 minutes."
+              runbook_url: "https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/blob/main/docs/observability/runbooks.md#platformwebremoteloaderrorbudgetburn"
+
+  # A rarely used remote (1 load / 5 min, half failing) is below the traffic guard; a kill-switched
+  # remote (outcome failure) is not an error.
+  - interval: 1m
+    input_series:
+      - series: 'platform_web_remote_load_seconds_count{domain="portal",service="web-app",environment="prod",mfe="rare",outcome="success"}'
+        values: '0+0.1x90'
+      - series: 'platform_web_remote_load_seconds_count{domain="portal",service="web-app",environment="prod",mfe="rare",outcome="error"}'
+        values: '0+0.1x90'
+      - series: 'platform_web_remote_load_seconds_count{domain="portal",service="web-app",environment="prod",mfe="switched-off",outcome="failure"}'
+        values: '0+50x90'
+      - series: 'platform_web_remote_load_seconds_count{domain="portal",service="web-app",environment="prod",mfe="switched-off",outcome="success"}'
+        values: '0+50x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: PlatformWebRemoteLoadErrorBudgetBurn
+        exp_alerts: []
+
+  # Incompatible for 20 minutes alerts; a single incompatible load (one stale tab) does not.
+  - interval: 1m
+    input_series:
+      - series: 'platform_web_remote_load_failures_total{domain="portal",service="web-app",environment="prod",mfe="tenders",reason="incompatible"}'
+        values: '0+1x40'
+      - series: 'platform_web_remote_load_failures_total{domain="portal",service="web-app",environment="prod",mfe="iam-admin",reason="incompatible"}'
+        values: '0x3 1x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: PlatformWebRemoteIncompatible
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              metric_status: proposed
+              domain: portal
+              service: web-app
+              environment: prod
+              mfe: tenders
+            exp_annotations:
+              summary: "Remote tenders is incompatible with the shell"
+              description: "web-app (prod) has refused or failed to evaluate tenders for 10 minutes: the remote was built against a newer SDK than the shell provides, or its module throws."
+              runbook_url: "https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/blob/main/docs/observability/runbooks.md#platformwebremoteincompatible"
+
+  # 10% of browser API calls end in 5xx / timeout / network: the 99.5% SLO burns > 14.4×.
+  - interval: 1m
+    input_series:
+      - series: 'platform_web_http_client_duration_seconds_count{domain="portal",service="web-app",environment="prod",method="GET",route="/tenders/:id",status_class="2xx",error_class="success",mfe="tenders"}'
+        values: '0+90x90'
+      - series: 'platform_web_http_client_duration_seconds_count{domain="portal",service="web-app",environment="prod",method="GET",route="/tenders/:id",status_class="5xx",error_class="server_error",mfe="tenders"}'
+        values: '0+10x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: PlatformWebApiErrorBudgetBurn
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              metric_status: proposed
+              domain: portal
+              service: web-app
+              environment: prod
+            exp_annotations:
+              summary: "Browser API calls from web-app are failing fast enough to exhaust the monthly error budget"
+              description: "Over 7.2% of API calls made by web-app (prod) ended in a 5xx, a timeout or a network failure in both the last hour and the last 5 minutes."
+              runbook_url: "https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/blob/main/docs/observability/runbooks.md#platformwebapierrorbudgetburn"
+
+  # Caller aborts (4xx/client_error) are not errors, however many there are.
+  - interval: 1m
+    input_series:
+      - series: 'platform_web_http_client_duration_seconds_count{domain="portal",service="web-app",environment="prod",method="GET",route="/tenders",status_class="2xx",error_class="success",mfe="tenders"}'
+        values: '0+50x90'
+      - series: 'platform_web_http_client_duration_seconds_count{domain="portal",service="web-app",environment="prod",method="GET",route="/tenders",status_class="4xx",error_class="client_error",mfe="tenders"}'
+        values: '0+50x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: PlatformWebApiErrorBudgetBurn
+        exp_alerts: []
+
+  # Chunk-load errors at 1.2 / min for 10 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'platform_web_errors_total{domain="portal",service="web-app",environment="prod",mfe="shell",source="chunk_load"}'
+        values: '0+1.2x40'
+      - series: 'platform_web_errors_total{domain="portal",service="web-app",environment="prod",mfe="shell",source="unhandled_error"}'
+        values: '0+50x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: PlatformWebChunkLoadErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              metric_status: proposed
+              domain: portal
+              service: web-app
+              environment: prod
+            exp_annotations:
+              summary: "web-app pages cannot load their script chunks"
+              description: "web-app (prod) has reported chunk-load errors for 10 minutes; pages reload once to pick up the new build, so users see a reload or a broken screen."
+              runbook_url: "https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/blob/main/docs/observability/runbooks.md#platformwebchunkloaderrors"
+
+  # 60% good LCP for over an hour fails the assessment; 90% good INP passes.
+  - interval: 1m
+    input_series:
+      - series: 'platform_web_vital_ratings_total{domain="portal",service="web-app",environment="prod",vital="lcp",rating="good",page_route="/t/:slug/"}'
+        values: '0+6x150'
+      - series: 'platform_web_vital_ratings_total{domain="portal",service="web-app",environment="prod",vital="lcp",rating="poor",page_route="/t/:slug/"}'
+        values: '0+4x150'
+      - series: 'platform_web_vital_ratings_total{domain="portal",service="web-app",environment="prod",vital="inp",rating="good",page_route="/t/:slug/"}'
+        values: '0+9x150'
+      - series: 'platform_web_vital_ratings_total{domain="portal",service="web-app",environment="prod",vital="inp",rating="needs_improvement",page_route="/t/:slug/"}'
+        values: '0+1x150'
+    alert_rule_test:
+      - eval_time: 130m
+        alertname: PlatformWebCoreWebVitalFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              metric_status: proposed
+              domain: portal
+              service: web-app
+              environment: prod
+              vital: lcp
+            exp_annotations:
+              summary: "web-app fails the Core Web Vitals assessment on lcp"
+              description: "Fewer than 75% of web-app (prod) page views rated good on lcp for over an hour."
+              runbook_url: "https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/blob/main/docs/observability/runbooks.md#platformwebcorewebvitalfailing"
+    promql_expr_test:
+      - expr: platform_web:vital_good_ratio:rate1h{vital="inp"}
+        eval_time: 130m
+        exp_samples:
+          - labels: 'platform_web:vital_good_ratio:rate1h{domain="portal",service="web-app",environment="prod",vital="inp"}'
+            value: 0.9
+
+  # Unregistered page routes replaced with unknown.
+  - interval: 1m
+    input_series:
+      - series: 'platform_telemetry_label_overflow_total{domain="portal",service="web-app",environment="prod",label="page_route"}'
+        values: '0+1x30'
+      - series: 'platform_telemetry_label_overflow_total{domain="iam",service="event-consumer",environment="prod",label="event_type"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: PlatformWebLabelOverflow
+        exp_alerts:
+          - exp_labels:
+              severity: info
+              metric_status: proposed
+              domain: portal
+              service: web-app
+              environment: prod
+              label: page_route
+            exp_annotations:
+              summary: "web-app is replacing page_route values to bound cardinality"
+              description: "web-app (prod) has recorded page_route values as unknown for 15 minutes: register the page's route template with useRouteTemplate."
+              runbook_url: "https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/blob/main/docs/observability/runbooks.md#platformweblabeloverflow"

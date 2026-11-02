@@ -6,10 +6,10 @@ How app code actually meets the SDK: React hooks and components over every other
 
 | Subpath | What it does | Main exports |
 |---|---|---|
-| `/react` | The shell's provider; hooks for session, workspace, permissions, flags, locale, API calls, step-up, read-only, online state, app updates; error boundaries for remotes; global error and CSP-violation capture | `PlatformProvider`, `useSession`, `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useApi`, `useApiClient`, `useT`, `useLocale`, `useFeatureFlag`, `useHasPermission`, `Can`, `useStepUp`, `useReadOnly`, `useRouteTemplate`, `useBeforeAuthRedirect`, `useOnlineStatus`, `useAppUpdate`, `useSwitchWorkspace`, `MFEErrorBoundary`, `RemoteBoundary`, `installGlobalErrorHandlers` |
+| `/react` | The shell's provider; hooks for session, workspace, permissions, flags, locale, API calls, step-up, read-only, online state, app updates; error boundaries for remotes; global error and CSP-violation capture | `PlatformProvider`, `useSession`, `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useApi`, `useApiClient`, `useT`, `useLocale`, `useFeatureFlag`, `useHasPermission`, `Can`, `useStepUp`, `useReadOnly`, `useRouteTemplate`, `useBeforeAuthRedirect`, `useOnlineStatus`, `useAppUpdate`, `useSwitchWorkspace`, `useSignOut`, `MFEErrorBoundary`, `RemoteBoundary`, `installGlobalErrorHandlers` |
 | `/testing` | A real SDK runtime for tests, with in-memory logs and spans, a signed-in user, permissions and flags; API mocks with gincommon-shaped problems; the metric inventory for `metricslint` (dev only) | `createTestPlatform`, `mockApi`, `mockProblem`, `renderMetricInventory` |
 
-Build time: [`@platform/eslint-plugin`](../../packages/eslint-plugin) enforces how apps use the SDK:
+Build time: [`@bcbp-solutions-fzc-llc/eslint-plugin`](../../packages/eslint-plugin) enforces how apps use the SDK:
 - SDK subpath imports only;
 - no identity headers;
 - no raw browser storage;

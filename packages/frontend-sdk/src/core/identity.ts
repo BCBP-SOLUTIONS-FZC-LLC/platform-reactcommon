@@ -58,7 +58,7 @@ export class IdentityMismatchError extends Error {
   ) {
     const field = (Object.keys(existing) as (keyof CoreIdentity)[]).find((k) => existing[k] !== attempted[k]);
     super(
-      `@platform/frontend-sdk is already initialized with a different identity (${field}: ` +
+      `@bcbp-solutions-fzc-llc/frontend-sdk is already initialized with a different identity (${field}: ` +
         `${JSON.stringify(existing[field!])} ≠ ${JSON.stringify(attempted[field!])}). A page has one identity, set by the shell.`,
     );
   }

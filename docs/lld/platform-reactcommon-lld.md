@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| Packages | `@platform/frontend-sdk` · `@platform/webpack-preset` · `@platform/eslint-plugin` (one version, changesets `fixed`) |
+| Packages | `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin` (one version, changesets `fixed`) |
 | Version | `1.0.0-alpha.N` (pre-release until the first end-to-end environment) |
 | Runtime | Evergreen browsers (ES2022, Trusted Types where supported); build tooling on Node ≥ 22 |
-| Peers | `react` / `react-dom` `^18.3.0 \|\| ^19.0.0`, `@opentelemetry/api` `~1.10.0`, `webpack` `^5.100.0`, `eslint` `^9 \|\| ^10` |
+| Peers | `react` / `react-dom` `^19.0.0` (one major; floor tested in CI), `@opentelemetry/api` `~1.10.0`, `webpack` `^5.100.0`, `eslint` `^9 \|\| ^10` |
 | Design record | [`docs/design/frontend-sdk-design.md`](../design/frontend-sdk-design.md) (decisions, public API per subpath, contracts, backend changes) |
 | Architecture | [`ARCHITECTURE.md`](../../ARCHITECTURE.md) (diagrams, invariants, threat model) |
 
@@ -70,7 +70,7 @@ Where the two disagree, the code and this LLD describe what ships; the design do
 - **Micro-frontends:** the remote manifest, `loadRemote`, kill switches, chunk-load recovery and new-version detection.
 - **React bindings:** hooks, `PlatformProvider`, error boundaries and global error handlers.
 - **Testing:** a test platform with in-memory telemetry, plus API mocks.
-- **Build tooling:** the Module Federation shared map and CSP-safe output (`@platform/webpack-preset`), and lint rules for consumers (`@platform/eslint-plugin`).
+- **Build tooling:** the Module Federation shared map and CSP-safe output (`@bcbp-solutions-fzc-llc/webpack-preset`), and lint rules for consumers (`@bcbp-solutions-fzc-llc/eslint-plugin`).
 
 ### 2.2 Out of scope (owned elsewhere)
 
@@ -82,7 +82,7 @@ Where the two disagree, the code and this LLD describe what ships; the design do
 | Ratifying `platform_web_*` metrics | Observability governance (§D5, §D6 K) |
 | Collector, Loki, Tempo, Mimir, Grafana, alert routing | Platform observability |
 | CloudFront, S3, WAF, deploys | Infrastructure (`examples/cloudfront` documents the requirements) |
-| UI components, design system | `@platform/ui` (not this repo) |
+| UI components, design system | `@bcbp-solutions-fzc-llc/ui` (not this repo) |
 
 ### 2.3 Ownership split with sibling libraries
 
@@ -104,7 +104,7 @@ Where the two disagree, the code and this LLD describe what ships; the design do
 ```
 platform-reactcommon/
   packages/
-    frontend-sdk/             @platform/frontend-sdk
+    frontend-sdk/             @bcbp-solutions-fzc-llc/frontend-sdk
       src/<subpath>/index.ts    17 subpaths; index.ts is the only public surface of each
       src/internal/             runtime registry, events, instrument port, batcher, online,
                                 redirect, locale, session, ids, urls, generated/ (contracts as TS)
@@ -112,8 +112,8 @@ platform-reactcommon/
       contracts/                generated, committed (never edited)
       api/                      api-extractor report per subpath
       subpaths.json             subpaths, layers, allowed imports (single source)
-    webpack-preset/           @platform/webpack-preset (src/generated/sdk.ts generated)
-    eslint-plugin/            @platform/eslint-plugin  (src/generated/{sdk,forbidden-headers}.ts generated)
+    webpack-preset/           @bcbp-solutions-fzc-llc/webpack-preset (src/generated/sdk.ts generated)
+    eslint-plugin/            @bcbp-solutions-fzc-llc/eslint-plugin  (src/generated/{sdk,forbidden-headers}.ts generated)
   test/                       unit/<subpath>, integration, e2e, smoke, fixtures, testenv (as platform-gincommon)
   examples/shell, examples/remote-tenders, examples/cloudfront
   scripts/                    sync-contracts, sync-exports, sync-docs, api-report, metrics-parity,
@@ -122,7 +122,7 @@ platform-reactcommon/
   .github/                    ci.yml, release.yml, validate-*.yml, changelog-check.yml
 ```
 
-### 3.1 Library dependencies (direct, `@platform/frontend-sdk`)
+### 3.1 Library dependencies (direct, `@bcbp-solutions-fzc-llc/frontend-sdk`)
 
 | Dependency | Used by | Why |
 |---|---|---|
@@ -170,7 +170,7 @@ Generated from `subpaths.json` into the exports map, the ESLint config (`eslint-
 
 Strings are sanitized like gincommon (Go's whitespace trim, control characters removed; the SDK also strips U+2028/2029, a deliberate stricter difference recorded in the identity fixture as `expectedSdk`). A second call with the same normalised identity is a no-op; a different one throws `IdentityMismatchError` naming the field. A remote never calls it: it reads the shell's identity from the runtime.
 
-The **RUM session id** is a random v4 UUID kept in localStorage under `@platform/frontend-sdk:session-id`, so it is shared by tabs and survives reloads. It is rotated on logout and idle timeout, and falls back to a per-page id when storage is blocked. It is sent as `x-session-id` and logged as `session_id`. It is never the IdP session.
+The **RUM session id** is a random v4 UUID kept in localStorage under `@bcbp-solutions-fzc-llc/frontend-sdk:session-id`, so it is shared by tabs and survives reloads. It is rotated on logout and idle timeout, and falls back to a per-page id when storage is blocked. It is sent as `x-session-id` and logged as `session_id`. It is never the IdP session.
 
 ### 4.2 Runtime configuration (`/config`)
 
@@ -236,7 +236,7 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 
 ### 5.1 Conventions
 
-- Subpath imports only; `import '@platform/frontend-sdk'` throws.
+- Subpath imports only; `import '@bcbp-solutions-fzc-llc/frontend-sdk'` throws.
 - Every public symbol is in `api/<subpath>.api.md`. A change is a reviewed diff plus a changeset and a `CHANGELOG.md` entry.
 - "Shell only" functions (`initialize*`, `set*Provider`, `loadManifest`, `startVersionPolling`, `PlatformProvider`, `installGlobalErrorHandlers`, `initializeAuth`) are called once, by the shell. A second `initialize*` call is a no-op, except `initializeCore` with a different identity.
 - Functions that need an earlier step throw `NotInitializedError` (for example `initializeTracing` before `initializeCore`). Read paths degrade instead: no-op spans, a console logger, `denyAll`, platform flags.
@@ -299,7 +299,7 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 | `login({ workspace, returnUrl?, loginHint?, prompt? })` | Pending record + PKCE + `beforeRedirect('login')` + top-level redirect; throws when sessionStorage is unavailable |
 | `getAccessToken()` | `undefined` when anonymous, expired or restoring; joins the refresh when within 5 s of expiry |
 | `refresh()` | Single-flight; `true` with new tokens, `false` otherwise (state already moved, §8.5) |
-| `logout({ global? })` | §8.7 |
+| `logout({ global? })` (global unless `global: false`) | §8.7 |
 | `switchWorkspace(w)` | Local logout of the current realm without the signed-out mark, broadcast `workspace-switched`, then `login(w)` with reason `switch` |
 | `reauthenticate({ maxAgeSeconds, returnUrl? })` | `prompt=login&max_age=<s>` with reason `step-up`; needs a session |
 | `needsStepUp(s)` | `now − auth_time > s`; `false` when `auth_time` is unknown |
@@ -348,7 +348,7 @@ Any failure is a `RemoteLoadError` carrying the cause. One span `remote load` an
 | `readOnlyDenied` | `/http` | `/react` `useReadOnly` |
 | `events` (topic → listeners) | `src/internal/events` | `/react` |
 
-Created on first use on `globalThis[Symbol.for('@platform/frontend-sdk')]`. A second SDK copy with the same major binds to it; another major keeps its own and logs one error. `resetRuntimeForTests()` exists for tests only.
+Created on first use on `globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]`. A second SDK copy with the same major binds to it; another major keeps its own and logs one error. `resetRuntimeForTests()` exists for tests only.
 
 ### 6.2 Initialisation order (shell)
 
@@ -467,13 +467,14 @@ A silent restore runs only when all of these hold: no callback; no signed-out ma
 The loop guard is set, then the page does one top-level redirect with `prompt=none` back to the current URL; `init()` never settles. A successful callback clears the guard. With no restore, the state is `anonymous`: reason `signed-out` when the mark is set, else `none`.
 
 ### 8.5 Refresh
-- **When:** a timer at `expiresAt − 60 s ± 10 s`, `getAccessToken()` within 5 s of expiry, or `/http`'s 401 path.
+- **When:** a timer at `expiresAt − lead ± jitter` (lead `min(60 s, lifetime / 3)`, jitter at most `min(10 s, lead / 2)`: a 300 s token at 230–250 s, a 60 s token at 30–50 s), `getAccessToken()` within 5 s of expiry, or `/http`'s 401 path.
 - **Single-flight per tab.**
 - **Offline before sending:** keep the token and retry on `online`.
 - **Refresh token past `refresh_expires_in`:** `expired { serverEnded: false }` without sending.
 - **200:** rotate (a response without `refresh_token` keeps the current one); refreshed ID tokens must keep `sub`, and their `nonce` if present.
 - **`invalid_grant`:** `expired`, with `serverEnded = now < refreshExpiresAt`.
 - **Anything else that may have reached Keycloak:** network error after send, timeout, other errors, an invalid answer. The lineage is dropped, the page waits for `online`, runs `beforeRedirect('restore')`, then does a `prompt=none` redirect. A token that might already be rotated is never re-sent.
+- **Cancelled by a navigation away:** `beforeunload` or `pagehide` fired while the request was in flight (listened to only then: a standing `beforeunload` listener keeps Firefox from using its back/forward cache). The lineage is dropped, but the restore waits 10 s, which an unloading page never reaches; a page that stays restores then. Restoring at once would send the leaving page to the IdP and replace the user's navigation.
 
 ### 8.6 Idle timeout
 Activity events (`pointerdown`, `keydown`, `wheel`, `touchstart`, `scroll`, capture and passive) write the last-activity time to localStorage, at most every 5 s. Every 15 s (or `idleTimeoutMs` when shorter), each tab compares that shared time with `idleTimeoutMs` (1 min–8 h). Once it's exceeded, the tab rotates the session id and moves to `expired { idle: true }`; `signInAgain` then uses `prompt=login`. Every tab idles out together.
@@ -483,7 +484,7 @@ Activity events (`pointerdown`, `keydown`, `wheel`, `touchstart`, `scroll`, capt
   1. Drop the tokens and stop the timers.
   2. `clearAllAppStorage()`, rotate the session id, and set the signed-out mark.
   3. Broadcast `logout`, set the storage namespace to `anon`, and move to `anonymous { signed-out }`.
-  4. **Global** logout only: redirect to the realm's `/logout` with `id_token_hint` (when held), `client_id` and `post_logout_redirect_uri=<origin>/`.
+  4. Unless `{ global: false }` (the default is global, report Issue 10): redirect to the realm's `/logout` with `id_token_hint` (when held), `client_id` and `post_logout_redirect_uri=<origin>/`, ending the SSO session. `{ global: false }` is a local-only sign-out: the SSO session stays alive, and the next sign-in on this device is a re-authentication of the previous user (`prompt=login`).
 - **Other tabs on `logout`:** become `anonymous { signed-out }`.
 - **Other tabs on `workspace-switched`:** become `expired { serverEnded: false, idle: false }`, so the shell's dialog offers sign-in again.
 - **The channel** (`BroadcastChannel('platform-auth')`) carries only `{ type }`, never a token.
@@ -578,22 +579,26 @@ CSP violations after bootstrap are logged by `installGlobalErrorHandlers` (direc
 | Subpath | Level | Message | When |
 |---|---|---|---|
 | `/http` | warn (essential) | `dropped a forbidden request header` | an identity header was set by the caller (prod; dev throws) |
+| `/http` | warn (essential) | `api call got no response` | a call ended with no HTTP answer: `reason` timeout, or network while online (`method`, `route` template, `request_id`, `mfe`). At most 10 a minute per page; the next one after the window carries `suppressed` |
 | `/mfe` | error | `remote dropped from the manifest` | an invalid manifest entry (`remote`, `reason`) |
 | `/mfe` | error | `remote failed to load` | `loadRemote` failed, not aborted (`reason`) |
+| `/mfe` | warn (essential) | `chunk load failed: reloading` | a chunk of the running build is gone; logged before the one reload per version (`version`, `exception.*`) |
 | `/react` | error | `remote failed to render` | a render error in an `MFEErrorBoundary` |
 | `/react` | warn | `remote showed an error` | an API error reached a boundary |
 | `/react` | error | `uncaught error` · `unhandled promise rejection` | global handlers |
 | `/react` | warn (essential) | `content security policy violation` | `securitypolicyviolation` (`violated_directive`, `blocked_uri` origin, `disposition`) |
-| `/auth` | warn | `sign-in callback ignored: unknown or expired state` | callback without a valid record |
+| `/auth` | warn (essential) | `sign-in callback ignored: unknown or expired state` | callback without a valid record |
 | `/auth` | error | `sign-in callback rejected: iss does not match the realm` | RFC 9207 check failed |
+| `/auth` | error | `sign-in callback rejected: the device clock is off` | the ID token's `iat` is more than 10 minutes from the device clock (`clock_offset_s`); the session is `anonymous` with reason `device-clock` |
 | `/auth` | error | `sign-in callback rejected` | exchange or ID-token check failed |
-| `/auth` | warn | `sign-in failed` | `?error=` on an interactive login |
+| `/auth` | warn (essential) | `sign-in failed` | `?error=` on an interactive login |
 | `/auth` | error | `silent sign-in could not start` | restore redirect could not be prepared |
 | `/auth` | error | `trial ID token has no valid tenant_id: storage stays anonymous` | trial token without `tenant_id` |
-| `/auth` | warn | `token refresh outcome unknown: restoring the session` · `token refresh failed: restoring the session` | ambiguous refresh outcome |
+| `/auth` | warn (essential) | `token refresh outcome unknown: restoring the session` · `token refresh failed: restoring the session` | ambiguous refresh outcome |
 | `/auth` | error | `token refresh answer rejected: restoring the session` · `token refresh failed` | invalid refresh answer; unexpected exception |
-| `/auth` | info | `session ended` | `invalid_grant` (`server_ended`) |
-| `/auth` | warn / error | `workspace resolve failed` · `workspace resolve rejected: realm does not fit the slug` · `workspace not cached: slug and realm do not match` | PUB-1 and cache checks |
+| `/auth` | warn (essential) / info | `session ended` | `invalid_grant`: warn when Keycloak ended a live session (`server_ended: true`), info when the refresh token's lifetime is unknown (`server_ended: false`) |
+| `/auth` | info | `token refresh cancelled by a navigation away` | the refresh request failed after `beforeunload`/`pagehide` |
+| `/auth` | warn (essential) / error | `workspace resolve failed` · `workspace resolve rejected: realm does not fit the slug` · `workspace not cached: slug and realm do not match` | PUB-1 and cache checks |
 | `/auth` | error | `session listener failed` · `beforeRedirect listener failed` | a listener threw |
 
 ### 11.2 Metrics (Tier 1, proposed)
@@ -640,35 +645,35 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 
 | Key | Area | Owner |
 |---|---|---|
-| `@platform/frontend-sdk:session-id` | local | `/core` |
-| `@platform/frontend-sdk:workspaces` | local | `/auth` (workspace cache) |
-| `@platform/frontend-sdk:auth:signed-out` | local | `/auth` |
-| `@platform/frontend-sdk:auth:last-activity` | local | `/auth` |
-| `@platform/frontend-sdk:auth:pending:<state>` | session | `/auth` |
-| `@platform/frontend-sdk:auth:restore-attempt` | session | `/auth` (loop guard) |
-| `@platform/frontend-sdk:chunk-reload` | session | `/mfe` |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:session-id` | local | `/core` |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:workspaces` | local | `/auth` (workspace cache) |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:auth:signed-out` | local | `/auth` |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-activity` | local | `/auth` |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:auth:pending:<state>` | session | `/auth` |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:auth:restore-attempt` | session | `/auth` (loop guard) |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:chunk-reload` | session | `/mfe` |
 | `<namespace>:<appId>:<key>` | both | `/storage` (cleared by `clearAllAppStorage`) |
 
 ---
 
 ## 13. Build Tooling Packages
 
-### 13.1 `@platform/webpack-preset`
+### 13.1 `@bcbp-solutions-fzc-llc/webpack-preset`
 
 | Export | Behaviour |
 |---|---|
-| `platformShared` | `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, `react-dom`, `react-dom/client` (pins from the preset's `package.json`, equal to the SDK's peer ranges), `@opentelemetry/api` `~1.10.0`, `@platform/frontend-sdk` and every subpath except `/testing` under `^<major>.0.0-0`: all `singleton`, `strictVersion` |
+| `platformShared` | `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, `react-dom`, `react-dom/client` (pins from the preset's `package.json`, equal to the SDK's peer ranges), `@opentelemetry/api` `~1.10.0`, `@bcbp-solutions-fzc-llc/frontend-sdk` and every subpath except `/testing` under `^<major>.0.0-0`: all `singleton`, `strictVersion` |
 | `sharedFor('shell' \| 'remote')` | shell: `eager: false`; remote: the SDK with `import: false` and `requiredVersion: ^<the SDK version it was built against>` |
 | `containerName(remote)` | name with `-` → `_`; refuses `shell` and invalid names (the same rule as `loadRemote`) |
 | `platformWebpackConfig({ role, name?, exposes?, mode })` | Module Federation plugin (remote: `var` library named `containerName`, `remoteEntry.js`); shell: `publicPath: '/'` and bundles under `assets/` (index.html is served for every deep link, so its scripts load from the root; `/assets/*` is the immutable behavior), remote: `publicPath: 'auto'` (chunks relative to its `remoteEntry.js`); content hashes in production; `trustedTypes: { policyName: 'platform-webpack' }`; `crossOriginLoading: false`; `environment.globalThis: true`; devtool `hidden-source-map` (production) / `cheap-module-source-map`, never eval |
 
 The SDK subpaths and share range come from `src/generated/sdk.ts`, which `pnpm exports:sync` generates from `subpaths.json`.
 
-### 13.2 `@platform/eslint-plugin`
+### 13.2 `@bcbp-solutions-fzc-llc/eslint-plugin`
 
 | Rule | Reports |
 |---|---|
-| `no-sdk-root-import` | `import` / `export … from` / `import()` / `require()` of `@platform/frontend-sdk` |
+| `no-sdk-root-import` | `import` / `export … from` / `import()` / `require()` of `@bcbp-solutions-fzc-llc/frontend-sdk` |
 | `no-sdk-deep-import` | any SDK specifier that is not a public subpath (or `package.json`) |
 | `no-identity-headers` | a forbidden header in a `headers: {}` object, `new Headers({})`, or `.set` / `.append` (list generated from the contracts) |
 | `no-raw-storage` | global `localStorage` / `sessionStorage` (also via `window`, `globalThis`, `self`) |

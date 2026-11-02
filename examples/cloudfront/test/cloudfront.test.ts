@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 // @ts-expect-error plain JS module
 import { buildCsp, securityHeaders, TRUSTED_TYPES_POLICIES } from '../csp.mjs';
 // @ts-expect-error plain JS module
-import { cleanUri, handler, normalise, originVerified } from '../csp-report/handler.mjs';
+import { cleanUri, handle, handler, normalise, originVerified } from '../csp-report/handler.mjs';
 import { platformWebpackConfig } from '../../../packages/webpack-preset/src/index.ts';
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8');
@@ -27,6 +27,13 @@ describe('CSP and response headers (§C3)', () => {
     expect(security).toContain("'platform-sdk'");
     expect(platformWebpackConfig({ role: 'shell', mode: 'production' }).output?.trustedTypes).toEqual({ policyName: 'platform-webpack' });
     expect(TRUSTED_TYPES_POLICIES).toEqual(['platform-sdk', 'platform-webpack', 'dompurify']);
+  });
+
+  it("allows duplicate policy names: the shell's and every remote's webpack runtime create platform-webpack", () => {
+    // The shell and the remotes share one policy name (the preset); without 'allow-duplicates' the first
+    // remote's runtime cannot create its policy and no remote loads (docs/e2e report, Issue 1).
+    expect(platformWebpackConfig({ role: 'remote', name: 'tenders', mode: 'production' }).output?.trustedTypes).toEqual({ policyName: 'platform-webpack' });
+    expect(buildCsp()).toContain("; trusted-types platform-sdk platform-webpack dompurify 'allow-duplicates';");
   });
 
   it('response-headers-policy.json carries the same values', () => {
@@ -108,6 +115,33 @@ describe('spa-rewrite CloudFront Function', () => {
   });
 });
 
+describe('README deploy steps (Issue 15: Cache-Control comes from the objects, not the cache policy)', () => {
+  const readme = read('../README.md');
+  const block = readme.slice(readme.indexOf('IMMUTABLE='), readme.indexOf('```', readme.indexOf('IMMUTABLE=')));
+  const uploads = block.split('\n').filter((l) => l.startsWith('aws s3 cp'));
+
+  it.each([
+    ['remotes/$NAME/$VERSION/', '$IMMUTABLE'],
+    ['remotes/manifest.json', '$NO_CACHE'],
+    ['assets/', '$IMMUTABLE'],
+    ['config/runtime.json', '$NO_CACHE'],
+    ['index.html', '$NO_CACHE'],
+    ['version.json', '$NO_CACHE'],
+  ])('%s is uploaded with --cache-control "%s"', (key, value) => {
+    const line = uploads.find((l) => l.includes(`s3://$BUCKET/${key}"`));
+    expect(line, key).toBeDefined();
+    expect(line).toContain(`--cache-control "${value}"`);
+  });
+
+  it('the values and the order: immutable hashed files, version.json last, no source maps', () => {
+    expect(block).toContain("IMMUTABLE='public, max-age=31536000, immutable'");
+    expect(block).toContain("NO_CACHE='no-cache'");
+    expect(uploads.at(-1)).toContain('version.json');
+    expect(uploads.findIndex((l) => l.includes('index.html'))).toBeGreaterThan(uploads.findIndex((l) => l.includes('/assets/')));
+    for (const l of uploads.filter((x) => x.includes('--recursive'))) expect(l).toContain("--exclude '*.map'");
+  });
+});
+
 describe('/csp-report Lambda', () => {
   const SECRET = 'current-0123456789abcdef';
   const post = (body: unknown, type = 'application/reports+json', verify: string | null = SECRET) => ({
@@ -124,6 +158,25 @@ describe('/csp-report Lambda', () => {
   };
   const report = { 'csp-report': { 'blocked-uri': 'inline', 'violated-directive': 'script-src' } };
 
+  it('the Lambda entry point works as the runtime calls it, handler(event, context) (Issue 11)', async () => {
+    // A Lambda context: the runtime's second argument. It once landed in `deps`, and deps.env was
+    // undefined, so every invocation threw.
+    const context = { awsRequestId: 'req-1', functionName: 'csp-report', getRemainingTimeInMillis: () => 3_000 };
+    const fetch = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal('fetch', fetch);
+    for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
+    try {
+      const res = await (handler as (e: unknown, c: unknown) => Promise<{ statusCode: number }>)(post(report, 'application/csp-report'), context);
+      expect(res.statusCode).toBe(204);
+      expect(fetch).toHaveBeenCalledWith(env.COLLECTOR_LOGS_URL, expect.objectContaining({ method: 'POST' }));
+      vi.stubEnv('ORIGIN_VERIFY_SECRET', 'other');
+      expect((await (handler as (e: unknown, c: unknown) => Promise<{ statusCode: number }>)(post(report, 'application/csp-report'), context)).statusCode).toBe(403);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+  });
+
   describe('origin verification (CloudFront custom origin header, not OAC)', () => {
     it.each([
       ['missing', null],
@@ -133,14 +186,14 @@ describe('/csp-report Lambda', () => {
       ['the whole comma-separated list', env.ORIGIN_VERIFY_SECRET],
     ])('a %s x-origin-verify header is a 403 with no body, and nothing is forwarded', async (_, verify) => {
       const fetch = vi.fn(async () => new Response(null, { status: 200 }));
-      const res = await handler(post(report, 'application/csp-report', verify), { fetch, env });
+      const res = await handle(post(report, 'application/csp-report', verify), { fetch, env });
       expect(res).toEqual({ statusCode: 403, headers: { 'cache-control': 'no-store' }, body: '' });
       expect(fetch).not.toHaveBeenCalled();
     });
 
     it('rejects before method and content-type checks', async () => {
       const event = { ...post('x', 'text/plain', 'nope'), requestContext: { http: { method: 'GET' } } };
-      expect((await handler(event, { fetch: vi.fn(), env })).statusCode).toBe(403);
+      expect((await handle(event, { fetch: vi.fn(), env })).statusCode).toBe(403);
     });
 
     it.each([
@@ -149,9 +202,9 @@ describe('/csp-report Lambda', () => {
       ['only separators', ' , '],
     ])('fails closed when ORIGIN_VERIFY_SECRET is %s', async (_, secret) => {
       const fetch = vi.fn(async () => new Response(null, { status: 200 }));
-      const res = await handler(post(report, 'application/csp-report', ''), { fetch, env: { ...env, ORIGIN_VERIFY_SECRET: secret } });
+      const res = await handle(post(report, 'application/csp-report', ''), { fetch, env: { ...env, ORIGIN_VERIFY_SECRET: secret } });
       expect(res.statusCode).toBe(403);
-      const res2 = await handler(post(report, 'application/csp-report', SECRET), { fetch, env: { ...env, ORIGIN_VERIFY_SECRET: secret } });
+      const res2 = await handle(post(report, 'application/csp-report', SECRET), { fetch, env: { ...env, ORIGIN_VERIFY_SECRET: secret } });
       expect(res2.statusCode).toBe(403);
       expect(fetch).not.toHaveBeenCalled();
     });
@@ -161,7 +214,7 @@ describe('/csp-report Lambda', () => {
       ['previous (rotation)', 'previous-fedcba9876543210'],
     ])('the %s secret is processed', async (_, verify) => {
       const fetch = vi.fn(async () => new Response(null, { status: 200 }));
-      expect((await handler(post(report, 'application/csp-report', verify), { fetch, env })).statusCode).toBe(204);
+      expect((await handle(post(report, 'application/csp-report', verify), { fetch, env })).statusCode).toBe(204);
       expect(fetch).toHaveBeenCalledOnce();
     });
 
@@ -176,9 +229,9 @@ describe('/csp-report Lambda', () => {
 
   it('accepts application/csp-report (report-uri) and application/reports+json (report-to)', async () => {
     const fetch = vi.fn(async () => new Response(null, { status: 200 }));
-    expect((await handler(post(report, 'application/csp-report'), { fetch, env })).statusCode).toBe(204);
+    expect((await handle(post(report, 'application/csp-report'), { fetch, env })).statusCode).toBe(204);
     const api = [{ type: 'csp-violation', body: { blockedURL: 'inline', effectiveDirective: 'script-src-elem' } }];
-    expect((await handler(post(api, 'application/reports+json; charset=utf-8'), { fetch, env })).statusCode).toBe(204);
+    expect((await handle(post(api, 'application/reports+json; charset=utf-8'), { fetch, env })).statusCode).toBe(204);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -200,7 +253,7 @@ describe('/csp-report Lambda', () => {
 
   it('forwards violations to the collector as OTLP logs, redacted', async () => {
     const fetch = vi.fn(async () => new Response(null, { status: 200 }));
-    const res = await handler(
+    const res = await handle(
       post([
         { type: 'csp-violation', body: { documentURL: 'https://app.example/t/acme/?session=s3cr3t', blockedURL: 'https://evil.example/x.js?token=abc', effectiveDirective: 'script-src-elem', sourceFile: 'https://app.example/main.js', lineNumber: 12 } },
         { type: 'network-error', body: {} },
@@ -226,13 +279,13 @@ describe('/csp-report Lambda', () => {
     [post('{not json'), 400],
     [post([{ type: 'deprecation', body: {} }]), 204],
   ])('answers %#: %s', async (event, status) => {
-    expect((await handler(event, { fetch: vi.fn(), env })).statusCode).toBe(status);
+    expect((await handle(event, { fetch: vi.fn(), env })).statusCode).toBe(status);
   });
 
   it('a collector failure is a 502; no collector configured is a 503', async () => {
     const event = post(report, 'application/csp-report');
-    expect((await handler(event, { fetch: vi.fn(async () => new Response(null, { status: 500 })), env })).statusCode).toBe(502);
-    expect((await handler(event, { fetch: vi.fn(async () => Promise.reject(new Error('down'))), env })).statusCode).toBe(502);
-    expect((await handler(event, { fetch: vi.fn(), env: { ORIGIN_VERIFY_SECRET: SECRET } })).statusCode).toBe(503);
+    expect((await handle(event, { fetch: vi.fn(async () => new Response(null, { status: 500 })), env })).statusCode).toBe(502);
+    expect((await handle(event, { fetch: vi.fn(async () => Promise.reject(new Error('down'))), env })).statusCode).toBe(502);
+    expect((await handle(event, { fetch: vi.fn(), env: { ORIGIN_VERIFY_SECRET: SECRET } })).statusCode).toBe(503);
   });
 });

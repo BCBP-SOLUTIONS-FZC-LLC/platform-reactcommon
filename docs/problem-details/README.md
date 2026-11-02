@@ -51,8 +51,8 @@ A body that isn't `application/problem+json`, or is larger than 1 MiB, isn't par
 Match by **type id**, never by `title`, `detail` or the full URI (the type base may differ between environments):
 
 ```ts
-import { isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@platform/frontend-sdk/problem';
-import { problemMessage } from '@platform/frontend-sdk/i18n';
+import { isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@bcbp-solutions-fzc-llc/frontend-sdk/problem';
+import { problemMessage } from '@bcbp-solutions-fzc-llc/frontend-sdk/i18n';
 
 try {
   await api.put('/tenders/:id', { params: { id }, body });

@@ -2,6 +2,8 @@
 // and which domain team owns each. Validated per remote, so one bad entry never takes the others down.
 import { tryGetConfig } from '../config/index.ts';
 import { getLogger } from '../logging/index.ts';
+import { getIdentity } from '../core/index.ts';
+import { isLocalEnvironment } from '../internal/environments.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { REGISTRY_VOCAB } from '../internal/generated/registry-vocab.ts';
 
@@ -11,7 +13,10 @@ export interface RemoteManifestEntry {
   readonly version: string;
   /** The registry domain whose team owns the remote (alert routing, Tier 2/3 metrics). */
   readonly ownerDomain: string;
-  /** Subresource Integrity for the entry script, e.g. 'sha384-…'. */
+  /**
+   * Subresource Integrity for the entry script, e.g. 'sha384-…': the root of the remote's chain of
+   * trust (the entry pins its chunks). Required outside local, dev and test.
+   */
   readonly integrity?: string;
 }
 
@@ -48,7 +53,10 @@ function problemWith(name: string, e: unknown): string | undefined {
   if (typeof entry !== 'string' || !isAllowedEntry(entry)) return `entry ${JSON.stringify(entry)} is not same-origin or an allowed remote origin`;
   if (typeof version !== 'string' || !VERSION.test(version)) return `version ${JSON.stringify(version)} is invalid`;
   if (typeof ownerDomain !== 'string' || !DOMAINS.includes(ownerDomain)) return `ownerDomain ${JSON.stringify(ownerDomain)} is not a registry domain`;
-  if (integrity !== undefined && (typeof integrity !== 'string' || !INTEGRITY.test(integrity))) return 'integrity is not an SRI hash';
+  if (integrity === undefined) {
+    // Without it nothing the remote loads is pinned; only a developer's or CI's own build may go without.
+    if (!isLocalEnvironment(getIdentity()?.environment)) return 'integrity is required outside local, dev and test';
+  } else if (typeof integrity !== 'string' || !INTEGRITY.test(integrity)) return 'integrity is not an SRI hash';
   return undefined;
 }
 

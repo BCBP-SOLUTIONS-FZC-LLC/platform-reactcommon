@@ -1,6 +1,6 @@
 // The tenders remote: exposes ./EditTender; the SDK always comes from the shell (import: false).
 import { fileURLToPath } from 'node:url';
-import { platformWebpackConfig } from '@platform/webpack-preset';
+import { platformWebpackConfig } from '@bcbp-solutions-fzc-llc/webpack-preset';
 
 export default function config(mode = 'production') {
   const preset = platformWebpackConfig({ role: 'remote', name: 'tenders', exposes: { './EditTender': './src/EditTender.tsx' }, mode });

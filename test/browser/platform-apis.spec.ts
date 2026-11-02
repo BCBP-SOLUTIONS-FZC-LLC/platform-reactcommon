@@ -2,7 +2,6 @@
 // enforced where the engine implements it, under the production CSP's require-trusted-types-for),
 // BroadcastChannel and the storage event across tabs, and WebCrypto in a secure context.
 import { expect, test } from './fixtures.ts';
-import { SANITIZE_REPORTS } from './known-bugs.ts';
 
 /** Markup sanitizeHtml keeps or rewrites without anything the CSP would object to while parsing. */
 const BENIGN =
@@ -25,19 +24,15 @@ test('sanitizeHtml returns TrustedHTML where Trusted Types exist, a string elsew
   // The guard then asserts there was no CSP (Trusted Types) violation.
 });
 
-test.describe(() => {
-  // Chromium's reports for this test reach /csp-report: its run is left out of the end-of-run check
-  // (expectViolations), and the violations are asserted here instead.
-  test.use({ expectViolations: true, allowedErrors: /Content Security Policy/ });
-
-  test('sanitizeHtml of input with inline handlers and styles reports no CSP violation', async ({ openHarness, browserName }) => {
-    test.fail(browserName === 'chromium', SANITIZE_REPORTS);
-    const page = await openHarness();
-    const r = await page.evaluate((d) => window.harness.sanitize(d), HOSTILE);
-    expect(r.html).toBe('<p>Hello <span>styled</span></p>');
-    await new Promise((resolve) => setTimeout(resolve, 300)); // violation events are dispatched in a later task
-    expect(await page.evaluate(() => (window as unknown as { __violations: unknown[] }).__violations)).toEqual([]);
-  });
+// Chromium applies the page CSP while DOMPurify parses hostile input, and once reported (and POSTed to
+// /csp-report) every handler and style attribute in it; sanitizeHtml's pre-pass removes them first
+// (security/markup.ts). The guard also fails the test on any violation or report.
+test('sanitizeHtml of input with inline handlers and styles reports no CSP violation', async ({ openHarness }) => {
+  const page = await openHarness();
+  const r = await page.evaluate((d) => window.harness.sanitize(d), HOSTILE);
+  expect(r.html).toBe('<p>Hello <span>styled</span></p>');
+  await new Promise((resolve) => setTimeout(resolve, 300)); // violation events are dispatched in a later task
+  expect(await page.evaluate(() => (window as unknown as { __violations: unknown[] }).__violations)).toEqual([]);
 });
 
 test('BroadcastChannel platform-auth reaches another tab of the same context', async ({ openHarness, context }) => {
@@ -56,7 +51,9 @@ test('per-workspace storage written in one tab is read, and announced, in anothe
   const a = await openHarness();
   const b = await openHarness({ page: await context.newPage() });
   await a.evaluate(() => window.harness.storageSet('tenant-acme', 'filters', { status: 'open' }));
-  expect(await b.evaluate(() => window.harness.storageGet('tenant-acme', 'filters'))).toEqual({ status: 'open' });
+  // Another page of the origin sees the write once the engine has propagated it: at once in Chromium and
+  // Firefox, a moment later in WebKit (CI's 2-core runners showed it), so the read polls.
+  await expect.poll(() => b.evaluate(() => window.harness.storageGet('tenant-acme', 'filters'))).toEqual({ status: 'open' });
   // Another workspace's namespace sees nothing.
   expect(await b.evaluate(() => window.harness.storageGet('tenant-other', 'filters'))).toBeUndefined();
   test.skip(

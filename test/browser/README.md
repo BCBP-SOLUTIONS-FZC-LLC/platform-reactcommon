@@ -7,10 +7,12 @@ where earlier bugs came from:
 
 | Spec | What it checks |
 |---|---|
-| `keepalive.spec.ts` | The 64 KiB keepalive budget on tab close: the newest spans that fit go in one keepalive request; queued logs go by beacon. A tab switch delivers every queued span and log with no export failure. |
+| `keepalive.spec.ts` | The 64 KiB keepalive budget on tab close: logs by beacon first, the newest spans that fit in one keepalive request, and the metrics interval by beacon in the share they leave it, all within the budget. A close as browsers do it (hidden, then `pagehide`) delivers all three in every engine. A tab switch delivers every queued span and log with no export failure, and the metrics interval once. |
 | `events.spec.ts` | The order of `beforeunload`, `pagehide` and `visibilitychange` on close and on navigation in each engine. The SDK delivers in either order, and with `pagehide` alone. |
 | `http.spec.ts` | `/http` deadlines and aborts (before the response and while reading the body), with and without `AbortSignal.any` (Safari < 17.4), under GC pressure. Also checks that a long-lived caller signal does not keep growing its listener list. |
 | `platform-apis.spec.ts` | Trusted Types (`sanitizeHtml` returns TrustedHTML where the engine has it), `BroadcastChannel` and `storage` events across tabs, `crypto.subtle` SHA-256. |
+| `integrity.spec.ts` | The real tenders remote (built in production by global setup), loaded as the shell does under the production CSP: every chunk its webpack runtime injects carries its sha384, and a chunk altered in transit is refused, its code never run. |
+| `navigation.spec.ts` | A leaving page sees its in-flight request rejected, always after `beforeunload` (the signal `/auth` uses not to restore while navigating away). |
 | `csp.spec.ts` | Booting core, config, tracing, logging, metrics, http and security under the production CSP causes no violation and no `eval`/`new Function`. Two controls show that each engine's violation detectors work. |
 
 Every test also fails on any CSP violation, page error or console error in its pages (the `guard`
@@ -73,34 +75,41 @@ No engine fires `visibilitychange(hidden)` before `pagehide`. This contradicts a
 `flushOnHidden` finds the queue empty. No engine reported `freeze`, and `pagehide.persisted` was
 always `false` (no back/forward cache).
 
-## Known SDK bugs
+## SDK bugs this suite found (all fixed)
 
-Each bug has a failing test kept as `test.fail`, with the note from `known-bugs.ts`. When a bug is
-fixed, its test reports "expected to fail" but passes. Remove the `test.fail` line and the note.
+Each was kept as a failing test (`test.fail`) until its fix landed; those tests now assert the fixed behaviour.
 
-1. **Shared keepalive budget** (`SHARED_BUDGET`; Chromium, WebKit). The span keepalive request
-   (≤ 60 KiB) and the log beacons (≤ 60 KiB) are budgeted separately. The browser's 64 KiB budget is
-   per page and shared by both. On close, Chromium and WebKit refuse the log beacon, and the logs go
-   by plain fetch, which a closing tab cancels. On a tab switch, WebKit logs "Reached maximum amount
-   of queued data of 64Kb", then retries the span request.
-2. **Unload request started after an await** (`UNLOAD_LOSS`; seen in Firefox, rarely in Chromium).
-   The OTLP fetch transport awaits `headers()` before it calls `fetch()`, so the span request on
-   `pagehide` starts a microtask after the listener. A closing tab is sometimes torn down first, and
-   no span request is sent: about 1 close in 5 in Firefox. The close tests skip with this note when
-   that happens. "unload: the SDK starts its span and log requests within the pagehide listener"
-   pins the cause in every engine.
-3. **sanitizeHtml makes Chromium report violations** (`SANITIZE_REPORTS`; Chromium). DOMPurify
-   parses the input with `DOMParser`. In Chromium the parsed document inherits the page's CSP, so
-   each inline handler or `style` attribute in the input is reported to `/csp-report`, even though
-   the output is clean.
-4. **AbortSignal.any in WebKit** (`WEBKIT_ABORT_ANY`; WebKit ≥ 17.4). When the page collects
-   garbage, the native `AbortSignal.any` loses the abort. The caller's abort never reaches `fetch`,
-   and neither does the client deadline when the caller passes a signal: the call hangs or
-   completes. The SDK's own fallback for engines without `AbortSignal.any` is not affected.
+1. **Shared keepalive budget** (Chromium, WebKit). The span keepalive request and the log beacons were
+   budgeted separately (≤ 60 KiB each), but the browser's 64 KiB is per page and shared, so on close
+   the second was refused. **Fix:** one `pagehide` listener per page hands out one budget
+   (`src/internal/unload.ts`): logs first, since errors and essential warnings are what operations see
+   without consent, then the newest spans that fit what is left. `keepalive.spec.ts` "spans and logs"
+   asserts every log goes by beacon and both requests fit together.
+2. **Unload request started after an await.** The OTLP exporter awaits `headers()` before `fetch()`,
+   so the span request started a microtask after the `pagehide` listener. **Fix:** on unload the SDK
+   serialises the spans and starts the request itself, inside the listener (`sendBeacon`, else
+   `fetch` keepalive). "unload: the SDK starts its span and log requests within the pagehide
+   listener" pins it in every engine.
+3. **sanitizeHtml made Chromium report violations.** Chromium applies the page CSP while DOMPurify
+   parses hostile input; every way of creating the detached document inherits it, so each handler or
+   `style` attribute in the input was reported to `/csp-report`. **Fix:** a pre-pass removes those
+   attributes and `<style>` elements before parsing (`security/markup.ts`). DOMPurify would remove
+   them anyway and remains the security boundary.
+4. **AbortSignal.any in WebKit.** The native `AbortSignal.any` lost the abort under GC. **Fix:** the
+   SDK always combines the signals by hand, and releases its listeners when the call ends.
 
 ## Skips
 
 - The `storage` event part of the cross-tab test, in WebKit. Playwright's WebKit dispatches no
   `storage` event between pages of one context, even for a plain `localStorage.setItem` (Safari
   does). The value itself is checked in all three engines.
-- Close tests, at run time, when no span request came at all (bug 2).
+- Close tests, at run time, when nothing arrived at all (`CLOSE_LOSS` in `engine-notes.ts`). A
+  closing tab sometimes never sends what its `pagehide` listener started, with either transport:
+  about 1 close in 3 in Playwright's Firefox and 1 in 30 elsewhere (measured over 30 closes each).
+  The SDK starts the requests synchronously; the "starts … within the pagehide listener" test is
+  not skipped.
+- The metrics part of the close test that fires `pagehide` alone (`METRICS_AFTER_PAGEHIDE` in
+  `engine-notes.ts`). Metrics are collected asynchronously, so with no hidden phase first their
+  beacon starts after the listener returns, and a closing Chromium tab that also sent large log and
+  span beacons usually drops it (1 delivery in 15). Real browsers hide a tab before closing it; the
+  "close as browsers do it" test covers that path in every engine without a skip.

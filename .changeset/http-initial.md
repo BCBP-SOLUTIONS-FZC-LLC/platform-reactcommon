@@ -1,8 +1,8 @@
 ---
-'@platform/frontend-sdk': minor
+'@bcbp-solutions-fzc-llc/frontend-sdk': minor
 ---
 
-Add `@platform/frontend-sdk/http`: `createApiClient` with the fixed request pipeline (offline
+Add `@bcbp-solutions-fzc-llc/frontend-sdk/http`: `createApiClient` with the fixed request pipeline (offline
 check, encoded route params, forbidden identity headers refused, request id, trace context,
 session id and token on the page origin only, idempotency key on POST, client deadline), the
 401 path through the token source's single refresh, retries with backoff and Retry-After for

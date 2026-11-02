@@ -1,9 +1,9 @@
 // The /auth ports, implemented over the SDK's ApiClient (design doc §C1 /auth): PUB-1 (resolve a slug or
 // a pending-invite email to a realm) and IAM P-35 (the session context). The mappings are the ones
 // packages/frontend-sdk/contracts/tenant-resolve-cases.json and session-context-cases.json pin.
-import type { SessionContext, SessionContextSource, Workspace, WorkspaceResolver } from '@platform/frontend-sdk/auth';
-import { tryGetConfig } from '@platform/frontend-sdk/config';
-import { createApiClient } from '@platform/frontend-sdk/http';
+import type { SessionContext, SessionContextSource, Workspace, WorkspaceResolver } from '@bcbp-solutions-fzc-llc/frontend-sdk/auth';
+import { tryGetConfig } from '@bcbp-solutions-fzc-llc/frontend-sdk/config';
+import { createApiClient } from '@bcbp-solutions-fzc-llc/frontend-sdk/http';
 
 interface ResolveResponse {
   found?: boolean;

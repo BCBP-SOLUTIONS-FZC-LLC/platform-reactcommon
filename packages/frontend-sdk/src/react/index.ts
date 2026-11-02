@@ -21,6 +21,7 @@ export {
   useSession,
   useSessionContext,
   useStepUp,
+  useSignOut,
   useSwitchWorkspace,
   useT,
   useWorkspace,

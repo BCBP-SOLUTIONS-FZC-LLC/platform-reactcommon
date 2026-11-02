@@ -1,5 +1,5 @@
 ---
-'@platform/frontend-sdk': patch
+'@bcbp-solutions-fzc-llc/frontend-sdk': patch
 ---
 
 `/config`: `http://localhost` origins are also accepted when the page environment is `test` (CI and

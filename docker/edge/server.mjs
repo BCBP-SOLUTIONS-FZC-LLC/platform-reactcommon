@@ -109,7 +109,6 @@ function forward(req, res, target, o) {
       const out = {};
       for (const [k, v] of Object.entries(r.headers)) if (!HOP.has(k)) out[k] = v;
       Object.assign(out, o.responseHeaders ?? {});
-      if (o.rewriteCsp && typeof out['content-security-policy'] === 'string') out['content-security-policy'] = o.rewriteCsp(out['content-security-policy']);
       res.writeHead(r.statusCode ?? 502, out);
       r.pipe(res);
       log({ ...o.log, method: req.method, url: req.url, status: r.statusCode, upstream: `${target.hostname}:${target.port}${o.path}`, ms: Date.now() - started, reqId: req.headers['x-request-id'] });
@@ -151,12 +150,8 @@ function app(req, res) {
     if ((b.FunctionAssociations?.Items ?? []).some((f) => f.EventType === 'viewer-request')) {
       uri = d.viewerRequest({ request: { uri, method: req.method, headers: {}, querystring: {} } }).uri;
     }
-    // Test hook (never in CloudFront): the e2e suite's "suggested fix" runs set this cookie to try a CSP change
-    // without redeploying the response headers policy (report Issue 1).
-    const ttFix = /(?:^|;\s*)e2e-csp-fix=tt-allow-duplicates(?:;|$)/.test(String(req.headers.cookie ?? ''));
     forward(req, res, FLOCI, {
       path: `${uri}${url.search}`,
-      ...(ttFix ? { rewriteCsp: (v) => v.replace(/trusted-types ([^;]+)/, "trusted-types $1 'allow-duplicates'") } : {}),
       headers: { host: d.domain, 'x-forwarded-for': appendXff(req.headers, clientIp(req)) },
       log: { behavior: name, origin: 'floci-cloudfront', rewrittenUri: uri !== url.pathname ? uri : undefined },
     });

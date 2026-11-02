@@ -23,6 +23,8 @@
     "verify": "pnpm exports:check && pnpm docs:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm examples:check && pnpm api:check && pnpm depcruise",
     "api:check": "pnpm -r api:check",
     "metrics:parity": "tsx scripts/metrics-parity.ts",
+    "metrics:proposal": "tsx scripts/metrics-proposal.ts",
+    "publish:check": "tsx scripts/check-publish.ts",
     "examples:check": "tsx scripts/check-examples.ts",
     "docs:sync": "tsx scripts/sync-docs.ts",
     "docs:check": "tsx scripts/sync-docs.ts --check",
@@ -41,10 +43,14 @@
     "test-examples": "vitest run examples",
     "test-smoke": "vitest run --config vitest.smoke.config.ts",
     "test-browser": "playwright test",
+    "test-react-floor": "bash .github/scripts/react-floor.sh",
     "test-browser-install": "playwright install chromium firefox webkit",
     "stack-up": "bash test/stack/scripts/stack-up.sh",
     "stack-down": "bash test/stack/scripts/stack-down.sh",
     "test-stack": "playwright test -c test/stack/playwright.config.ts",
+    "test-collector": "vitest run -c test/collector/vitest.config.ts",
+    "rules-check": "bash .github/scripts/rules-check.sh",
+    "dashboards-check": "bash .github/scripts/dashboard-promql.sh",
     "test-smoke-package": "pnpm build && bash .github/scripts/pack-packages.sh && bash .github/scripts/smoke-tests.sh",
     "cover": "vitest run --coverage && echo 'Coverage report: coverage/index.html'",
     "cover-func": "vitest run --coverage --coverage.reporter=text",
@@ -83,6 +89,7 @@
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.72.1",
     "vitest": "^5.0.5",
-    "webpack": "5.112.0"
+    "webpack": "5.112.0",
+    "yaml": "^2.9.1"
   }
 }

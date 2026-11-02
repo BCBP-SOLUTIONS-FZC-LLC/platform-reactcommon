@@ -1,5 +1,5 @@
 ---
-'@platform/eslint-plugin': minor
+'@bcbp-solutions-fzc-llc/eslint-plugin': minor
 ---
 
 First release: `no-sdk-root-import`, `no-sdk-deep-import`, `no-identity-headers` (the SDK's forbidden

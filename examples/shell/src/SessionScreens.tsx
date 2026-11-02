@@ -1,6 +1,6 @@
 // The shell's session screens (design doc §C1 /auth, §C2 step 7). None of them signs in on its own:
 // every login starts from the user's click.
-import type { IdentityProvider, SessionState } from '@platform/frontend-sdk/auth';
+import type { IdentityProvider, SessionState } from '@bcbp-solutions-fzc-llc/frontend-sdk/auth';
 import { askForWorkspace } from './IdentifierFirst';
 import { hideScreen, showScreen } from './screen';
 
@@ -11,6 +11,22 @@ export function showSignedOut(signIn: () => Promise<void>): void {
       <h1 id="signed-out-title">You are signed out</h1>
       <button type="button" onClick={() => void signIn()}>
         Sign in
+      </button>
+    </div>,
+  );
+}
+
+/**
+ * The sign-in was refused because the device clock is far off (reason 'device-clock'): another
+ * attempt would fail the same way until the user sets it. No automatic retry.
+ */
+export function showDeviceClock(signIn: () => Promise<void>): void {
+  showScreen(
+    <div role="alertdialog" aria-labelledby="clock-title">
+      <h1 id="clock-title">Check your device's clock</h1>
+      <p>We couldn't sign you in because this device's date or time is wrong. Set it to update automatically, then try again.</p>
+      <button type="button" onClick={() => void signIn()}>
+        Try again
       </button>
     </div>,
   );

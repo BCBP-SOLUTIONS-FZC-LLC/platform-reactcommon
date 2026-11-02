@@ -4,14 +4,14 @@ This document describes the internal structure, dependency rules, and runtime fl
 
 `platform-reactcommon` is a **private pnpm monorepo** of three packages, released together under one version (changesets `fixed`, `1.0.0-alpha.N` until the first environment):
 
-- **`@platform/frontend-sdk`**: the shared TypeScript SDK every React micro-frontend (shell and remotes) uses. Its 17 subpaths are `/core` … `/react`, `/testing`, and there is no root barrel. It is **contract-compatible with platform-gincommon and platform-fastapicommon**:
+- **`@bcbp-solutions-fzc-llc/frontend-sdk`**: the shared TypeScript SDK every React micro-frontend (shell and remotes) uses. Its 17 subpaths are `/core` … `/react`, `/testing`, and there is no root barrel. It is **contract-compatible with platform-gincommon and platform-fastapicommon**:
   - the same identity vocabulary and metric registry (Enterprise Platform Observability Standard);
   - RFC 9457 Problem Details;
   - the header names, the redaction rules, and the Go trace sampler.
 
   It is the browser's side of IAM: Keycloak sign-in (Authorization Code + PKCE, tokens in memory only), workspace (realm) choice, session restore, idle timeout, step-up.
-- **`@platform/webpack-preset`**: the Module Federation shared map (strict singletons, the SDK provided only by the shell) and CSP-safe output (Trusted Types, no `eval`, hidden source maps).
-- **`@platform/eslint-plugin`**: seven rules that enforce in consumer code what the design requires:
+- **`@bcbp-solutions-fzc-llc/webpack-preset`**: the Module Federation shared map (strict singletons, the SDK provided only by the shell) and CSP-safe output (Trusted Types, no `eval`, hidden source maps).
+- **`@bcbp-solutions-fzc-llc/eslint-plugin`**: seven rules that enforce in consumer code what the design requires:
   - SDK subpaths only;
   - no identity headers;
   - storage and HTML only through the SDK;
@@ -45,11 +45,11 @@ graph TD
     end
 
     subgraph tooling["Build-time packages"]
-        preset["@platform/webpack-preset<br/>platformShared · sharedFor · containerName<br/>platformWebpackConfig (Trusted Types, no eval, hidden maps)"]
-        eslint["@platform/eslint-plugin<br/>7 rules + configs.recommended"]
+        preset["@bcbp-solutions-fzc-llc/webpack-preset<br/>platformShared · sharedFor · containerName<br/>platformWebpackConfig (Trusted Types, no eval, hidden maps)"]
+        eslint["@bcbp-solutions-fzc-llc/eslint-plugin<br/>7 rules + configs.recommended"]
     end
 
-    subgraph sdk["@platform/frontend-sdk  —  17 subpaths, no root barrel ('.' throws)"]
+    subgraph sdk["@bcbp-solutions-fzc-llc/frontend-sdk  —  17 subpaths, no root barrel ('.' throws)"]
         L5["L5  /react (hooks, boundaries, PlatformProvider)  ·  /testing (dev only)"]
         L4["L4  /auth (Keycloak OIDC, PKCE)  ·  /mfe (manifest, loadRemote, app updates)  ·  /nav"]
         L3["L3  /http (ApiClient)  ·  /flags  ·  /i18n"]
@@ -197,7 +197,7 @@ graph BT
 
 ## Runtime registry
 
-The `PlatformRuntime` lives on `globalThis[Symbol.for('@platform/frontend-sdk')]`, so every copy of the SDK on a page finds the same object. That's how a remote sees the shell's identity, consent, session, flags, permissions and token source, even though the remote never imports the shell. Change notification goes through the runtime too. `/i18n`, `/flags`, `/authz` and `/http` emit the topics `i18n`, `flags`, `authz` and `read-only`, and `/react` re-renders on them.
+The `PlatformRuntime` lives on `globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]`, so every copy of the SDK on a page finds the same object. That's how a remote sees the shell's identity, consent, session, flags, permissions and token source, even though the remote never imports the shell. Change notification goes through the runtime too. `/i18n`, `/flags`, `/authz` and `/http` emit the topics `i18n`, `flags`, `authz` and `read-only`, and `/react` re-renders on them.
 
 A second copy is a remote that bundled the SDK instead of taking it from the shell. It logs one error. If the major version matches, it binds to the existing runtime; otherwise it keeps its own.
 
@@ -205,7 +205,7 @@ A second copy is a remote that bundled the SDK instead of taking it from the she
 
 ```mermaid
 graph LR
-    subgraph rt["PlatformRuntime  —  globalThis[Symbol.for('@platform/frontend-sdk')]"]
+    subgraph rt["PlatformRuntime  —  globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]"]
         ident["identity · consent · memorySessionId"]
         cfg["config (deep-frozen runtime.json)"]
         tel["tracing · logging · metrics · instruments (port)"]
@@ -388,7 +388,7 @@ stateDiagram-v2
 
     state authenticated {
         [*] --> idle_timer
-        idle_timer --> refreshing: timer at exp − 60 s ± 10 s · getAccessToken near expiry · 401
+        idle_timer --> refreshing: timer at exp − min(60 s, life/3) ± jitter · getAccessToken near expiry · 401
         refreshing --> idle_timer: 200 → rotate tokens (never reuse a replaced refresh token)
         refreshing --> waiting_online: offline before sending → keep the token
         waiting_online --> refreshing: online event
@@ -419,7 +419,7 @@ stateDiagram-v2
 
 ## Remote loading
 
-The shell loads `/remotes/manifest.json` once. Routes render `<RemoteBoundary remote module>`, which lazily calls `loadRemote` inside `Suspense` and an `MFEErrorBoundary`. Container globals follow one rule shared by `loadRemote` and `@platform/webpack-preset`'s `containerName`: the remote's name, with `-` replaced by `_`.
+The shell loads `/remotes/manifest.json` once. Routes render `<RemoteBoundary remote module>`, which lazily calls `loadRemote` inside `Suspense` and an `MFEErrorBoundary`. Container globals follow one rule shared by `loadRemote` and `@bcbp-solutions-fzc-llc/webpack-preset`'s `containerName`: the remote's name, with `-` replaced by `_`.
 
 > Source: [`docs/architecture/mermaid/remote-loading.mmd`](docs/architecture/mermaid/remote-loading.mmd)
 
@@ -660,7 +660,7 @@ The browser is single-threaded; concurrency here means overlapping promises and 
 | Invariant | Where enforced |
 |---|---|
 | Tokens are never in storage, a global, a log or the channel | `/auth` closure; `/storage` refuses token-like keys; redaction of JWT/Bearer patterns; auth tests scan storage |
-| The browser never sends identity headers | `/http` drops `FORBIDDEN_REQUEST_HEADERS` (generated from gincommon + AuthZ Enrichment); `@platform/eslint-plugin` `no-identity-headers`; interop pair 4 |
+| The browser never sends identity headers | `/http` drops `FORBIDDEN_REQUEST_HEADERS` (generated from gincommon + AuthZ Enrichment); `@bcbp-solutions-fzc-llc/eslint-plugin` `no-identity-headers`; interop pair 4 |
 | The access token goes to the page's own origin only | `/http` `isSameOrigin` check before `Authorization` |
 | A replaced refresh token is never sent | single-flight `refresh()`; ambiguous failures drop the lineage instead of retrying |
 | Metric `route` labels are templates, never raw URLs | `ApiClient` takes templates; `api-route-template` lint rule |
@@ -700,7 +700,7 @@ During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `
 
 A shell or remote conforms when:
 
-- It imports SDK subpaths only (`@platform/eslint-plugin` `configs.recommended` passes).
+- It imports SDK subpaths only (`@bcbp-solutions-fzc-llc/eslint-plugin` `configs.recommended` passes).
 - It builds with `platformWebpackConfig({ role, name, exposes })` and adds no other shared config for React, OTel or the SDK.
 - **Shell:**
   - it runs the bootstrap in order, implements `WorkspaceResolver` and `SessionContextSource` as ports, and passes the PUB-1/P-35 contract cases;
