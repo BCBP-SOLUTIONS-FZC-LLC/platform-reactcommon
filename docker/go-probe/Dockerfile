@@ -24,5 +24,7 @@ RUN set -eu; \
 
 FROM alpine:3.22
 COPY --from=build /out/go-probe /usr/local/bin/go-probe
+# Not root (Trivy DS-0002): the probe needs no privilege, and 8081 is not a privileged port.
+USER 65534:65534
 EXPOSE 8081
 ENTRYPOINT ["go-probe", "http-serve", "--port", "8081"]
