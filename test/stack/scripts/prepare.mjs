@@ -133,9 +133,14 @@ function realm(name, o) {
   web.webOrigins = [STACK.appOrigin];
   web.attributes = { ...web.attributes, 'post.logout.redirect.uris': STACK.postLogoutRedirectUris.join('##') };
   web.protocolMappers = [...(o.mappers ?? [])];
-  // Every public client gets the audience mapper iam-realm-provisioner adds at realm creation and converges
-  // on the shared trial realm (RP #48, RP-D21, withAudienceMappers): its own client ID in the access
-  // token's aud, which Envoy's jwt_authn checks (HLD §8.3 step 3; report Issue 13, fixed upstream).
+  // Every public client as iam-realm-provisioner sets it at realm creation and converges on the shared trial
+  // realm (withPublicClientClaims):
+  //   - RP #48 (RP-D21; report Issue 13): the audience mapper, its own client ID in the access token's aud,
+  //     which Envoy's jwt_authn checks (HLD §8.3 step 3);
+  //   - RP #49 (RP-D22; report Issue 16): profile and email are optional scopes, so access tokens carry no
+  //     name or email (HLD §4.1); the id_token_name and id_token_email mappers put both in the ID token and
+  //     userinfo only, where the SDK reads them.
+  const idTokenOnly = { 'access.token.claim': 'false', 'id.token.claim': 'true', 'introspection.token.claim': 'false', 'userinfo.token.claim': 'true' };
   for (const c of r.clients) {
     if (!c.publicClient) continue;
     c.protocolMappers = [
@@ -146,7 +151,16 @@ function realm(name, o) {
         protocolMapper: 'oidc-audience-mapper',
         config: { 'included.client.audience': c.clientId, 'access.token.claim': 'true', 'id.token.claim': 'false', 'introspection.token.claim': 'true' },
       },
+      { name: 'id_token_name', protocol: 'openid-connect', protocolMapper: 'oidc-full-name-mapper', config: idTokenOnly },
+      {
+        name: 'id_token_email',
+        protocol: 'openid-connect',
+        protocolMapper: 'oidc-usermodel-attribute-mapper',
+        config: { 'user.attribute': 'email', 'claim.name': 'email', 'jsonType.label': 'String', ...idTokenOnly },
+      },
     ];
+    c.defaultClientScopes = ['web-origins', 'acr', 'roles', 'basic'];
+    c.optionalClientScopes = ['profile', 'email', 'address', 'phone', 'offline_access', 'microprofile-jwt', 'organization'];
   }
   r.users = o.users.map((u) => ({
     id: u.id,

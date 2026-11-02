@@ -88,6 +88,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** The page's navigations other than the sign-out's own end-session request (logout is global by default). */
+const nonSignOut = (page: { assigned: string[] }) => page.assigned.filter((u) => !new URL(u).pathname.endsWith('/protocol/openid-connect/logout'));
+
 describe('callback: malformed answers', () => {
   it.each([
     ['no dots at all', 'not-a-jwt'],
@@ -315,7 +318,7 @@ describe('refresh edge cases', () => {
     await flush();
     expect(idp.getState()).toMatchObject({ status: 'anonymous', reason: 'signed-out' });
     expect(await idp.getAccessToken()).toBeUndefined();
-    expect(page.assigned).toEqual([]); // no restore redirect
+    expect(nonSignOut(page)).toEqual([]); // no restore redirect
     expect(page.storedValues()).not.toMatch(/at-late|rt-late/);
   });
 
@@ -363,7 +366,7 @@ describe('refresh edge cases', () => {
     await idp.logout();
     page.goOnline();
     await flush();
-    expect(page.assigned).toEqual([]);
+    expect(nonSignOut(page)).toEqual([]);
     expect(idp.getState()).toMatchObject({ status: 'anonymous', reason: 'signed-out' });
   });
 
@@ -458,7 +461,7 @@ describe('refresh edge cases', () => {
       await idp.logout();
       await vi.advanceTimersByTimeAsync(10_000);
       await flush();
-      expect(page.assigned).toEqual([]);
+      expect(nonSignOut(page)).toEqual([]); // no restore redirect
       expect(idp.getState()).toMatchObject({ status: 'anonymous', reason: 'signed-out' });
     });
 

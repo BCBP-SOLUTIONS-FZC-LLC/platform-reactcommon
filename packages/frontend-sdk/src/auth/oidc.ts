@@ -780,7 +780,9 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       broadcast('logout');
       getRuntime().storageNamespace = 'anon';
       setState({ status: 'anonymous', ...(w ? { workspace: w } : {}), reason: 'signed-out' });
-      if (!o?.global || !w) return;
+      // Global by default (report Issue 10): a local logout leaves the provider's SSO session alive, and on a
+      // shared device the next person's sign-in then shows the previous user. { global: false } opts out.
+      if (o?.global === false || !w) return;
       const params = new URLSearchParams();
       if (idToken) params.set('id_token_hint', idToken);
       params.set('client_id', cfg.clientId);

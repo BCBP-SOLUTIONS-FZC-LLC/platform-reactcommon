@@ -12,8 +12,9 @@ export interface ShellContextValue {
   /** Resolves `identifierOrSlug` (PUB-1) and switches; the shell shows "workspace not found" itself. */
   switchWorkspace(identifierOrSlug: string): Promise<void>;
   /**
-   * Signs out (the shell's IdentityProvider.logout): local by default, `global` ends the SSO session
-   * too. Every tab of the browser follows. Optional for shells written before it; useSignOut rejects then.
+   * Signs out (the shell's IdentityProvider.logout): global by default, ending the SSO session too;
+   * `{ global: false }` signs out of this browser only. Every tab of the browser follows. Optional for
+   * shells written before it; useSignOut rejects then.
    */
   signOut?: ((o?: { global?: boolean }) => Promise<void>) | undefined;
 }

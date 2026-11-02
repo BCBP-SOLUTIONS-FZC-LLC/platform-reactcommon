@@ -38,17 +38,16 @@ test.describe('sign-in through PUB-1, Keycloak and the gateway', () => {
     expect(id.sub).toBe(alice.id);
     const access = decodeJwt(exchange!.body.access_token);
     expect(access.iss).toBe(STACK.issuer('tenant-acme'));
+    // Issue 16 (fixed upstream, realm-provisioner #49): the access token, sent to the gateway on every call,
+    // carries no name or e-mail; the ID token does, where the SDK reads them.
+    for (const claim of ['name', 'email', 'given_name', 'family_name', 'preferred_username', 'email_verified']) expect(access, claim).not.toHaveProperty(claim);
+    expect(access).toHaveProperty('auth_time'); // AuthZ Enrichment's MFA-freshness gate reads it
+    expect(id).toMatchObject({ name: `${alice.firstName} ${alice.lastName}`, email: alice.email });
 
-    // P-35 with the JWT: jwt_authn → ext_authz (AuthZ Enrichment → I-8) → iam-org-membership.
-    // The SDK retries a 503 (Issue 12: a cold I-8 lookup can exceed AuthZ Enrichment's 40 ms budget). On
-    // the first sign-in after boot every retry can miss it; a reload (silent restore) asks again, warm.
-    const p35 = () => eventually(() => t.api.find((a) => a.url.pathname === '/api/v1/me/session-context' && a.status !== 503), 20_000, 'P-35');
-    let ctx = await p35().catch(() => undefined);
-    if (!ctx) {
-      test.info().annotations.push({ type: 'issue', description: 'Issue 12: the first P-35 after boot got only 503s (cold AuthZ cache); reloaded once' });
-      await navigateOnce(page, () => page.reload({ waitUntil: 'commit' }));
-      ctx = await p35();
-    }
+    // P-35 with the JWT: jwt_authn → ext_authz (AuthZ Enrichment → I-8) → iam-org-membership. Issue 12
+    // (fixed upstream, authz-enrichment #40): the first call, on a cold AuthZ cache, is answered, never 503.
+    const ctx = await eventually(() => t.api.find((a) => a.url.pathname === '/api/v1/me/session-context'), 20_000, 'P-35');
+    expect(t.api.filter((a) => a.url.pathname === '/api/v1/me/session-context').map((a) => a.status)).not.toContain(503);
     expect(ctx.status).toBe(200);
     expect(ctx.request.headers()['authorization']).toMatch(/^Bearer /);
     const body = ctx.json() as { tenant_id: string; slug: string; roles: string[]; departments: { id: string; level: string }[]; plan: string };
@@ -233,11 +232,11 @@ test.describe('gateway responses as the SDK parses them', () => {
     await page.getByRole('button', { name: 'Continue' }).click();
     await keycloakLogin(page, dave);
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('acme');
-    // The SDK retries a 503 (Issue 12: a cold I-8 lookup exceeds AuthZ Enrichment's 40 ms budget); the last answer counts.
-    await eventually(() => t.api.some((a) => a.url.pathname === '/api/v1/me/session-context' && a.status !== 503), 20_000, 'P-35 answer');
+    await eventually(() => t.api.some((a) => a.url.pathname === '/api/v1/me/session-context'), 20_000, 'P-35 answer');
     const calls = t.api.filter((a) => a.url.pathname === '/api/v1/me/session-context');
     test.info().annotations.push({ type: 'observation', description: `P-35 statuses: ${calls.map((c) => c.status).join(', ')}; x-request-id reused: ${new Set(calls.map((c) => c.request.headers()['x-request-id'])).size === 1}` });
     const ctx = calls.at(-1)!;
+    expect(calls.map((c) => c.status)).not.toContain(503); // Issue 12 (fixed upstream): no cold-cache 503 first
     expect(ctx.status).toBe(403);
     expect(ctx.response.headers()['content-type']).toContain('application/problem+json');
     const p = await parseProblemResponse(new Response(ctx.text, { status: ctx.status, headers: ctx.response.headers() }));
@@ -273,7 +272,8 @@ test.describe('ext_authz budget', () => {
     const second = await page.request.get('/api/v1/probe/whoami', { headers: { authorization: `Bearer ${token}` } });
     test.info().annotations.push({ type: 'observation', description: `cold: ${r.status()} ${(await r.text()).slice(0, 160)}; warm: ${second.status()}` });
     expect(second.status()).toBe(200);
-    test.fail(r.status() === 503, 'Issue 12: the cold I-8 call exceeds ORG_MEMBERSHIP_TIMEOUT (40 ms): DENY_SERVICE_UNAVAILABLE (503) for the first request after a cache miss');
+    // Issue 12 (fixed upstream, authz-enrichment #40): with no cached entry to fall back on, the I-8 call
+    // gets ORG_MEMBERSHIP_COLD_TIMEOUT (120 ms) instead of 40 ms, inside the 250 ms ext_authz budget.
     expect(r.status()).toBe(200);
   });
 });
@@ -325,11 +325,17 @@ test.describe('token refresh against Keycloak (rotation, revokeRefreshToken=true
 });
 
 test.describe('sign-out and the shared device', () => {
-  test('the example shell\'s Sign out control signs out of this device (Issue 6, fixed)', async ({ page }) => {
+  test('the example shell\'s Sign out control (Issue 6) ends the Keycloak session by default (Issue 10) and returns to the app', async ({ page }) => {
     await signInFromScratch(page, alice, 'acme');
     const signOut = page.getByRole('button', { name: 'Sign out' });
     await expect(signOut).toHaveCount(1);
-    await signOut.click();
+    const endSession = page.waitForRequest((r) => r.url().startsWith(`${STACK.issuer('tenant-acme')}/protocol/openid-connect/logout`));
+    await navigateOnce(page, () => signOut.click());
+    const params = new URL((await endSession).url()).searchParams;
+    expect(params.get('client_id')).toBe('tender-web');
+    expect(params.get('post_logout_redirect_uri')).toBe(`${STACK.appOrigin}/`);
+    expect(params.get('id_token_hint')).toBeTruthy();
+    await page.waitForURL(`${STACK.appOrigin}/`);
     await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible();
     expect(await page.evaluate((k) => localStorage.getItem(k), SIGNED_OUT_KEY)).not.toBeNull();
   });
@@ -350,31 +356,26 @@ test.describe('sign-out and the shared device', () => {
     await expect(page.locator('#username')).toBeVisible();
   });
 
-  test('shared device: after a sign-out the next sign-in asks for credentials (prompt=login), even with live SSO', async ({ page }) => {
+  test('shared device (Issue 10, fixed): after Sign out the next person gets a fresh sign-in form, not the previous user\'s', async ({ page }) => {
     const t = new Traffic(page);
     await signInFromScratch(page, alice, 'acme');
-    // logout() (local) is unreachable from the example (Issue 6): reproduce its persistent effect, the
-    // signed-out mark, and reload. Keycloak's SSO session for alice is still alive.
-    await page.evaluate((k) => localStorage.setItem(k, String(Date.now())), SIGNED_OUT_KEY);
-    await navigateOnce(page, () => page.reload({ waitUntil: 'commit' }));
+    // The shell's Sign out, with the SDK's default: the Keycloak session ends too.
+    await navigateOnce(page, () => page.getByRole('button', { name: 'Sign out' }).click());
+    await page.waitForURL(`${STACK.appOrigin}/`);
     await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible();
     await page.getByRole('button', { name: 'Sign in' }).click();
     await page.waitForURL((u) => u.host === AUTH_HOST);
     expect(t.authorize[t.authorize.length - 1]!.searchParams.get('prompt')).toBe('login');
-    // Keycloak asks for credentials — but with alice's SSO session alive it is a re-authentication of
-    // alice ("Please re-authenticate to continue", her username shown, no username field).
-    await expect(page.locator('#password')).toBeVisible();
-    const previousUserShown = await page.locator('#kc-attempted-username').isVisible();
-    const shownName = previousUserShown ? ((await page.locator('#kc-attempted-username').textContent()) ?? '').trim() : '';
-    if (previousUserShown) await page.locator('#reset-login').click(); // "Restart login": the next person's only way in
+    // No session left to re-authenticate: the username field, and nothing of alice's.
+    await expect(page.locator('#username')).toBeVisible();
+    await expect(page.locator('#kc-attempted-username')).toHaveCount(0);
+    expect(await page.content()).not.toContain(alice.username);
     await keycloakLogin(page, bob);
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('acme');
-    await eventually(() => t.api.filter((a) => a.url.pathname === '/api/v1/me/session-context').length >= 2, 20_000, 'bob\'s P-35');
+    await eventually(() => t.api.filter((a) => a.url.pathname === '/api/v1/me/session-context' && a.status === 200).length >= 2, 20_000, 'bob\'s P-35');
     const bobCtx = t.api.filter((a) => a.url.pathname === '/api/v1/me/session-context').at(-1)!;
     expect((bobCtx.json() as { roles: string[] }).roles).toEqual(['member']);
     expect(decodeJwt(t.latestTokens().access_token).sub).toBe(bob.id);
-    test.fail(previousUserShown, `Issue 10: after a (local) sign-out, prompt=login shows the previous user (${shownName}) a re-authentication form; the next person must find "Restart login"`);
-    expect(previousUserShown).toBe(false);
   });
 
   test('another tab\'s sign-out reaches this tab: the app is unmounted, the signed-out screen shown (Issue 7, fixed)', async ({ page, context }) => {

@@ -527,7 +527,7 @@ describe('idle timeout', () => {
 });
 
 describe('logout', () => {
-  it('local: drops tokens, clears app storage, rotates the session id, marks signed-out, tells other tabs', async () => {
+  it('{ global: false } (local only): drops tokens, clears app storage, rotates the session id, marks signed-out, tells other tabs; sends no end-session request', async () => {
     const shared = new FakePage('/').local;
     const a = new FakePage('/', shared);
     const b = new FakePage('/', shared);
@@ -538,7 +538,7 @@ describe('logout', () => {
     const cached = JSON.stringify([{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
     shared.setItem(WORKSPACE_CACHE_KEY, cached);
 
-    await tabA.logout();
+    await tabA.logout({ global: false });
     expect(tabA.getState()).toEqual({ status: 'anonymous', workspace: ACME, reason: 'signed-out' });
     expect(await tabA.getAccessToken()).toBeUndefined();
     expect(shared.getItem('tenant-acme:tenders:filter')).toBeNull();
@@ -558,7 +558,24 @@ describe('logout', () => {
     expect(await provider().init()).toEqual({ status: 'anonymous', reason: 'signed-out' });
   });
 
-  it('global: also ends the SSO session at the realm logout endpoint', async () => {
+  it('by default (report Issue 10): signs out locally as above, then ends the SSO session at the realm end-session endpoint', async () => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page);
+    const before = page.assigned.length;
+    await idp.logout();
+    expect(idp.getState()).toEqual({ status: 'anonymous', workspace: ACME, reason: 'signed-out' });
+    expect(await idp.getAccessToken()).toBeUndefined();
+    expect(page.local.getItem(SIGNED_OUT_KEY)).not.toBeNull();
+    expect(FakeBroadcastChannel.sent).toEqual([{ type: 'logout' }]);
+    expect(page.assigned.slice(before)).toHaveLength(1); // exactly one navigation: the end-session request
+    const url = new URL(page.assigned.at(-1)!);
+    expect(`${url.origin}${url.pathname}`).toBe(`${IDP}/realms/tenant-acme/protocol/openid-connect/logout`);
+    expect(url.searchParams.get('client_id')).toBe(CLIENT);
+    expect(url.searchParams.get('post_logout_redirect_uri')).toBe(`${ORIGIN}/`);
+    expect(url.searchParams.get('id_token_hint')!.split('.')).toHaveLength(3);
+  });
+
+  it('{ global: true } is the same as the default', async () => {
     const page = new FakePage('/');
     const { idp } = await signIn(page);
     await idp.logout({ global: true });

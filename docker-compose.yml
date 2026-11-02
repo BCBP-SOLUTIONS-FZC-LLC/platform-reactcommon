@@ -245,6 +245,7 @@ services:
       VALKEY_URL: valkey:6379
       ORG_MEMBERSHIP_BASE_URL: http://org-membership:8080
       ORG_MEMBERSHIP_TIMEOUT: ${AUTHZ_ORG_MEMBERSHIP_TIMEOUT:-40ms}
+      ORG_MEMBERSHIP_COLD_TIMEOUT: ${AUTHZ_ORG_MEMBERSHIP_COLD_TIMEOUT:-120ms}   # no cached entry to fall back on (authz-enrichment #40, Issue 12)
       # iam-tender-acl is not in this stack: only restricted tenders call it (none here).
       TENDER_ACL_BASE_URL: http://tender-acl-not-deployed:8086
       MEMBERSHIP_AUTHZ_QUEUE_URL: http://floci:4566/000000000000/membership-authz-q

@@ -127,13 +127,13 @@ The emulator rows `E-n` are in §6.
 | 7 | Gateway 401 shape (jwt_authn) as the SDK parses it | ⚠️ Issue 3 | ⚠️ Issue 3 | ⚠️ Issue 3 |
 | 8 | ext_authz deny (dave) → 403 problem+json, `gatewayDenyCode` = `DENY_UNRESOLVABLE_SUBJECT` | ✅ | ✅ | ✅ |
 | 9 | gincommon problem through Envoy keeps `traceId` and `x-request-id` | ✅ | ✅ | ✅ |
-| 10 | Cold AuthZ cache: first request within the ext_authz budget | ✅/⚠️ Issue 12 (timing) | ✅ | ✅ |
+| 10 | Cold AuthZ cache: first request within the ext_authz budget, never 503 | ✅ (Issue 12 fixed upstream) | ✅ | ✅ |
 | 11 | Refresh lineage in one tab: rotation, no reuse error (two refreshes of a 60 s token take up to 100 s; the wait is 120 s) | ✅ | ✅ | ✅ |
 | 12 | Refresh cadence with a 60 s token: exactly one refresh (200) in the first 55 s | ✅ (Issue 4 fixed) | ✅ | ✅ |
 | 13 | Two tabs, two refresh lineages in one Keycloak session (`revokeRefreshToken=true`) | ✅ | ✅ | ✅ |
-| 14 | Example offers a sign-out control (`useSignOut`) that signs out of this device | ✅ (Issue 6 fixed) | ✅ | ✅ |
+| 14 | Example offers a sign-out control (`useSignOut`); the default sign-out goes to end-session and back to a signed-out app | ✅ (Issues 6, 10 fixed) | ✅ | ✅ |
 | 15 | Global logout: end-session with the SDK's exact parameters → back to `/`, "You are signed out", SSO gone | ✅ | ✅ | ✅ |
-| 16 | Shared device: after sign-out, `prompt=login`; bob signs in; P-35 is bob's | ⚠️ Issue 10 | ⚠️ Issue 10 | ⚠️ Issue 10 |
+| 16 | Shared device: after Sign out, a fresh Keycloak form with nothing of alice's; bob signs in; P-35 is bob's | ✅ (Issue 10 fixed) | ✅ | ✅ |
 | 17 | Cross-tab sign-out reaches the open tab: the app is unmounted (not left under the dialog), "You are signed out" shown | ✅ (Issue 7 fixed) | ✅ | ✅ |
 | 18 | Real CSP violation → `/csp-report` → Lambda → Collector | ⚠️ E-6 | ✅ (Issue 11 fixed) | ✅ |
 | 19 | The deployed Lambda: `x-origin-verify` enforced (403 without it), both report formats → `csp.violation` OTLP logs without query strings | ✅ | ✅ | ✅ |
@@ -220,7 +220,7 @@ With `revokeRefreshToken=true` and `refreshTokenMaxReuse=0`, two tabs sharing on
 
 ### Issue 6 — The example shell has no way to sign out
 
-- **Status: fixed.** `/react` has `useSignOut()` (local by default, `{ global: true }` ends the SSO session too), backed by an optional `signOut` the shell gives `PlatformProvider`; the example shell passes `idp.logout` and renders a **Sign out** button. Tests: `test/unit/react` (the hook, and its rejection without a shell), `test/e2e/shell.test.tsx` (the button signs out, clears app storage, tells other tabs), stack test 14.
+- **Status: fixed.** `/react` has `useSignOut()` (global by default since Issue 10; `{ global: false }` signs out of this browser only), backed by an optional `signOut` the shell gives `PlatformProvider`; the example shell passes `idp.logout` and renders a **Sign out** button. Tests: `test/unit/react` (the hook, and its rejection without a shell), `test/e2e/shell.test.tsx` (the button signs out, clears app storage, tells other tabs), stack test 14.
 
 - **Symptom:** No control calls `IdentityProvider.logout()` (local or `{ global: true }`). Only the trial wrong-workspace dialog has a sign-out button.
 - **Owner:** Example.
@@ -250,6 +250,7 @@ With `revokeRefreshToken=true` and `refreshTokenMaxReuse=0`, two tabs sharing on
 
 ### Issue 9 — Keycloak key rotation: new tokens fail at Envoy until the JWKS cache expires
 
+- **Status: open (Platform, gateway).** IAM confirms the Keycloak half is operational: rotate in two phases (the new key passive, so it is in the JWKS; wait more than Envoy's `cache_duration`; then make it active), and offers to write it up as a realm runbook (2026-11-03). Envoy's JWKS cache settings stay with Platform.
 - **Symptom:** After adding a higher-priority RS256 key, P-35 with a fresh token returns `401` ("Jwt verification fails").
 - **Evidence:** Test 23 (`kid` FOsetg…).
 - **Root cause:** The jwt_authn `remote_jwks.cache_duration` (300 s here; default 600 s) does not refetch on an unknown `kid`. Keycloak signs with the new active key immediately.
@@ -264,6 +265,8 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ### Issue 10 — Shared device: after a local sign-out, `prompt=login` shows the previous user
 
+- **Status: fixed** (decided 2026-11-03, with IAM's recommendation). `IdentityProvider.logout()`, and so the shell's `signOut` and `useSignOut()`, is **global by default**: it ends the Keycloak SSO session at the realm's end-session endpoint and returns to `<origin>/`, so the next person on the device signs in from scratch. `{ global: false }` is the documented opt-out for a local-only sign-out. The example shell relies on the default. Tests: `test/unit/auth/oidc.test.ts` (the default sends the end-session request; `{ global: false }` sends none), `test/unit/react` (`useSignOut()` passes no option, so the provider's default applies), `test/e2e/shell.test.tsx` (the Sign out button goes to end-session and back to a signed-out app), stack test 16.
+- **Before:** IAM needed nothing changed on their side and recommended making **Sign out** a full Keycloak sign-out (`logout({ global: true })`) by default, at least on shared devices (2026-11-03). Keycloak already allows the redirect back (`<origin>/*` is registered for `tender-web`); test 15 shows it working. They confirm that `prompt=login` with the hint cleared does not help: while the previous user's Keycloak session is alive, the re-login page still shows their username.
 - **Symptom:** The next "Sign in" carries `prompt=login`. Keycloak, with alice's SSO session still alive, shows "Please re-authenticate to continue" with **alice's username** (`#kc-attempted-username`) and only a password field. Bob must find "Restart login" (`#reset-login`).
 - **Root cause:** A local logout leaves the Keycloak SSO session alive by design. `prompt=login` re-authenticates the *same* subject.
 - **Owner:** SDK / example (sign-out policy) + Keycloak config.
@@ -289,6 +292,7 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ### Issue 12 — The first request after an AuthZ cache miss can be denied 503
 
+- **Status: fixed upstream** (iam-authz-enrichment #40, `fae20d1`, AE-48, LLD rev 1.49). With no cached entry to fall back on, the I-8 call waits up to `ORG_MEMBERSHIP_COLD_TIMEOUT` (120 ms) instead of 40 ms, inside the 250 ms ext_authz budget; with a stale entry it keeps 40 ms and serves the stale entry on failure. It also keeps 64 idle connections to org-membership (Go's default was 2). The stack sets `ORG_MEMBERSHIP_COLD_TIMEOUT` explicitly; tests 1, 8 and 10 now fail on any 503 (they used to retry, reload or expect it), and the contract pin moved to `fae20d1` (no contract change).
 - **Symptom:** `DENY_SERVICE_UNAVAILABLE` (503, `ext_authz_denied`, `UAEX`) on a user's first API call.
 - **Evidence:** authz-enrichment log:
 
@@ -342,6 +346,7 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ### Issue 16 — Access tokens carry name and e-mail although the SDK asks only for `openid`
 
+- **Status: fixed upstream** (iam-realm-provisioner #49, `b67687c`, RP-D22, LLD v1.49). On `tender-web` and `tender-mobile`, `profile` and `email` are optional scopes, and two client mappers (`id_token_name`, `id_token_email`) put name and e-mail in the ID token and userinfo only. Access tokens keep `sub`, `aud`, `tenant_id` and `auth_time` (Keycloak's lightweight access token was rejected: it drops `auth_time`, which AuthZ Enrichment's MFA check reads). The SDK needs no change: it asks for `openid` and reads both from the ID token. The stack mirrors #49 (`test/stack/scripts/prepare.mjs`); test 1 asserts the access token has no `name`, `email`, `given_name`, `family_name`, `preferred_username` or `email_verified`, keeps `auth_time`, and the ID token has alice's name and e-mail.
 - **Evidence:** The access token has `scope: "openid profile email"`, `name`, `email`, `preferred_username`, `given_name`, `family_name`.
 - **Root cause:** Keycloak's default client scopes `profile` and `email` are default, not optional, on `tender-web`. HLD §4.1: "JWTs carry only `sub` and standard OIDC claims". The tokens travel to the gateway on every call.
 - **Owner:** Keycloak config (realm template).
@@ -475,6 +480,8 @@ After review round 4, with the machine awake and on AC power:
 | 4 (host awake, on AC, review round 4) | 51 | 8 → 3 test defects, fixed | 15.9 min | `/auth/callback` regex predates the HTML `integrity` pin; the one-tab refresh wait (90 s) was shorter than two refreshes of a 60 s token can take; cross-tab sign-out left the previous user's app mounted under the dialog (shell fixed: it unmounts the app) |
 | 5 (the same, after the fixes) | **62** | **0** (1 skipped) | 15.2 min | |
 | 6 (review round 5: `/otel` through the reference two-tier Collector) | **65** | **0** (1 skipped) | 15.2 min | test 24 added in each browser |
+| 7 (IAM fixes: authz-enrichment #40, realm-provisioner #49) | **65** | **0** (1 skipped) | 15.2 min | Issue 12 strict in tests 1, 8, 10; Issue 16 asserted in test 1 |
+| 8 (sign-out global by default, Issue 10) | **65** | **0** (1 skipped) | 15.8 min | tests 14 and 16 on the real Sign out button, strict |
 
 To re-verify, rerun with the machine awake and on AC power:
 

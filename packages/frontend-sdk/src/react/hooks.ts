@@ -111,8 +111,10 @@ export function useLocale(): { locale: string; dir: 'ltr' | 'rtl' } {
 }
 
 /**
- * Signs the user out, from any component (shell or remote): local by default, so the next sign-in on
- * this device asks for credentials; `{ global: true }` also ends the identity provider's session.
+ * Signs the user out, from any component (shell or remote). Global by default: it also ends the identity
+ * provider's session, so the next person on this device signs in from scratch. `{ global: false }` is a
+ * local-only sign-out (the provider's session stays alive; the next sign-in asks for the previous user's
+ * credentials and shows their name).
  */
 export function useSignOut(): (o?: { global?: boolean }) => Promise<void> {
   const shell = useShell();

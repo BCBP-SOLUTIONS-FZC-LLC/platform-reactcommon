@@ -299,7 +299,7 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 | `login({ workspace, returnUrl?, loginHint?, prompt? })` | Pending record + PKCE + `beforeRedirect('login')` + top-level redirect; throws when sessionStorage is unavailable |
 | `getAccessToken()` | `undefined` when anonymous, expired or restoring; joins the refresh when within 5 s of expiry |
 | `refresh()` | Single-flight; `true` with new tokens, `false` otherwise (state already moved, §8.5) |
-| `logout({ global? })` | §8.7 |
+| `logout({ global? })` (global unless `global: false`) | §8.7 |
 | `switchWorkspace(w)` | Local logout of the current realm without the signed-out mark, broadcast `workspace-switched`, then `login(w)` with reason `switch` |
 | `reauthenticate({ maxAgeSeconds, returnUrl? })` | `prompt=login&max_age=<s>` with reason `step-up`; needs a session |
 | `needsStepUp(s)` | `now − auth_time > s`; `false` when `auth_time` is unknown |
@@ -484,7 +484,7 @@ Activity events (`pointerdown`, `keydown`, `wheel`, `touchstart`, `scroll`, capt
   1. Drop the tokens and stop the timers.
   2. `clearAllAppStorage()`, rotate the session id, and set the signed-out mark.
   3. Broadcast `logout`, set the storage namespace to `anon`, and move to `anonymous { signed-out }`.
-  4. **Global** logout only: redirect to the realm's `/logout` with `id_token_hint` (when held), `client_id` and `post_logout_redirect_uri=<origin>/`.
+  4. Unless `{ global: false }` (the default is global, report Issue 10): redirect to the realm's `/logout` with `id_token_hint` (when held), `client_id` and `post_logout_redirect_uri=<origin>/`, ending the SSO session. `{ global: false }` is a local-only sign-out: the SSO session stays alive, and the next sign-in on this device is a re-authentication of the previous user (`prompt=login`).
 - **Other tabs on `logout`:** become `anonymous { signed-out }`.
 - **Other tabs on `workspace-switched`:** become `expired { serverEnded: false, idle: false }`, so the shell's dialog offers sign-in again.
 - **The channel** (`BroadcastChannel('platform-auth')`) carries only `{ type }`, never a token.

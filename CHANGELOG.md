@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `/react`: `useSignOut()` (local by default, `{ global: true }` also ends the SSO session), backed by an optional `signOut` in `PlatformProvider`'s shell value. `/auth`: the `anonymous` reason `device-clock`.
+- `/react`: `useSignOut()` (global by default, see *Changed*; `{ global: false }` signs out of this browser only), backed by an optional `signOut` in `PlatformProvider`'s shell value. `/auth`: the `anonymous` reason `device-clock`.
 
 - **Publication to GitHub Packages** (`VERSIONING.md`, *Consume a release* and *Publishing*):
   - `release.yml`'s `npm-publish` job publishes the gated tarballs, after every gate and before the GitHub Release, from the protected `npm` environment. It runs only after their `SHA256SUMS` check, attaches a build-provenance attestation per tarball, and is idempotent: a version is never overwritten, and the registry's integrity is checked after publishing;
@@ -150,6 +150,8 @@ Fixed before the first release, after a security and production-readiness review
 - `examples/cloudfront`: `/csp-report` is a Lambda URL behind a CloudFront secret origin header (`x-origin-verify`, constant-time, rotation list, fails closed), not OAC, which refuses a browser's POST; the CSP adds `report-uri` as a fallback and takes the cross-origin remote and API origins.
 
 ### Changed
+
+- **Breaking: signing out is global by default** (report Issue 10, with IAM's recommendation). `IdentityProvider.logout()`, the shell's `signOut` and `useSignOut()` now also end the Keycloak SSO session: after the local sign-out (tokens dropped, app storage cleared, other tabs told) the page goes to the realm's end-session endpoint and comes back to `<origin>/`. A local-only sign-out left that session alive, so on a shared device the next person's sign-in showed the previous user's re-login form with their username. **To keep the old behaviour**, pass `{ global: false }` (`signOut({ global: false })`, `logout({ global: false })`). Keycloak needs nothing: `tender-web` registers `<origin>/*` as an allowed post-logout redirect. The example shell relies on the default.
 
 - **Breaking: React 19 only.** The peer range and the Module Federation shared range for `react` / `react-dom` are `^19.0.0` (was `^18.3.0 || ^19.0.0`). A page runs one React, the shell's, so a range spanning two majors let a remote built on one major run on a shell of the other and fail inside the page; now such a remote is refused at share negotiation. Nothing ran on React 18 (the reference shell and remote already used React 19 form actions). The new CI job `react-floor` (`pnpm run test-react-floor`) runs the typecheck, the unit suite, the build and the example checks on React 19.0.0; the policy for the next major is in VERSIONING.md, *Supported React versions*.
 

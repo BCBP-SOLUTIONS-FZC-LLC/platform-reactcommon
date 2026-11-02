@@ -139,7 +139,7 @@ describe('session hooks', () => {
 
   const minimalShell: ShellContextValue = { locale: 'en', switchWorkspace: async () => {} };
 
-  it('useSignOut calls the shell\'s signOut, local by default and global on request', async () => {
+  it('useSignOut calls the shell\'s signOut with no options by default (the provider\'s default: global), and passes { global: false } through', async () => {
     const signOut = vi.fn(async () => {});
     let out!: ReturnType<typeof useSignOut>;
     function P() {
@@ -148,8 +148,9 @@ describe('session hooks', () => {
     }
     await render(<PlatformProvider shell={{ ...minimalShell, signOut }}><P /></PlatformProvider>);
     await out();
+    await out({ global: false });
     await out({ global: true });
-    expect(signOut.mock.calls).toEqual([[undefined], [{ global: true }]]);
+    expect(signOut.mock.calls).toEqual([[undefined], [{ global: false }], [{ global: true }]]);
   });
 
   it('useSignOut rejects without a shell, or with one that provides no signOut', async () => {

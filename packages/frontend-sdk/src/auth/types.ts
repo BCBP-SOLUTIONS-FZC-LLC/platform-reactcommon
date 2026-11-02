@@ -87,7 +87,12 @@ export interface IdentityProvider {
   init(): Promise<Extract<SessionState, { status: 'authenticated' | 'anonymous' }>>;
   /** `prompt: 'login'` forces credentials even when Keycloak's SSO session is alive (used after the idle timeout). */
   login(o: { workspace: Workspace; returnUrl?: string; loginHint?: string; prompt?: 'login' }): Promise<void>;
-  /** Local: drop tokens, clear storage, set the signed-out mark. Global: also ends the Keycloak SSO session. */
+  /**
+   * Signs out: drops the tokens, clears app storage, sets the signed-out mark and tells the other tabs,
+   * then ends the Keycloak SSO session at the realm's end-session endpoint (the page navigates there and
+   * comes back to `/`). `{ global: false }` is a local-only sign-out: the SSO session stays alive, so on a
+   * shared device the next sign-in shows the previous user's re-login form (report Issue 10).
+   */
   logout(o?: { global?: boolean }): Promise<void>;
   getAccessToken(): Promise<string | undefined>;
   /** Single-flight per tab: concurrent callers share one in-flight refresh. */

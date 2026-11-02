@@ -280,7 +280,7 @@ describe('the reference shell', () => {
     expect(getSession().status).toBe('authenticated');
   });
 
-  it('logout clears the app storage and tells the other tabs; the reload stays signed out until the user signs in', async () => {
+  it('Sign out clears the app storage, tells the other tabs and ends the SSO session (global by default); back on the app it stays signed out until the user signs in', async () => {
     await load('/t/acme/');
     await until(() => page.assigned.length > 0);
     await approveLogin();
@@ -290,7 +290,7 @@ describe('the reference shell', () => {
     const otherTab: unknown[] = [];
     new FakeBroadcastChannel('platform-auth').addEventListener('message', (e) => otherTab.push((e as MessageEvent).data));
 
-    // The shell's Sign out control (useSignOut → IdentityProvider.logout, local: docs/e2e report Issue 6).
+    // The shell's Sign out control (useSignOut → IdentityProvider.logout, global by default: report Issues 6, 10).
     await user(() => [...document.querySelectorAll<HTMLButtonElement>('header button')].find((b) => b.textContent === 'Sign out')!.click());
     await flush();
     await until(() => text().includes('You are signed out'));
@@ -302,11 +302,18 @@ describe('the reference shell', () => {
     expect(JSON.stringify(FakeBroadcastChannel.sent)).not.toMatch(/at-|eyJ|refresh/);
     expect(page.storedValues()).not.toMatch(/at-|eyJ|refresh/);
 
-    // A reload with Keycloak's SSO session still alive: no silent sign-in, the signed-out screen.
-    await load();
+    // The page goes to Keycloak's end-session endpoint, which ends the SSO session (Issue 10: the next
+    // person on this device is not shown the previous user) and returns to the app's root.
+    expect(page.assigned).toHaveLength(1);
+    const endSession = new URL(page.assigned[0]!);
+    expect(endSession.pathname).toBe('/realms/tenant-acme/protocol/openid-connect/logout');
+    expect(endSession.searchParams.get('post_logout_redirect_uri')).toBe(`${ORIGIN}/`);
+    expect(endSession.searchParams.get('client_id')).toBe('tender-web');
+    page.assigned.length = 0;
+    await load(endSession.searchParams.get('post_logout_redirect_uri')!);
     await until(() => text().includes('You are signed out'));
     expect(getSession()).toEqual({ status: 'anonymous', reason: 'signed-out' });
-    expect(page.assigned).toEqual([]);
+    expect(page.assigned).toEqual([]); // no silent sign-in
     expect($('h1#signed-out-title')).not.toBeNull();
 
     // Sign in again from there: credentials are asked for (a shared device), the cached workspace is used.

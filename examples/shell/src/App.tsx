@@ -14,7 +14,10 @@ function Home() {
   );
 }
 
-/** Signs out of this device (local): every tab follows, and the next sign-in asks for credentials. */
+/**
+ * Signs out with the SDK's default: global, so the Keycloak session ends too and the next person on this
+ * device signs in from scratch (report Issue 10). Every tab follows.
+ */
 function SignOut() {
   const signOut = useSignOut();
   return (
