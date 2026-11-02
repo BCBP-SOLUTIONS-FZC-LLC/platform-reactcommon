@@ -5,8 +5,8 @@
 // budget, in priority order: metrics first, which only reserves its small share (metricsShare)
 // while it collects the interval asynchronously; then logs (errors and essential warnings are what
 // operations see without consent; docs/observability/tier1-ratification.md §5); then spans with what is
-// left. The requests sent when the page is hidden, just before (logs, spans, then metrics), draw on the
-// same budget through keepaliveLeft and spendKeepalive.
+// left. The page being hidden (visibilitychange, before pagehide on a close) runs the same senders in the
+// same order through their `hide`; both phases draw on one ledger (keepaliveLeft, spendKeepalive).
 import { getRuntime } from './runtime.ts';
 
 /** The shared budget, under the browser's 64 KiB for headers and the request line. */
@@ -38,11 +38,18 @@ export interface UnloadSender {
    * `budget` bytes of body, and returns the bytes it used.
    */
   send(budget: number): number;
+  /**
+   * The page was hidden (it may come back, or be closing: visibilitychange comes before pagehide). Same
+   * contract as send, in the same priority order: the order the signals were initialised in must not
+   * decide who gets the budget (spans initialised first took it all, and the logs were left nothing).
+   */
+  hide?(budget: number): number;
 }
 
 interface UnloadState {
   senders: Set<UnloadSender>;
   listener: () => void;
+  hideListener: () => void;
   /** Keepalive bodies sent recently (see KEEPALIVE_IN_FLIGHT_MS), oldest first. */
   spent: { at: number; bytes: number }[];
   /** Bytes held for a send still being prepared (reserveKeepalive). */
@@ -54,7 +61,16 @@ interface UnloadState {
 function state(): UnloadState {
   const rt = getRuntime();
   if (!rt.unload) {
-    const s: UnloadState = { senders: new Set(), listener: () => drain(s), spent: [], reserved: 0, metricsShare: 0 };
+    const s: UnloadState = {
+      senders: new Set(),
+      listener: () => drain(s, 'send'),
+      hideListener: () => {
+        if (globalThis.document?.visibilityState === 'hidden') drain(s, 'hide');
+      },
+      spent: [],
+      reserved: 0,
+      metricsShare: 0,
+    };
     rt.unload = s;
   }
   return rt.unload as UnloadState;
@@ -103,24 +119,32 @@ export function spendKeepalive(bytes: number, now: number = Date.now()): void {
 }
 
 /** Each sender in priority order with what the earlier ones (and the hidden phase) left; a throwing sender never stops the rest. */
-function drain(s: UnloadState): void {
+function drain(s: UnloadState, phase: 'send' | 'hide'): void {
   for (const sender of [...s.senders].sort((a, b) => a.priority - b.priority)) {
     try {
+      const run = phase === 'send' ? sender.send.bind(sender) : sender.hide?.bind(sender);
+      if (!run) continue;
       const left = keepaliveLeft(); // after the earlier senders' spending and reservations
-      spendKeepalive(Math.min(left, Math.max(0, sender.send(left))));
+      spendKeepalive(Math.min(left, Math.max(0, run(left))));
     } catch {
       // telemetry never breaks a page that is closing
     }
   }
 }
 
-/** Registers `sender` for the page's pagehide; returns the unregister. */
+/** Registers `sender` for the page's pagehide (and, with `hide`, the page being hidden); returns the unregister. */
 export function onUnload(sender: UnloadSender): () => void {
   const s = state();
-  if (s.senders.size === 0) globalThis.addEventListener?.('pagehide', s.listener);
+  if (s.senders.size === 0) {
+    globalThis.addEventListener?.('pagehide', s.listener);
+    globalThis.document?.addEventListener?.('visibilitychange', s.hideListener);
+  }
   s.senders.add(sender);
   return () => {
     s.senders.delete(sender);
-    if (s.senders.size === 0) globalThis.removeEventListener?.('pagehide', s.listener);
+    if (s.senders.size === 0) {
+      globalThis.removeEventListener?.('pagehide', s.listener);
+      globalThis.document?.removeEventListener?.('visibilitychange', s.hideListener);
+    }
   };
 }

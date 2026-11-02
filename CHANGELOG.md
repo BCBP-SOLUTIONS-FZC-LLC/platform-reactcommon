@@ -184,7 +184,8 @@ Fixed before the first release, after a security and production-readiness review
 
 - Production-readiness review, round 5:
   - **`/metrics` on page hide:** the interval is collected when the page is hidden or closing and sent by `sendBeacon`, which outlives a closing tab. Before, the hide flush went through the exporter's plain fetch, and a closing tab lost the last interval of Tier 2 and Tier 3 metrics.
-  - **One keepalive budget for all three signals** (`src/internal/unload.ts`): what the hidden phase sends is recorded, so `pagehide` hands out only what is left (it handed out a fresh 60 KiB). Logs and spans leave the metrics interval its share, sized from the last interval (1–8 KiB). On hide, the logs no longer send several beacons past the budget: the newest that fit go by beacon, the rest by fetch a task later.
+  - **One keepalive budget for all three signals** (`src/internal/unload.ts`), in one priority order on hide and on `pagehide` (metrics' share, then logs, then spans), whatever order the signals were initialised in: the shell initialises tracing first, and on hide the spans took the budget and left the logs nothing.
+  - The ledger itself: what the hidden phase sends is recorded, so `pagehide` hands out only what is left (it handed out a fresh 60 KiB). Logs and spans leave the metrics interval its share, sized from the last interval (1–8 KiB). On hide, the logs no longer send several beacons past the budget: the newest that fit go by beacon, the rest by fetch a task later.
   - **Reference Collector configuration** (`examples/collector`, two tiers):
     - the gateway allowlists metric names and label values from the metric registry, drops per-browser attributes, and routes each metric stream to one aggregator;
     - the aggregator converts delta to cumulative. One converter per stream, or replicas write conflicting totals for one series.

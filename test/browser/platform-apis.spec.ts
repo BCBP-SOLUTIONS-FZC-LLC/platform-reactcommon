@@ -51,7 +51,9 @@ test('per-workspace storage written in one tab is read, and announced, in anothe
   const a = await openHarness();
   const b = await openHarness({ page: await context.newPage() });
   await a.evaluate(() => window.harness.storageSet('tenant-acme', 'filters', { status: 'open' }));
-  expect(await b.evaluate(() => window.harness.storageGet('tenant-acme', 'filters'))).toEqual({ status: 'open' });
+  // Another page of the origin sees the write once the engine has propagated it: at once in Chromium and
+  // Firefox, a moment later in WebKit (CI's 2-core runners showed it), so the read polls.
+  await expect.poll(() => b.evaluate(() => window.harness.storageGet('tenant-acme', 'filters'))).toEqual({ status: 'open' });
   // Another workspace's namespace sees nothing.
   expect(await b.evaluate(() => window.harness.storageGet('tenant-other', 'filters'))).toBeUndefined();
   test.skip(

@@ -414,17 +414,10 @@ export function initializeMetrics(o: { otlpBaseUrl: string; exportIntervalMs?: n
         sending = undefined;
       });
   };
-  const onVisibility = () => {
-    if (globalThis.document?.visibilityState === 'hidden') send();
-  };
-  // Unloading: first in the page's keepalive budget (src/internal/unload.ts), so its share is reserved
-  // before the logs and spans are handed theirs; the beacon follows once the interval is collected.
-  const stopUnload = onUnload({ priority: -1, send: () => (send(), 0) });
-  globalThis.document?.addEventListener?.('visibilitychange', onVisibility);
-  s.removeListeners = () => {
-    stopUnload();
-    globalThis.document?.removeEventListener?.('visibilitychange', onVisibility);
-  };
+  // Hidden and unloading: first in the page's keepalive budget (src/internal/unload.ts), so its share is
+  // reserved before the logs and spans are handed theirs; the beacon follows once the interval is collected.
+  const stopUnload = onUnload({ priority: -1, send: () => (send(), 0), hide: () => (send(), 0) });
+  s.removeListeners = () => stopUnload();
 }
 
 /** Internal: flushes and stops exporting; instruments go back to recording only the inventory. */

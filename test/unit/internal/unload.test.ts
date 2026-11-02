@@ -163,6 +163,35 @@ describe('logs, spans and metrics when the page is hidden: one budget, the metri
   });
 });
 
+describe('the hidden phase runs in priority order, whatever order the signals were initialised in', () => {
+  it('tracing initialised first (as the shell and the harness do): on hide the logs still go first, the spans get what is left', async () => {
+    initializeCore({ serviceName: 'web-app', domain: 'portal', environment: 'test', buildVersion: '1.0.0' });
+    setConsentProvider({ has: () => true, subscribe: () => () => {} });
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+    vi.stubGlobal('document', doc);
+    const sent: { url: string; size: number }[] = [];
+    vi.stubGlobal('navigator', { sendBeacon: (url: string, data: Blob) => (sent.push({ url, size: data.size }), true) });
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => (sent.push({ url: String(url), size: (init.body as Uint8Array).byteLength }), new Response(null, { status: 200 }))));
+    initializeTracing({ otlpBaseUrl: '/otel', sampleRatio: 1 });
+    initializeLogging({ otlpBaseUrl: '/otel', level: 'debug', flushMs: 60_000, batchSize: 512 });
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    const filler = 'x'.repeat(800);
+    for (let i = 0; i < 40; i++) getLogger().error(`log ${i} ${filler}`); // ~56 KiB: fits the budget less the metrics' share
+    for (let i = 0; i < 300; i++) getTracer('t').startSpan(`s${i}`, { a: filler }).end();
+    getServiceMeter().counter('portal_web_app_hides_total', 'Hides.', []).add(1);
+
+    doc.visibilityState = 'hidden';
+    doc.dispatchEvent(new Event('visibilitychange'));
+    // Synchronously within the listener: the logs' beacon carries every queued record, first.
+    const logBeacon = sent.find((r) => r.url.endsWith('/v1/logs'));
+    expect(logBeacon, 'the logs\' beacon, started in the listener').toBeDefined();
+    const logs = (await import('../../../packages/frontend-sdk/src/logging/logging.ts')).loggingStats()!;
+    expect(logs.exported).toBe(40);
+    await vi.waitFor(() => expect(sent.map((r) => r.url)).toContain('http://localhost/otel/v1/metrics'));
+    expect(keepaliveLeft()).toBeGreaterThanOrEqual(0);
+  });
+});
+
 describe('logs and spans on one budget (known browser bug 1)', () => {
   it('the logs go first by beacon, the spans get what is left; together they never exceed the page budget', async () => {
     initializeCore({ serviceName: 'web-app', domain: 'portal', environment: 'test', buildVersion: '1.0.0' });
