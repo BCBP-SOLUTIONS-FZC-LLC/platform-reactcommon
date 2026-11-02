@@ -15,8 +15,9 @@ import { join } from 'node:path';
 import { act, type ComponentType } from 'react';
 import type { Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getSession, type IdentityProvider } from '../../packages/frontend-sdk/src/auth/index.ts';
-import { getRuntime, resetRuntimeForTests } from '../../packages/frontend-sdk/src/internal/runtime.ts';
+import { getSession } from '../../packages/frontend-sdk/src/auth/index.ts';
+import { SIGNED_OUT_KEY } from '../../packages/frontend-sdk/src/auth/oidc.ts';
+import { resetRuntimeForTests } from '../../packages/frontend-sdk/src/internal/runtime.ts';
 import { PlatformProblemTypes } from '../../packages/frontend-sdk/src/problem/index.ts';
 import { resetContainersForTests, setMfeInternalsForTests } from '../../packages/frontend-sdk/src/mfe/remote.ts';
 import { storage } from '../../packages/frontend-sdk/src/storage/index.ts';
@@ -43,7 +44,7 @@ vi.mock('react-dom/client', async (importOriginal) => {
 });
 
 // The examples are imported at run time: they are type-checked by their own tsconfig (which maps
-// @platform/frontend-sdk/* to the SDK source, as vitest.config.ts aliases it).
+// @bcbp-solutions-fzc-llc/frontend-sdk/* to the SDK source, as vitest.config.ts aliases it).
 const example = (path: string) => import(/* @vite-ignore */ join(testenv.root, 'examples', path));
 const shell = async () => (await example('shell/src/bootstrap.tsx')) as { bootstrap(): Promise<void> };
 const screen = async () => (await example('shell/src/screen.tsx')) as { hideScreen(): void };
@@ -279,7 +280,7 @@ describe('the reference shell', () => {
     expect(getSession().status).toBe('authenticated');
   });
 
-  it('logout clears the app storage and tells the other tabs; the reload stays signed out until the user signs in', async () => {
+  it('Sign out clears the app storage, tells the other tabs and ends the SSO session (global by default); back on the app it stays signed out until the user signs in', async () => {
     await load('/t/acme/');
     await until(() => page.assigned.length > 0);
     await approveLogin();
@@ -289,21 +290,30 @@ describe('the reference shell', () => {
     const otherTab: unknown[] = [];
     new FakeBroadcastChannel('platform-auth').addEventListener('message', (e) => otherTab.push((e as MessageEvent).data));
 
-    // The example shell has no sign-out control: the test calls the provider bootstrap installed.
-    await user(() => void (getRuntime().identityProvider as IdentityProvider).logout());
+    // The shell's Sign out control (useSignOut → IdentityProvider.logout, global by default: report Issues 6, 10).
+    await user(() => [...document.querySelectorAll<HTMLButtonElement>('header button')].find((b) => b.textContent === 'Sign out')!.click());
     await flush();
+    await until(() => text().includes('You are signed out'));
 
     expect(getSession()).toMatchObject({ status: 'anonymous', reason: 'signed-out' });
+    expect(document.getElementById('root')!.childElementCount).toBe(0); // the app is unmounted, not hidden
     expect(page.local.getItem('tenant-acme:tenders:filter')).toBeNull();
     expect(otherTab).toEqual([{ type: 'logout' }]);
     expect(JSON.stringify(FakeBroadcastChannel.sent)).not.toMatch(/at-|eyJ|refresh/);
     expect(page.storedValues()).not.toMatch(/at-|eyJ|refresh/);
 
-    // A reload with Keycloak's SSO session still alive: no silent sign-in, the signed-out screen.
-    await load();
+    // The page goes to Keycloak's end-session endpoint, which ends the SSO session (Issue 10: the next
+    // person on this device is not shown the previous user) and returns to the app's root.
+    expect(page.assigned).toHaveLength(1);
+    const endSession = new URL(page.assigned[0]!);
+    expect(endSession.pathname).toBe('/realms/tenant-acme/protocol/openid-connect/logout');
+    expect(endSession.searchParams.get('post_logout_redirect_uri')).toBe(`${ORIGIN}/`);
+    expect(endSession.searchParams.get('client_id')).toBe('tender-web');
+    page.assigned.length = 0;
+    await load(endSession.searchParams.get('post_logout_redirect_uri')!);
     await until(() => text().includes('You are signed out'));
     expect(getSession()).toEqual({ status: 'anonymous', reason: 'signed-out' });
-    expect(page.assigned).toEqual([]);
+    expect(page.assigned).toEqual([]); // no silent sign-in
     expect($('h1#signed-out-title')).not.toBeNull();
 
     // Sign in again from there: credentials are asked for (a shared device), the cached workspace is used.
@@ -312,5 +322,35 @@ describe('the reference shell', () => {
     const again = new URL(page.assigned[0]!);
     expect(again.pathname).toBe('/realms/tenant-acme/protocol/openid-connect/auth');
     expect(again.searchParams.get('prompt')).toBe('login');
+  });
+
+  it("another tab's sign-out takes this tab to the signed-out screen; the app is no longer shown (Issue 7)", async () => {
+    await load('/t/acme/');
+    await until(() => page.assigned.length > 0);
+    await approveLogin();
+    await until(() => $('h1')?.textContent === 'acme');
+    // The other tab signs out: it sets the signed-out mark in the shared localStorage and broadcasts.
+    page.local.setItem(SIGNED_OUT_KEY, String(Date.now()));
+    await user(() => new FakeBroadcastChannel('platform-auth').postMessage({ type: 'logout' }));
+    await until(() => text().includes('You are signed out'));
+    expect(getSession()).toMatchObject({ status: 'anonymous', reason: 'signed-out' });
+    expect($('h1#signed-out-title')).not.toBeNull();
+    // The previous user's app is gone, not left under the dialog (a shared device).
+    expect(document.getElementById('root')!.childElementCount).toBe(0);
+    expect([...document.querySelectorAll('h1')].map((h) => h.textContent)).toEqual(['You are signed out']);
+    // Signing in from here asks for credentials (shared device).
+    await user(() => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Sign in')!.click());
+    await until(() => page.assigned.length > 0);
+    expect(new URL(page.assigned.at(-1)!).searchParams.get('prompt')).toBe('login');
+  });
+
+  it('a device clock 20 minutes off: the shell says to check the clock instead of returning to sign-in (Issue 8)', async () => {
+    (kc as unknown as { now: () => number }).now = () => Date.now() - 20 * 60_000; // the provider's clock
+    await load('/t/acme/');
+    await until(() => page.assigned.length > 0);
+    await approveLogin();
+    await until(() => text().includes("Check your device's clock"));
+    expect(getSession()).toEqual({ status: 'anonymous', reason: 'device-clock' });
+    expect(page.assigned).toEqual([]); // no automatic retry
   });
 });

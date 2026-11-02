@@ -4,9 +4,9 @@
   "commit": false,
   "fixed": [
     [
-      "@platform/frontend-sdk",
-      "@platform/webpack-preset",
-      "@platform/eslint-plugin"
+      "@bcbp-solutions-fzc-llc/frontend-sdk",
+      "@bcbp-solutions-fzc-llc/webpack-preset",
+      "@bcbp-solutions-fzc-llc/eslint-plugin"
     ]
   ],
   "linked": [],

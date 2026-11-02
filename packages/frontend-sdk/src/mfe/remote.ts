@@ -157,7 +157,7 @@ export async function loadRemote<T = unknown>(
   o?: { timeoutMs?: number; retries?: number; signal?: AbortSignal },
 ): Promise<T> {
   const started = performance.now();
-  const span = getTracer('@platform/frontend-sdk/mfe').startSpan('remote load', { mfe: name, module });
+  const span = getTracer('@bcbp-solutions-fzc-llc/frontend-sdk/mfe').startSpan('remote load', { mfe: name, module });
   const record = (outcome: 'success' | 'failure' | 'error', reason?: Reason) => {
     try {
       getRuntime().instruments.remoteLoad((performance.now() - started) / 1000, { mfe: name, outcome, ...(reason ? { reason } : {}) });

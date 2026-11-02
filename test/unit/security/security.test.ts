@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getRuntime, resetRuntimeForTests } from '../../../packages/frontend-sdk/src/internal/runtime.ts';
 import { installTrustedTypesPolicy, isAllowedOrigin, sanitizeHtml } from '../../../packages/frontend-sdk/src/security/index.ts';
+import { withoutReportedMarkup } from '../../../packages/frontend-sdk/src/security/markup.ts';
 
 beforeEach(() => resetRuntimeForTests());
 afterEach(() => vi.unstubAllGlobals());
@@ -158,5 +159,78 @@ describe('without a usable DOM', () => {
   it('treats a non-string input as text', () => {
     expect(String(sanitizeHtml(undefined as never))).toBe('');
     expect(String(sanitizeHtml(42 as never))).toBe('42');
+  });
+});
+
+// Known browser bug 3: Chromium reports (and POSTs to /csp-report) every event-handler and style
+// attribute in the input DOMPurify parses, under the page CSP. The pre-pass removes them first.
+describe('sanitizeHtml pre-pass (withoutReportedMarkup)', () => {
+  it.each([
+    ['<p onclick="alert(1)">Hello <span style="color:red">styled</span><img src=x onerror="alert(2)"></p>', '<p>Hello <span>styled</span><img src=x></p>'],
+    ['<p/onclick=alert(1)>slash</p>', '<p>slash</p>'],
+    ['<P ONCLICK="x">upper</P>', '<P>upper</P>'],
+    ['<a title="a>b" onmouseover=\'x\' href="/x">gt</a>', '<a title="a>b" href="/x">gt</a>'],
+    ['<img src=x onerror=alert(1)//>', '<img src=x>'],
+    ['<div style=color:red>unquoted</div>', '<div>unquoted</div>'],
+    ['<style>p{color:red}</style><p>after</p>', '<p>after</p>'],
+    ['<STYLE type="text/css">x</STYLE >y', 'y'],
+  ])('removes what Chromium reports while parsing: %s', (dirty, want) => {
+    expect(withoutReportedMarkup(dirty)).toBe(want);
+  });
+
+  it.each([
+    'text onclick="x" stays text',
+    '<p data-x="1" title="onclick=still a value" class="online">kept</p>',
+    'a < b and c > d',
+    '<a href="/onboarding">onboarding</a>',
+  ])('leaves text and other attributes alone: %s', (s) => {
+    expect(withoutReportedMarkup(s)).toBe(s);
+  });
+
+  it('does not change what sanitizeHtml returns for hostile input', () => {
+    const corpus: [string, string][] = [
+      ['<p onclick="alert(1)">Hello <span style="color:red">styled</span><img src=x onerror="alert(2)"></p>', '<p>Hello <span>styled</span><img></p>'], // src="x" fails SAFE_LINK
+      ['<p/onclick=alert(1)>a</p><script>alert(1)</script>', '<p>a</p>'],
+      ['<style>*{x:y}</style><b>bold</b>', '<b>bold</b>'],
+      ['<a href="javascript:alert(1)" onclick="x">link</a>', 'link'],
+    ];
+    for (const [dirty, want] of corpus) expect(String(sanitizeHtml(dirty)), dirty).toBe(want);
+  });
+});
+
+describe('sanitizeHtml pre-pass: linear time and no change to the sanitised output', () => {
+  it.each([
+    ['unclosed tags', '<a b '.repeat(40_000)],
+    ['unquoted values full of slashes', `<a x=${'/y'.repeat(100_000)}`],
+    ['attributes without a closing >', `<a${' b'.repeat(100_000)}`],
+    ['many <style> openings', '<style>'.repeat(30_000)],
+    ['handlers everywhere', '<p onclick=x style=y>t</p>'.repeat(8_000)],
+  ])('%s (about 200 KB) in well under a second', (_n, input) => {
+    const t = performance.now();
+    withoutReportedMarkup(input);
+    expect(performance.now() - t).toBeLessThan(500); // the regex version took 12 s on half of this
+  });
+
+  it('for 2000 generated inputs, sanitizeHtml returns exactly what DOMPurify returns without the pre-pass', async () => {
+    const { default: createDOMPurify } = await import('../../../packages/frontend-sdk/node_modules/dompurify/dist/purify.es.mjs');
+    const reference = createDOMPurify(window);
+    reference.addHook('afterSanitizeAttributes', (node) => {
+      if (node.tagName === 'A' && node.hasAttribute('href')) node.setAttribute('rel', 'noopener noreferrer');
+    });
+    const config = {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'option', 'iframe', 'frame', 'object', 'embed', 'svg', 'math', 'template', 'base', 'link', 'meta', 'a'],
+      FORBID_ATTR: ['style', 'srcset', 'action', 'formaction', 'target'],
+      ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|\/(?!\/))/i,
+      ALLOW_DATA_ATTR: false,
+    };
+    const pieces = ['<p', '<b', '<img', '<a', '<style>', '</style>', '<STYLE >', ' ', '/', '=', '"', "'", '>', 'onclick', 'ONLOAD', 'style', 'title', 'href', 'src', 'x', '/y', 'alert(1)', 'a>b', '</p>', '</b>', 'text', '<!--', '-->', '&amp;', '\n'];
+    let seed = 42;
+    const rnd = (k: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed % k);
+    for (let n = 0; n < 2000; n++) {
+      let s = '';
+      for (let p = 0, len = 1 + rnd(25); p < len; p++) s += pieces[rnd(pieces.length)];
+      expect(String(sanitizeHtml(s)), s).toBe(String(reference.sanitize(s, config)));
+    }
   });
 });

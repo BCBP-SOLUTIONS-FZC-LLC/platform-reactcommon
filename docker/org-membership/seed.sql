@@ -41,7 +41,3 @@ INSERT INTO tenant_roles (id, tenant_id, user_id, tenant_membership_id, role_cod
    '5e000000-0000-4000-8000-0000000000b1', 'tenant_owner', '00000000-0000-0000-0000-000000000001')
 ON CONFLICT (id) DO NOTHING;
 
--- The BYPASSRLS pool (SYSTEM_DATABASE_URL, org_membership_migrator) serves PUB-1. In this stack the schema is
--- migrated by org_membership_app (as in iam-org-membership's own docker-compose), so the migrator role owns
--- nothing and has no table privileges: grant the reads the system pool needs (see the report, issue list).
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO org_membership_migrator;

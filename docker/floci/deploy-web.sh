@@ -79,21 +79,8 @@ LAMBDA_URL=$(aws lambda create-function-url-config --function-name "$FN" --auth-
 LAMBDA_HOST=$(echo "$LAMBDA_URL" | sed -E 's#^https?://([^/:]+).*#\1#')
 log "lambda $FN: $LAMBDA_URL"
 
-# The same handler behind a one-line wrapper that calls handler(event) — the suggested fix for the report's
-# "Lambda passes (event, context)" issue. Not wired to CloudFront; the e2e suite posts to it directly.
-FIXED=csp-report-fixed
-aws lambda delete-function --function-name "$FIXED" >/dev/null 2>&1 || true
-aws lambda create-function --function-name "$FIXED" --runtime nodejs22.x --handler fixed.handler \
-  --role arn:aws:iam::000000000000:role/csp-report --timeout 10 --memory-size 128 \
-  --zip-file "fileb://$WORK/lambda/csp-report-fixed.zip" \
-  --environment "Variables={ORIGIN_VERIFY_SECRET=$RESOLVED,COLLECTOR_LOGS_URL=http://otel-collector:4319/v1/logs,SERVICE_NAMESPACE=portal,DEPLOYMENT_ENVIRONMENT=staging}" >/dev/null
-for _ in $(seq 1 30); do
-  [ "$(aws lambda get-function --function-name "$FIXED" --query Configuration.State --output text)" = "Active" ] && break
-  sleep 1
-done
-FIXED_URL=$(aws lambda create-function-url-config --function-name "$FIXED" --auth-type NONE --query FunctionUrl --output text)
-echo "{\"cspReportFixedHost\": \"$(echo "$FIXED_URL" | sed -E 's#^https?://([^/:]+).*#\1#')\"}" > "$OUT/lambda-fixed.json"
-log "lambda $FIXED: $FIXED_URL"
+# The function URL's host, for the e2e suite's direct posts (report Issue 11 is fixed in the handler).
+echo "{\"cspReportHost\": \"$LAMBDA_HOST\"}" > "$OUT/lambda.json"
 
 # ── 4. CloudFront ─────────────────────────────────────────────────────────────────────────────
 # Re-runs (same floci): reuse the policy of that name, updated to this config.
@@ -170,12 +157,12 @@ origins = [
     {"Id": "s3-web", "DomainName": f'{E["BUCKET"]}.s3.ap-south-1.amazonaws.com', "OriginPath": "",
      "S3OriginConfig": {"OriginAccessIdentity": ""}, "CustomHeaders": {"Quantity": 0}, "OriginAccessControlId": ""},
     custom("api-gateway", "envoy", 10000),
-    custom("otel-collector", "otel-collector", 4318),
+    custom("otel-gateway", "otel-gateway", 4318),
     custom("csp-report", E["LAMBDA_HOST"], 4566, [{"HeaderName": "x-origin-verify", "HeaderValue": E["RESOLVED"]}]),
 ]
 behaviors = [
     behavior("/api/*", "api-gateway", CACHING_DISABLED, ALL, rhp=False, orp=ALL_VIEWER_EXCEPT_HOST),
-    behavior("/otel/*", "otel-collector", CACHING_DISABLED, ALL),
+    behavior("/otel/*", "otel-gateway", CACHING_DISABLED, ALL),
     behavior("/csp-report", "csp-report", CACHING_DISABLED, ALL),
     behavior("/config/runtime.json", "s3-web", CACHING_DISABLED),
     behavior("/version.json", "s3-web", CACHING_DISABLED),

@@ -1,0 +1,23 @@
+# test/collector: examples/collector/gateway.yaml with traces and logs written to files the test reads,
+# a short batch timeout and a health check. Metrics still go to the aggregators (loadbalancing).
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+processors:
+  batch:
+    timeout: 200ms
+
+exporters:
+  file/traces:
+    path: /out/traces.jsonl
+  file/logs:
+    path: /out/logs.jsonl
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces/browser:
+      exporters: [file/traces]
+    logs/browser:
+      exporters: [file/logs]

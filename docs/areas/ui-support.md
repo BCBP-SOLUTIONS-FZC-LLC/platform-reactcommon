@@ -19,7 +19,7 @@ const t = useT('tenders');
 t('drafts.count', { n: 3 });
 ```
 
-Untrusted HTML always goes through `sanitizeHtml(html)` (`@platform/eslint-plugin` `no-unsafe-html`).
+Untrusted HTML always goes through `sanitizeHtml(html)` (`@bcbp-solutions-fzc-llc/eslint-plugin` `no-unsafe-html`).
 
 ## Guarantees
 

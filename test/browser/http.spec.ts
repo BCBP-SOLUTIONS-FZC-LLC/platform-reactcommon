@@ -3,7 +3,6 @@
 // signals by hand). Real fetch aborts, real timeouts, real body streams and a real garbage collector:
 // jsdom and happy-dom model none of the timing, stream errors or signal lifetimes involved.
 import { expect, test } from './fixtures.ts';
-import { WEBKIT_ABORT_ANY } from './known-bugs.ts';
 import type { HttpScenario } from './harness/entry.ts';
 
 for (const variant of ['native AbortSignal.any', 'without AbortSignal.any (Safari < 17.4)'] as const) {
@@ -39,8 +38,7 @@ for (const variant of ['native AbortSignal.any', 'without AbortSignal.any (Safar
       expect(headers.authorization).toBeUndefined();
     });
 
-    test('a caller abort (before the response, during the body) and the deadline next to a caller signal end the call, under GC pressure', async ({ openHarness, browserName }) => {
-      test.fail(browserName === 'webkit' && !withoutAny, WEBKIT_ABORT_ANY);
+    test('a caller abort (before the response, during the body) and the deadline next to a caller signal end the call, under GC pressure', async ({ openHarness }) => {
       const page = await openHarness();
       const results: Record<string, string[]> = {};
       for (const s of ['abort', 'abort-get', 'abort-body', 'timeout-with-signal'] as const) {

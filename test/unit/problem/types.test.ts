@@ -139,7 +139,7 @@ describe('ProblemError', () => {
   it('is recognised across SDK copies by its brand, not by instanceof', () => {
     expect(isProblemError(new ProblemError(details))).toBe(true);
     const foreign = Object.create(null) as Record<symbol, unknown>;
-    foreign[Symbol.for('@platform/frontend-sdk/ProblemError')] = true;
+    foreign[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk/ProblemError')] = true;
     expect(isProblemError(foreign)).toBe(true);
     expect(isProblemError(new Error('x'))).toBe(false);
     expect(isProblemError({ type: 'x', status: 400 })).toBe(false);

@@ -1,8 +1,8 @@
 ---
-'@platform/frontend-sdk': minor
+'@bcbp-solutions-fzc-llc/frontend-sdk': minor
 ---
 
-Add `@platform/frontend-sdk/tracing`: OTLP/HTTP browser tracing with gincommon's resource
+Add `@bcbp-solutions-fzc-llc/frontend-sdk/tracing`: OTLP/HTTP browser tracing with gincommon's resource
 attributes and sampler (ParentBased, Go's exact TraceIDRatioBased), a bounded drop-oldest export
 queue gated on telemetry consent, `withSpan`, `currentTraceId`, and `injectTraceHeaders` limited
 to the page origin and an exact-origin allowlist. The `@opentelemetry/api` peer range is now

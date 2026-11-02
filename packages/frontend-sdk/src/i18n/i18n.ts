@@ -29,7 +29,7 @@ export const PLATFORM_NAMESPACE = 'platform';
 
 function warn(message: string): void {
   const env = getIdentity()?.environment;
-  if (env === undefined || env === 'local' || env === 'dev') console.warn(`@platform/frontend-sdk/i18n: ${message}`);
+  if (env === undefined || env === 'local' || env === 'dev') console.warn(`@bcbp-solutions-fzc-llc/frontend-sdk/i18n: ${message}`);
 }
 
 function state(): I18nState {

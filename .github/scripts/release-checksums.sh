@@ -5,7 +5,7 @@
 set -euo pipefail
 
 shopt -s nullglob
-TARBALLS=(platform-*.tgz)
+TARBALLS=(bcbp-solutions-fzc-llc-*.tgz)
 if [ "${#TARBALLS[@]}" -ne 3 ]; then
   echo "::error title=Checksums::expected 3 package tarballs, found ${#TARBALLS[@]} — did the package artifact download?"
   exit 1

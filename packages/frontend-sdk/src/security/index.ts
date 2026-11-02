@@ -8,6 +8,7 @@
 import createDOMPurify, { type Config, type DOMPurify } from 'dompurify';
 import type { TrustedHTML, TrustedTypePolicyFactory } from 'trusted-types/lib';
 import { getRuntime } from '../internal/runtime.ts';
+import { withoutReportedMarkup } from './markup.ts';
 
 const POLICY_NAME = 'platform-sdk';
 
@@ -59,9 +60,10 @@ function config(allowLinks: boolean, trusted: boolean): Config {
  * DOMPurify's own 'dompurify' policy), a string elsewhere; outside a DOM the input is escaped.
  */
 export function sanitizeHtml(dirty: string, o?: { allowLinks?: boolean }): TrustedHTML | string {
-  const text = typeof dirty === 'string' ? dirty : String(dirty ?? '');
+  const raw = typeof dirty === 'string' ? dirty : String(dirty ?? '');
   const p = getPurifier();
-  if (!p) return escapeHtml(text);
+  if (!p) return escapeHtml(raw);
+  const text = withoutReportedMarkup(raw);
   const trusted = typeof trustedTypesFactory()?.createPolicy === 'function';
   if (trusted) return p.sanitize(text, { ...config(o?.allowLinks === true, true), RETURN_TRUSTED_TYPE: true });
   return p.sanitize(text, config(o?.allowLinks === true, false));
@@ -91,7 +93,7 @@ function remoteOrigins(): readonly string[] {
 
 /**
  * Shell only, first thing in the bootstrap: creates the 'platform-sdk' Trusted Types policy the
- * CSP allows (`trusted-types platform-sdk platform-webpack dompurify`). Its HTML is sanitised as
+ * CSP allows (`trusted-types platform-sdk platform-webpack dompurify 'allow-duplicates'`). Its HTML is sanitised as
  * sanitizeHtml does; its script URLs must be same-origin or a configured remote origin; it never
  * creates scripts from strings. Idempotent; a no-op where the browser has no Trusted Types.
  */

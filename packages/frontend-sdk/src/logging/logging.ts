@@ -10,6 +10,7 @@ import { getRuntime } from '../internal/runtime.ts';
 import { collectorUrl } from '../internal/urls.ts';
 import { DropOldestLogProcessor, type LogQueueOptions, type LoggingStats } from './processor.ts';
 import { cleanString, redactAttributes, serializeError, type LogValue } from './redact.ts';
+import { onUnload } from '../internal/unload.ts';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -99,20 +100,14 @@ export function initializeLogging(o: { otlpBaseUrl: string; level?: LogLevel; ba
     processors: [processor],
   });
 
-  const onPageHide = () => processor.drainOnHide();
-  const onVisibility = () => {
-    if (globalThis.document?.visibilityState === 'hidden') processor.drainOnHide();
-  };
-  globalThis.addEventListener?.('pagehide', onPageHide);
-  globalThis.document?.addEventListener?.('visibilitychange', onVisibility);
-  const removeListeners = () => {
-    globalThis.removeEventListener?.('pagehide', onPageHide);
-    globalThis.document?.removeEventListener?.('visibilitychange', onVisibility);
-  };
+  // Unloading and hidden: first in the page's keepalive budget after the metrics' share (src/internal/unload.ts).
+  // Hidden: the newest records by beacon in it, the rest by fetch.
+  const stopUnload = onUnload({ priority: 0, send: (budget) => processor.drainOnUnload(budget), hide: (budget) => processor.drainOnHide(budget) });
+  const removeListeners = () => stopUnload();
 
   getRuntime().logging = {
     provider,
-    logger: provider.getLogger('@platform/frontend-sdk'),
+    logger: provider.getLogger('@bcbp-solutions-fzc-llc/frontend-sdk'),
     processor,
     level,
     stats,
@@ -153,6 +148,7 @@ function emit(level: LogLevel, msg: string, attrs: Record<string, unknown> | und
     attributes['exception.type'] = e.name;
     attributes['exception.message'] = e.message;
     if (e.stack !== undefined) attributes['exception.stacktrace'] = e.stack;
+    if (e.cause !== undefined) attributes['exception.cause'] = e.cause;
   }
   const spanContext = trace.getActiveSpan()?.spanContext();
   if (spanContext && isSpanContextValid(spanContext)) {

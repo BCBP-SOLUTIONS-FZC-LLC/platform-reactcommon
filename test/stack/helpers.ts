@@ -11,8 +11,8 @@ export const STATE = join(import.meta.dirname, '..', '..', '.state');
 export type StackUser = (typeof STACK.users)[keyof typeof STACK.users];
 
 /** SDK storage keys (packages/frontend-sdk/src/auth/oidc.ts). */
-export const SIGNED_OUT_KEY = '@platform/frontend-sdk:auth:signed-out';
-export const LAST_USER_KEY = '@platform/frontend-sdk:auth:last-user';
+export const SIGNED_OUT_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:signed-out';
+export const LAST_USER_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-user';
 
 export interface TokenResponse {
   access_token: string;
@@ -115,6 +115,18 @@ export async function navigateOnce(page: Page, nav: () => Promise<unknown>): Pro
   }
 }
 
+/**
+ * A full page load of a deep link in a signed-in tab. The SDK's prompt=none round trip comes back to it
+ * (WebKit reports the goto as interrupted). It must arrive: Issue 19 (fixed) was the old page's restore,
+ * after a refresh the navigation cancelled, replacing the navigation and landing on the old URL.
+ */
+export async function gotoDeepLink(page: Page, path: string): Promise<void> {
+  await page.goto(path, { waitUntil: 'commit' }).catch((e: Error) => {
+    if (!/interrupted by another navigation|NS_BINDING_ABORTED/.test(e.message)) throw e;
+  });
+  await page.waitForURL((u) => u.pathname === path, { timeout: 15_000 });
+}
+
 /** Polls `fn` until it returns a value (not undefined/false) or the timeout passes. */
 export async function eventually<T>(fn: () => T | undefined | false | Promise<T | undefined | false>, timeoutMs = 30_000, what = 'condition'): Promise<T> {
   const end = Date.now() + timeoutMs;
@@ -153,6 +165,25 @@ export function spans(): Span[] {
     for (const rs of doc.resourceSpans ?? []) {
       const service = attrs(rs.resource?.attributes)['service.name'] ?? '';
       for (const ss of rs.scopeSpans ?? []) for (const s of ss.spans ?? []) out.push({ traceId: s.traceId, spanId: s.spanId, name: s.name, service, attributes: attrs(s.attributes) });
+    }
+  }
+  return out;
+}
+
+export interface MetricPoint { name: string; resource: Record<string, string>; temporality: number; value: number; labels: Record<string, string> }
+
+/** Sum data points as the stack Collector received them (the browser's: through otel-gateway and otel-aggregator). */
+export function metricPoints(): MetricPoint[] {
+  const out: MetricPoint[] = [];
+  type Doc = { resourceMetrics?: { resource?: { attributes?: Attr[] }; scopeMetrics?: { metrics?: { name: string; sum?: { aggregationTemporality: number; dataPoints?: { asInt?: string; asDouble?: number; attributes?: Attr[] }[] } }[] }[] }[] };
+  for (const doc of jsonl('otel/metrics.jsonl') as Doc[]) {
+    for (const rm of doc.resourceMetrics ?? []) {
+      const resource = attrs(rm.resource?.attributes);
+      for (const sm of rm.scopeMetrics ?? []) {
+        for (const m of sm.metrics ?? []) {
+          for (const p of m.sum?.dataPoints ?? []) out.push({ name: m.name, resource, temporality: m.sum!.aggregationTemporality, value: Number(p.asInt ?? p.asDouble), labels: attrs(p.attributes) });
+        }
+      }
     }
   }
   return out;

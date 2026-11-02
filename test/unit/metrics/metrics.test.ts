@@ -162,35 +162,122 @@ describe('initializeMetrics', () => {
     expect(metricsState().provider).toBe(provider);
   });
 
-  it('flushes on pagehide and when the page is hidden, and stops listening after shutdown', async () => {
-    const win = new EventTarget();
-    vi.stubGlobal('addEventListener', win.addEventListener.bind(win));
-    vi.stubGlobal('removeEventListener', win.removeEventListener.bind(win));
-    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
-    vi.stubGlobal('document', doc);
-    initializeMetrics({ otlpBaseUrl: '/otel' }); // 60 s interval: only a page event exports in this test
-    const flush = vi.spyOn(metricsState().provider!, 'forceFlush');
-    getServiceMeter().counter('tender_management_web_app_hides_total', 'Hides.', []).add(3);
+  describe('when the page is hidden or closing', () => {
+    let win: EventTarget;
+    let doc: EventTarget & { visibilityState: string };
+    let beacons: { url: string; body: string }[];
+    let accept: boolean;
+    beforeEach(() => {
+      win = new EventTarget();
+      vi.stubGlobal('addEventListener', win.addEventListener.bind(win));
+      vi.stubGlobal('removeEventListener', win.removeEventListener.bind(win));
+      doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+      vi.stubGlobal('document', doc);
+      beacons = [];
+      accept = true;
+      vi.stubGlobal('navigator', {
+        sendBeacon: (url: string, data: Blob) => {
+          if (!accept) return false;
+          void data.text().then((body) => beacons.push({ url, body }));
+          return true;
+        },
+      });
+    });
+    const hide = () => {
+      doc.visibilityState = 'hidden';
+      doc.dispatchEvent(new Event('visibilitychange'));
+    };
+    /** The values of `name` in a beacon's OTLP JSON body. */
+    const beaconValues = (body: string, name: string) =>
+      (JSON.parse(body) as { resourceMetrics: { scopeMetrics: { metrics: { name: string; sum?: { dataPoints: { asInt?: number; asDouble?: number }[] } }[] }[] }[] }).resourceMetrics
+        .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
+        .filter((m) => m.name === name)
+        .flatMap((m) => m.sum?.dataPoints.map((p) => Number(p.asInt ?? p.asDouble)) ?? []);
 
-    doc.dispatchEvent(new Event('visibilitychange'));
-    expect(flush).not.toHaveBeenCalled(); // still visible
-    doc.visibilityState = 'hidden';
-    doc.dispatchEvent(new Event('visibilitychange'));
-    expect(flush).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(exporter.getMetrics().length).toBeGreaterThan(0));
-    win.dispatchEvent(new Event('pagehide'));
-    expect(flush).toHaveBeenCalledTimes(2);
+    it('sends the interval by sendBeacon (which outlives a closing tab), once: delta', async () => {
+      initializeMetrics({ otlpBaseUrl: '/otel' }); // 60 s interval: only a page event sends in this test
+      getServiceMeter().counter('tender_management_web_app_hides_total', 'Hides.', []).add(3);
 
-    await shutdownMetrics();
-    win.dispatchEvent(new Event('pagehide'));
-    doc.dispatchEvent(new Event('visibilitychange'));
-    expect(flush).toHaveBeenCalledTimes(2);
-    const exported = exporter
-      .getMetrics()
-      .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
-      .filter((m) => m.descriptor.name === 'tender_management_web_app_hides_total')
-      .flatMap((m) => m.dataPoints.map((p) => p.value));
-    expect(exported).toEqual([3]); // delta: later flushes carry no new points
+      doc.dispatchEvent(new Event('visibilitychange'));
+      await Promise.resolve();
+      expect(beacons).toEqual([]); // still visible
+      hide();
+      await vi.waitFor(() => expect(beacons).toHaveLength(1));
+      expect(beacons[0]!.url).toBe('http://localhost/otel/v1/metrics');
+      expect(beaconValues(beacons[0]!.body, 'tender_management_web_app_hides_total')).toEqual([3]);
+      expect(metricsStats().beacons).toBe(1);
+
+      // The close that follows has nothing new: no empty request.
+      win.dispatchEvent(new Event('pagehide'));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(beacons).toHaveLength(1);
+      expect(await points('tender_management_web_app_hides_total')).toEqual([]); // not exported again
+    });
+
+    it('a close without a hide first (pagehide) sends too; nothing after shutdown', async () => {
+      initializeMetrics({ otlpBaseUrl: '/otel' });
+      const c = getServiceMeter().counter('tender_management_web_app_closes_total', 'Closes.', []);
+      c.add(2);
+      win.dispatchEvent(new Event('pagehide'));
+      await vi.waitFor(() => expect(beacons).toHaveLength(1));
+      expect(beaconValues(beacons[0]!.body, 'tender_management_web_app_closes_total')).toEqual([2]);
+      await shutdownMetrics();
+      c.add(1);
+      win.dispatchEvent(new Event('pagehide'));
+      hide();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(beacons).toHaveLength(1);
+    });
+
+    it('collects within the event: the beacon starts before a macrotask runs', async () => {
+      initializeMetrics({ otlpBaseUrl: '/otel' });
+      getServiceMeter().counter('tender_management_web_app_hides_total', 'Hides.', []).add(1);
+      const sent = vi.spyOn(globalThis.navigator, 'sendBeacon');
+      hide();
+      await new Promise<void>((r) => queueMicrotask(r)); // drain the microtasks the listener queued
+      for (let i = 0; i < 20 && sent.mock.calls.length === 0; i++) await Promise.resolve();
+      expect(sent).toHaveBeenCalledTimes(1);
+    });
+
+    it('without telemetry consent: no beacon, the interval dropped and counted', async () => {
+      consent([]);
+      initializeMetrics({ otlpBaseUrl: '/otel' });
+      getServiceMeter().counter('tender_management_web_app_hides_total', 'Hides.', []).add(1);
+      hide();
+      await vi.waitFor(() => expect(metricsStats().droppedNoConsent).toBe(1));
+      expect(beacons).toEqual([]);
+      expect(exporter.getMetrics()).toEqual([]);
+    });
+
+    it('a refused beacon, or no sendBeacon, goes through the exporter', async () => {
+      accept = false;
+      initializeMetrics({ otlpBaseUrl: '/otel' });
+      const c = getServiceMeter().counter('tender_management_web_app_hides_total', 'Hides.', []);
+      c.add(4);
+      hide();
+      await vi.waitFor(() => expect(exporter.getMetrics().length).toBe(1));
+      vi.stubGlobal('navigator', {});
+      c.add(5);
+      win.dispatchEvent(new Event('pagehide'));
+      await vi.waitFor(() => expect(exporter.getMetrics().length).toBe(2));
+      expect(beacons).toEqual([]);
+      const values = exporter
+        .getMetrics()
+        .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
+        .flatMap((m) => m.dataPoints.map((p) => p.value));
+      expect(values).toEqual([4, 5]);
+    });
+
+    it('an interval over the beacon limit goes through the exporter', async () => {
+      initializeMetrics({ otlpBaseUrl: '/otel' });
+      const buckets = Array.from({ length: 50 }, (_, i) => (i + 1) / 10);
+      const h = getServiceMeter().histogram('tender_management_web_app_wide_seconds', 'Wide.', ['k'], buckets);
+      for (let i = 0; i < 100; i++) h.record(0.5, { k: `value-${i}-${'v'.repeat(200)}` });
+      hide();
+      await vi.waitFor(() => expect(exporter.getMetrics().length).toBe(1));
+      expect(beacons).toEqual([]);
+      expect(metricsStats().beacons).toBe(0);
+    });
   });
 
   it('survives a throwing exporter: flushes, page-hide flushes and shutdown never throw', async () => {

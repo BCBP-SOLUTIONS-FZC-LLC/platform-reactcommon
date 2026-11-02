@@ -9,12 +9,12 @@
   },
   "dependencies": {
     "@opentelemetry/api": "~1.10.0",
-    "@platform/frontend-sdk": "workspace:*",
+    "@bcbp-solutions-fzc-llc/frontend-sdk": "workspace:*",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@platform/webpack-preset": "workspace:*",
+    "@bcbp-solutions-fzc-llc/webpack-preset": "workspace:*",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "esbuild-loader": "4.5.0",

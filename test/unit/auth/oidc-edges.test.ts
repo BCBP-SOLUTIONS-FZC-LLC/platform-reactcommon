@@ -88,6 +88,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** The page's navigations other than the sign-out's own end-session request (logout is global by default). */
+const nonSignOut = (page: { assigned: string[] }) => page.assigned.filter((u) => !new URL(u).pathname.endsWith('/protocol/openid-connect/logout'));
+
 describe('callback: malformed answers', () => {
   it.each([
     ['no dots at all', 'not-a-jwt'],
@@ -315,7 +318,7 @@ describe('refresh edge cases', () => {
     await flush();
     expect(idp.getState()).toMatchObject({ status: 'anonymous', reason: 'signed-out' });
     expect(await idp.getAccessToken()).toBeUndefined();
-    expect(page.assigned).toEqual([]); // no restore redirect
+    expect(nonSignOut(page)).toEqual([]); // no restore redirect
     expect(page.storedValues()).not.toMatch(/at-late|rt-late/);
   });
 
@@ -363,8 +366,126 @@ describe('refresh edge cases', () => {
     await idp.logout();
     page.goOnline();
     await flush();
-    expect(page.assigned).toEqual([]);
+    expect(nonSignOut(page)).toEqual([]);
     expect(idp.getState()).toMatchObject({ status: 'anonymous', reason: 'signed-out' });
+  });
+
+  // docs/e2e/integrated-deployment-report.md, Issue 4: with a fixed 60 s lead a 60 s token was due for
+  // refresh on arrival, and a tab sent 9–29 refresh grants in 45 s.
+  it.each([
+    ['earliest jitter', 0, 30_000],
+    ['no jitter', 0.5, 40_000],
+    ['latest jitter', 1, 50_000],
+  ])('a 60 s token is refreshed half to five-sixths into its life, never in a burst (%s)', async (_n, r, every) => {
+    try {
+      setAuthInternalsForTests({ random: () => r });
+      kc.accessTtl = 60;
+      await signIn(new FakePage('/'));
+      const at: number[] = [];
+      for (let t = 0; t < 600_000; t += 1_000) {
+        const before = refreshes().length;
+        await vi.advanceTimersByTimeAsync(1_000);
+        if (refreshes().length > before) at.push(t + 1_000);
+      }
+      expect(at[0]).toBe(every);
+      expect(at.length).toBe(Math.floor(600_000 / every));
+      for (let i = 1; i < at.length; i++) expect(at[i]! - at[i - 1]!).toBe(every);
+    } finally {
+      setAuthInternalsForTests({ random: () => Math.random() });
+    }
+  });
+
+  it('a 300 s token keeps the minute lead: refreshed at exp − 60 s', async () => {
+    await signIn(new FakePage('/'));
+    await vi.advanceTimersByTimeAsync(239_999);
+    expect(refreshes()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refreshes()).toHaveLength(1);
+  });
+
+  // docs/e2e/integrated-deployment-report.md, Issue 19: WebKit cancels a page's requests as a navigation
+  // starts; the old page took the cancelled refresh for a network failure and its prompt=none restore
+  // replaced the user's navigation.
+  describe('a refresh cancelled by a navigation away', () => {
+    /** The next token request: the page starts leaving (`event`), then the browser cancels the request. */
+    function cancelledByNavigation(page: FakePage, event: 'beforeunload' | 'pagehide') {
+      kc.fetch.mockImplementationOnce(async () => {
+        page.events.dispatchEvent(new Event(event));
+        throw new TypeError('Load failed');
+      });
+    }
+
+    it.each(['beforeunload', 'pagehide'] as const)('does not redirect the leaving page (%s); its tokens are dropped', async (event) => {
+      const page = new FakePage('/t/acme/');
+      const { idp } = await signIn(page);
+      cancelledByNavigation(page, event);
+      expect(await idp.refresh()).toBe(false);
+      await flush();
+      expect(page.assigned).toEqual([]);
+      expect(await idp.getAccessToken()).toBeUndefined(); // the lineage is ambiguous: never reused
+      expect(warns).not.toHaveBeenCalledWith(expect.stringContaining('outcome unknown'), expect.anything());
+    });
+
+    it('a page that stays (a cancelled navigation, a download) restores after 10 s', async () => {
+      const page = new FakePage('/t/acme/');
+      const { idp } = await signIn(page);
+      cancelledByNavigation(page, 'beforeunload');
+      await idp.refresh();
+      await vi.advanceTimersByTimeAsync(9_999);
+      await flush();
+      expect(page.assigned).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      await flush(() => page.assigned.length > 0);
+      expect(new URL(page.assigned[0]!).searchParams.get('prompt')).toBe('none');
+    });
+
+    it('a page that stays but is offline by then waits for the network before restoring', async () => {
+      const page = new FakePage('/t/acme/');
+      const { idp } = await signIn(page);
+      cancelledByNavigation(page, 'beforeunload');
+      await idp.refresh();
+      page.online = false;
+      await vi.advanceTimersByTimeAsync(10_000);
+      await flush();
+      expect(page.assigned).toEqual([]); // no redirect to the browser's offline error page
+      page.goOnline();
+      await flush(() => page.assigned.length > 0);
+      expect(new URL(page.assigned[0]!).searchParams.get('prompt')).toBe('none');
+    });
+
+    it('a logout during the grace period cancels the restore', async () => {
+      const page = new FakePage('/t/acme/');
+      const { idp } = await signIn(page);
+      cancelledByNavigation(page, 'beforeunload');
+      await idp.refresh();
+      await idp.logout();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await flush();
+      expect(nonSignOut(page)).toEqual([]); // no restore redirect
+      expect(idp.getState()).toMatchObject({ status: 'anonymous', reason: 'signed-out' });
+    });
+
+    it('listens only while the request is in flight: an earlier beforeunload does not count', async () => {
+      const page = new FakePage('/t/acme/');
+      const { idp } = await signIn(page);
+      page.events.dispatchEvent(new Event('beforeunload')); // e.g. a navigation another handler cancelled
+      kc.fetch.mockImplementationOnce(async () => Promise.reject(new TypeError('Failed to fetch')));
+      expect(await idp.refresh()).toBe(false);
+      await flush(() => page.assigned.length > 0);
+      expect(new URL(page.assigned[0]!).searchParams.get('prompt')).toBe('none'); // restored at once, as before
+      expect(warns).toHaveBeenCalledWith(expect.stringContaining('outcome unknown'), expect.anything());
+    });
+
+    it('removes its listeners after the request', async () => {
+      const page = new FakePage('/t/acme/');
+      const { idp } = await signIn(page);
+      const add = vi.spyOn(globalThis, 'addEventListener');
+      const remove = vi.spyOn(globalThis, 'removeEventListener');
+      expect(await idp.refresh()).toBe(true);
+      const added = add.mock.calls.filter(([t]) => t === 'beforeunload' || t === 'pagehide').map(([t, l]) => [t, l]);
+      expect(added.map(([t]) => t).sort()).toEqual(['beforeunload', 'pagehide']);
+      for (const [t, l] of added) expect(remove).toHaveBeenCalledWith(t, l);
+    });
   });
 
   it('jitters the refresh by up to ±10 s around exp − 60 s', async () => {

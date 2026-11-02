@@ -1,7 +1,7 @@
 // The identifier-first screen (FE spec A2): a company slug or a pending invitation's email, resolved
 // through PUB-1. "Not found" is one generic message, never which input failed.
 import { useState } from 'react';
-import type { Workspace } from '@platform/frontend-sdk/auth';
+import type { Workspace } from '@bcbp-solutions-fzc-llc/frontend-sdk/auth';
 import { workspaceResolver } from './iam';
 import { hideScreen, showScreen } from './screen';
 

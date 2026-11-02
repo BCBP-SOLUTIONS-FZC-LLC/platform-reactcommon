@@ -7,7 +7,7 @@ stateDiagram-v2
 
     state authenticated {
         [*] --> idle_timer
-        idle_timer --> refreshing: timer at exp − 60 s ± 10 s · getAccessToken near expiry · 401
+        idle_timer --> refreshing: timer at exp − min(60 s, life/3) ± jitter · getAccessToken near expiry · 401
         refreshing --> idle_timer: 200 → rotate tokens (never reuse a replaced refresh token)
         refreshing --> waiting_online: offline before sending → keep the token
         waiting_online --> refreshing: online event

@@ -13,7 +13,7 @@
 // Environment: ORIGIN_VERIFY_SECRET, COLLECTOR_LOGS_URL (e.g. http://otel-collector:4318/v1/logs),
 // SERVICE_NAMESPACE (the page's domain, 'portal' per §D1), DEPLOYMENT_ENVIRONMENT.
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { sanitizeString } from '@platform/frontend-sdk/core';
+import { sanitizeString } from '@bcbp-solutions-fzc-llc/frontend-sdk/core';
 
 const MAX_BODY = 64 * 1024;
 const MAX_REPORTS = 20;
@@ -125,8 +125,15 @@ export function originVerified(presented, secrets) {
 
 const reply = (statusCode) => ({ statusCode, headers: { 'cache-control': 'no-store' }, body: '' });
 
-/** Lambda function URL handler (payload format 2.0). */
-export async function handler(event, deps = { fetch: globalThis.fetch, env: process.env }) {
+/**
+ * The Lambda entry point (function URL, payload format 2.0). The runtime calls it as
+ * handler(event, context): the context is never read, so it cannot stand in for `deps` (it once
+ * did, and every invocation threw: docs/e2e/integrated-deployment-report.md, Issue 11).
+ */
+export const handler = (event) => handle(event, { fetch: globalThis.fetch, env: process.env });
+
+/** The report handling, with its dependencies (fetch, env) passed in. */
+export async function handle(event, deps) {
   // Before anything else, so a caller that bypassed CloudFront learns nothing about the endpoint.
   if (!originVerified(event?.headers?.[ORIGIN_VERIFY_HEADER], deps.env.ORIGIN_VERIFY_SECRET)) return reply(403);
   if (event?.requestContext?.http?.method !== 'POST') return reply(405);

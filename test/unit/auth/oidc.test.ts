@@ -199,7 +199,7 @@ describe('callback', () => {
     ['azp', { azp: 'other-client' }],
     ['nonce', { nonce: 'replayed' }],
     ['exp', { exp: Math.floor(Date.parse('2026-10-30T09:58:00Z') / 1000) }],
-    ['iat', { iat: Math.floor(Date.parse('2026-10-30T10:02:00Z') / 1000) }],
+    ['iat', { iat: 'yesterday' }],
     ['iss', { iss: `${IDP}/realms/tenant-globex` }],
   ])('rejects an ID token with a bad %s and keeps no token', async (_name, claims) => {
     const page = new FakePage('/');
@@ -209,10 +209,44 @@ describe('callback', () => {
     expect(getRuntime().storageNamespace).toBe('anon');
   });
 
-  it('accepts exp and iat within 60 s of skew', async () => {
-    const now = Math.floor(Date.now() / 1000);
-    const { state } = await signIn(new FakePage('/'), ACME, { claims: { exp: now - 30, iat: now + 30 } });
-    expect(state.status).toBe('authenticated');
+  // docs/e2e report, Issue 8: token times are judged on the provider's clock (iat at receipt), so a
+  // device clock a few minutes off no longer refuses a short-lived token; far off, the user is told.
+  describe('the device clock (Issue 8)', () => {
+    const at = (offsetS: number, lifetimeS: number) => {
+      const iat = Math.floor(Date.now() / 1000) - offsetS; // the provider's clock: the device is offsetS ahead
+      return { iat, exp: iat + lifetimeS };
+    };
+
+    it.each([
+      ['3 minutes ahead, 60 s token', 180, 60],
+      ['9 minutes behind, 60 s token', -540, 60],
+      ['exact, 60 s token', 0, 60],
+    ])('signs in with the device clock %s', async (_n, offset, lifetime) => {
+      const { state } = await signIn(new FakePage('/'), ACME, { claims: at(offset, lifetime) });
+      expect(state.status).toBe('authenticated');
+    });
+
+    it('more than 10 minutes off: anonymous with reason device-clock, an error log naming the offset, no token', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { idp, state } = await signIn(new FakePage('/'), ACME, { claims: at(1_200, 300) });
+      expect(state).toEqual({ status: 'anonymous', reason: 'device-clock' });
+      expect(await idp.getAccessToken()).toBeUndefined();
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining('the device clock is off'), expect.objectContaining({ clock_offset_s: 1_200 }));
+    });
+
+    it('still refuses a token whose exp precedes its iat (beyond 60 s)', async () => {
+      const iat = Math.floor(Date.now() / 1000);
+      const { state } = await signIn(new FakePage('/'), ACME, { claims: { iat, exp: iat - 120 } });
+      expect(state).toEqual({ status: 'anonymous', reason: 'none' });
+    });
+
+    it('step-up freshness (auth_time) is judged on the provider\'s clock too', async () => {
+      // The device is 5 minutes ahead; the user authenticated 1 minute ago in the provider's time.
+      const c = at(300, 300);
+      const { idp } = await signIn(new FakePage('/'), ACME, { claims: { ...c, auth_time: c.iat - 60 } });
+      expect(idp.needsStepUp(120)).toBe(false); // on the device clock alone it would be 6 minutes: true
+      expect(idp.needsStepUp(30)).toBe(true);
+    });
   });
 
   it('uses a code once: a replayed callback is ignored and its parameters stripped', async () => {
@@ -493,7 +527,7 @@ describe('idle timeout', () => {
 });
 
 describe('logout', () => {
-  it('local: drops tokens, clears app storage, rotates the session id, marks signed-out, tells other tabs', async () => {
+  it('{ global: false } (local only): drops tokens, clears app storage, rotates the session id, marks signed-out, tells other tabs; sends no end-session request', async () => {
     const shared = new FakePage('/').local;
     const a = new FakePage('/', shared);
     const b = new FakePage('/', shared);
@@ -504,7 +538,7 @@ describe('logout', () => {
     const cached = JSON.stringify([{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
     shared.setItem(WORKSPACE_CACHE_KEY, cached);
 
-    await tabA.logout();
+    await tabA.logout({ global: false });
     expect(tabA.getState()).toEqual({ status: 'anonymous', workspace: ACME, reason: 'signed-out' });
     expect(await tabA.getAccessToken()).toBeUndefined();
     expect(shared.getItem('tenant-acme:tenders:filter')).toBeNull();
@@ -524,7 +558,24 @@ describe('logout', () => {
     expect(await provider().init()).toEqual({ status: 'anonymous', reason: 'signed-out' });
   });
 
-  it('global: also ends the SSO session at the realm logout endpoint', async () => {
+  it('by default (report Issue 10): signs out locally as above, then ends the SSO session at the realm end-session endpoint', async () => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page);
+    const before = page.assigned.length;
+    await idp.logout();
+    expect(idp.getState()).toEqual({ status: 'anonymous', workspace: ACME, reason: 'signed-out' });
+    expect(await idp.getAccessToken()).toBeUndefined();
+    expect(page.local.getItem(SIGNED_OUT_KEY)).not.toBeNull();
+    expect(FakeBroadcastChannel.sent).toEqual([{ type: 'logout' }]);
+    expect(page.assigned.slice(before)).toHaveLength(1); // exactly one navigation: the end-session request
+    const url = new URL(page.assigned.at(-1)!);
+    expect(`${url.origin}${url.pathname}`).toBe(`${IDP}/realms/tenant-acme/protocol/openid-connect/logout`);
+    expect(url.searchParams.get('client_id')).toBe(CLIENT);
+    expect(url.searchParams.get('post_logout_redirect_uri')).toBe(`${ORIGIN}/`);
+    expect(url.searchParams.get('id_token_hint')!.split('.')).toHaveLength(3);
+  });
+
+  it('{ global: true } is the same as the default', async () => {
     const page = new FakePage('/');
     const { idp } = await signIn(page);
     await idp.logout({ global: true });

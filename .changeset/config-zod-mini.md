@@ -1,5 +1,5 @@
 ---
-'@platform/frontend-sdk': minor
+'@bcbp-solutions-fzc-llc/frontend-sdk': minor
 ---
 
 `/config`: the runtime-config schema uses `zod/mini` instead of classic Zod, which halves the SDK the

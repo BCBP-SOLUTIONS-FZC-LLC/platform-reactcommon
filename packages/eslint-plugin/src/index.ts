@@ -31,17 +31,17 @@ export const rules: Record<string, Rule.RuleModule> = {
 const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
 
 const plugin: ESLint.Plugin & { configs: { recommended: Linter.Config } } = {
-  meta: { name: '@platform/eslint-plugin', version },
+  meta: { name: '@bcbp-solutions-fzc-llc/eslint-plugin', version },
   rules,
   configs: { recommended: {} },
 };
 
 /** Flat config: `export default [platform.configs.recommended, …]`. */
 plugin.configs.recommended = {
-  name: '@platform/recommended',
-  plugins: { '@platform': plugin },
+  name: '@bcbp-solutions-fzc-llc/recommended',
+  plugins: { '@bcbp-solutions-fzc-llc': plugin },
   rules: {
-    ...Object.fromEntries(Object.keys(rules).map((name) => [`@platform/${name}`, 'error'])),
+    ...Object.fromEntries(Object.keys(rules).map((name) => [`@bcbp-solutions-fzc-llc/${name}`, 'error'])),
     'no-eval': 'error',
     'no-implied-eval': 'error',
     'no-new-func': 'error',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inlineDiagrams, renderMetricRegistry, renderProblemRegistry, renderSubpathGraph, type MetricRegistryContract } from './docs.ts';
+import { inlineDiagrams, renderMetricRegistry, renderProblemRegistry, renderSubpathGraph, renderTier1Proposal, type MetricRegistryContract, type Tier1Proposal } from './docs.ts';
 
 const registry: MetricRegistryContract = {
   constLabels: ['domain', 'service', 'environment'],
@@ -103,5 +103,54 @@ describe('renderSubpathGraph', () => {
     expect(mmd).toContain('pkg__opentelemetry_(["@opentelemetry/*"])');
     expect(mmd).toContain('sp_react -.-> pkg_react');
     expect(mmd).not.toContain('_comment');
+  });
+});
+
+describe('renderTier1Proposal', () => {
+  const proposal: Tier1Proposal = {
+    submitted_by: 'platform-reactcommon',
+    bucket_presets: { web_vitals: [0.1, 2.5] },
+    labels: { mfe: { description: 'Micro-frontend', pattern: '^[a-z]|x$', max_values: 100, cardinality: 'manifest' } },
+    metrics: [
+      {
+        name: 'platform_web_http_client_duration_seconds',
+        tier: 'platform',
+        type: 'histogram',
+        unit: 'seconds',
+        buckets: 'request_duration',
+        status: 'proposed',
+        owner: 'platform-reactcommon',
+        help: 'Browser API calls.',
+        labels: ['route', 'status_class', 'mfe'],
+        label_values: { status_class: ['5xx'] },
+        aggregation: 'p95 per route.',
+        cardinality: 'route x mfe.',
+        governance_notes: 'New name.',
+      },
+    ],
+    amendments: [
+      { kind: 'label_values', metric: 'platform_telemetry_label_overflow_total', label: 'label', add: ['page_route'], governance_notes: 'SDK as an emitter.' },
+      { kind: 'label_description', label: 'route', description: 'Route template', governance_notes: 'Widened.' },
+    ],
+  };
+  const md = renderTier1Proposal(proposal, registry, ['proposal.json']);
+
+  it('marks the page generated and lists every metric with its required labels', () => {
+    expect(md).toContain('<!-- Generated from proposal.json by `pnpm docs:sync`. Do not edit. -->');
+    expect(md).toContain('| `platform_web_http_client_duration_seconds` | histogram (seconds, `request_duration` buckets) | `route`, `status_class`, `mfe` | proposed |');
+    expect(md).toContain('- **Required labels:** `domain`, `service`, `environment`');
+  });
+
+  it("gives each label's allowed values: the per-metric enum, else the vocabulary or pattern, new or existing", () => {
+    expect(md).toContain('  - `route` (existing): pattern `^/.*$`, at most 1000 values');
+    expect(md).toContain('  - `status_class` (existing): `5xx`');
+    expect(md).toContain('  - `mfe` (new): pattern `^[a-z]|x$`, at most 100 values');
+  });
+
+  it('escapes table pipes in new labels, and lists presets and amendments', () => {
+    expect(md).toContain('| `mfe` | Micro-frontend | pattern `^[a-z]\\|x$`, at most 100 values | manifest |');
+    expect(md).toContain('- `web_vitals`: 0.1, 2.5 (seconds)');
+    expect(md).toContain('- `platform_telemetry_label_overflow_total`: label `label` gains `page_route`. SDK as an emitter.');
+    expect(md).toContain('- Label `route`: description becomes "Route template" Widened.');
   });
 });

@@ -1,4 +1,4 @@
-// The rules of @platform/eslint-plugin. Each enforces something the design doc already requires of the
+// The rules of @bcbp-solutions-fzc-llc/eslint-plugin. Each enforces something the design doc already requires of the
 // shell and remotes; the rule's doc string names the section.
 import type { Rule } from 'eslint';
 import type * as ESTree from 'estree';
@@ -115,8 +115,8 @@ const STORAGES = new Set(['localStorage', 'sessionStorage']);
 const GLOBAL_OBJECTS = new Set(['window', 'globalThis', 'self']);
 
 export const noRawStorage = rule(
-  "Use storage(appId) from '@platform/frontend-sdk/storage', which namespaces keys by workspace and refuses token-like keys (§C1 /storage).",
-  { raw: "Use storage(appId) from '@platform/frontend-sdk/storage' instead of {{name}}: keys must be namespaced per workspace, and tokens never stored." },
+  "Use storage(appId) from '@bcbp-solutions-fzc-llc/frontend-sdk/storage', which namespaces keys by workspace and refuses token-like keys (§C1 /storage).",
+  { raw: "Use storage(appId) from '@bcbp-solutions-fzc-llc/frontend-sdk/storage' instead of {{name}}: keys must be namespaced per workspace, and tokens never stored." },
   (context) => ({
     'Program:exit'(program: ESTree.Program) {
       const scope = context.sourceCode.getScope(program);
@@ -136,9 +136,9 @@ export const noRawStorage = rule(
 const HTML_PROPS = new Set(['innerHTML', 'outerHTML']);
 
 export const noUnsafeHtml = rule(
-  "HTML goes through sanitizeHtml from '@platform/frontend-sdk/security' (DOMPurify + Trusted Types, §C1 /security, §C3 CSP).",
+  "HTML goes through sanitizeHtml from '@bcbp-solutions-fzc-llc/frontend-sdk/security' (DOMPurify + Trusted Types, §C1 /security, §C3 CSP).",
   {
-    unsanitized: "{{what}} needs sanitizeHtml(...) from '@platform/frontend-sdk/security' (Trusted Types are enforced).",
+    unsanitized: "{{what}} needs sanitizeHtml(...) from '@bcbp-solutions-fzc-llc/frontend-sdk/security' (Trusted Types are enforced).",
     write: '{{what}} is never allowed: it writes unsanitized HTML.',
   },
   (context) => {

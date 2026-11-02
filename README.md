@@ -8,7 +8,7 @@ The platform's shared **frontend SDK for React micro-frontends**: the browser-si
 It is also the browser's side of IAM: Keycloak sign-in with tokens kept in memory only, workspace (realm) choice, session restore, step-up MFA.
 
 **Repository:** `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon`
-**Packages:** `@platform/frontend-sdk` · `@platform/webpack-preset` · `@platform/eslint-plugin`. pnpm monorepo, Node ≥ 22, TypeScript 6, ESM only. One version for all three (`1.0.0-alpha.N` until the first environment). **Never deployed**: consumers install the packages; `examples/` holds a reference shell and remote that are built and checked in CI, never run in production.
+**Packages:** `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin`. pnpm monorepo, Node ≥ 22, TypeScript 6, ESM only. One version for all three (`1.0.0-alpha.N` until the first environment). **Never deployed**: consumers install the packages; `examples/` holds a reference shell and remote that are built and checked in CI, never run in production.
 **Design:**
 - **Decisions:** [`docs/design/frontend-sdk-design.md`](docs/design/frontend-sdk-design.md) is the decision record, including the public API per subpath.
 - **Implementation:** [ARCHITECTURE.md](ARCHITECTURE.md) and the [LLD](docs/lld/platform-reactcommon-lld.md) describe what's built.
@@ -26,11 +26,11 @@ It is also the browser's side of IAM: Keycloak sign-in with tokens kept in memor
 | **UI permissions** (`hasPermission`, `<Can>`) from the user's roles | Authorization decisions: the gateway and services. UI permissions are hints |
 | The **`ApiClient`**: route templates, correlation headers, token only to the page's origin, retries, 401 refresh, RFC 9457 problems | The APIs themselves, rate limiting, CORS (same-origin through CloudFront) |
 | **Telemetry export** over OTLP/HTTP to `/otel`: correlated, redacted, consent-gated, bounded queues; registry rules for metrics | The OTel Collector, Tempo, Loki, Mimir, Grafana; ratifying `proposed` metrics (observability governance) |
-| **Micro-frontend runtime**: the remote manifest, `loadRemote`, kill switches, chunk-load recovery, new-version detection; the shared-module map (`@platform/webpack-preset`) | CloudFront, S3 and the deploy pipeline (`examples/cloudfront` documents what they must do) |
-| **UI support**: i18n (ICU-lite, RTL), formatting, HTML sanitizing, the Trusted Types policy | UI components and the design system (`@platform/ui`) |
+| **Micro-frontend runtime**: the remote manifest, `loadRemote`, kill switches, chunk-load recovery, new-version detection; the shared-module map (`@bcbp-solutions-fzc-llc/webpack-preset`) | CloudFront, S3 and the deploy pipeline (`examples/cloudfront` documents what they must do) |
+| **UI support**: i18n (ICU-lite, RTL), formatting, HTML sanitizing, the Trusted Types policy | UI components and the design system (`@bcbp-solutions-fzc-llc/ui`) |
 | **Per-tenant browser storage** that refuses token-like keys | IAM APIs (PUB-1 resolve, P-35 session context): the shell implements them as ports over the `ApiClient` |
 
-Shell and remotes import **subpaths only** (`@platform/frontend-sdk/http`); the package root throws. Remotes take the SDK from the shell through Module Federation (`import: false`), never bundling it, so the whole page shares one identity, one session, one consent state and one token source.
+Shell and remotes import **subpaths only** (`@bcbp-solutions-fzc-llc/frontend-sdk/http`); the package root throws. Remotes take the SDK from the shell through Module Federation (`import: false`), never bundling it, so the whole page shares one identity, one session, one consent state and one token source.
 
 **Tracing guarantee:** every API call is a span whose `traceparent` the backend continues. The server's `X-Trace-ID` comes back on every response and error, so one trace id finds the browser span, the gateway, the service logs and Tempo.
 
@@ -40,7 +40,7 @@ Shell and remotes import **subpaths only** (`@platform/frontend-sdk/http`); the 
 
 Every remote needs the same cross-cutting concerns: who the user is, how to call an API, what an error means, how to log and measure, how not to break under the CSP, and how to fail without taking the shell down. Centralizing them in one library means:
 
-- **One trust model.** Tokens never touch storage, identity headers are never sent, HTML is always sanitized, redirects are always checked. This is implemented and tested once, and enforced in consumer code by `@platform/eslint-plugin`.
+- **One trust model.** Tokens never touch storage, identity headers are never sent, HTML is always sanitized, redirects are always checked. This is implemented and tested once, and enforced in consumer code by `@bcbp-solutions-fzc-llc/eslint-plugin`.
 - **One error contract.** Every remote reads gincommon's and fastapicommon's problems the same way. Interop tests run the SDK's own parser against both servers.
 - **One log and metric vocabulary.** Browser logs carry the same fields as backend logs (`trace_id`, `request_id`, `session_id`), and browser metrics follow the same registry and `metricslint` rules as every service. Cross-tier queries work without translation.
 - **One micro-frontend runtime.** Remotes load, fail, recover and update the same way, and share exactly one copy of React, the OTel API and the SDK.
@@ -88,14 +88,14 @@ The 17 subpaths fall into seven functional areas, each with its own page in [`do
 | `/authz` | `roleMapAuthorizer`, `setAuthorizer`, `setAuthzSubject`, `hasPermission`, `denyAll` |
 | `/storage` | `storage(appId, { area })`, `clearAllAppStorage`, `workspaceNamespace`, `ForbiddenStorageKeyError` |
 
-### Micro-frontend platform — `/mfe`, `/flags`, `/nav` (+ `@platform/webpack-preset`)
+### Micro-frontend platform — `/mfe`, `/flags`, `/nav` (+ `@bcbp-solutions-fzc-llc/webpack-preset`)
 
 | Subpath / package | Main exports |
 |---|---|
 | `/mfe` | `loadManifest`, `loadRemote`, `RemoteDisabledError`, `RemoteLoadError`, `isChunkLoadError`, `reloadOnceForChunkError`, `startVersionPolling`, `subscribeAppUpdate` |
 | `/flags` | `getFlag`, `setFlagProvider`, `runtimeConfigFlagProvider`, `sessionContextFlagProvider`, `isRemoteKilled` |
 | `/nav` | `navigate(appId, path)`, `registerNavigator`, `isSafeRedirect` |
-| `@platform/webpack-preset` | `platformWebpackConfig({ role, name, exposes, mode })`, `platformShared`, `sharedFor(role)`, `containerName(remote)` |
+| `@bcbp-solutions-fzc-llc/webpack-preset` | `platformWebpackConfig({ role, name, exposes, mode })`, `platformShared`, `sharedFor(role)`, `containerName(remote)`, `ProvideSdkPlugin` (added to the shell: every SDK subpath in the share scope) |
 
 ### UI support — `/i18n`, `/security`
 
@@ -104,13 +104,13 @@ The 17 subpaths fall into seven functional areas, each with its own page in [`do
 | `/i18n` | `initializeI18n`, `registerNamespace`, `setLocale`, `t`, `problemMessage`, `formatDate`, `formatNumber`, `formatMoney` |
 | `/security` | `installTrustedTypesPolicy`, `sanitizeHtml`, `isAllowedOrigin` |
 
-### Developer surface — `/react`, `/testing` (+ `@platform/eslint-plugin`)
+### Developer surface — `/react`, `/testing` (+ `@bcbp-solutions-fzc-llc/eslint-plugin`)
 
 | Subpath / package | Main exports |
 |---|---|
-| `/react` | `PlatformProvider`, `useSession`, `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useApi`, `useApiClient`, `useT`, `useLocale`, `useFeatureFlag`, `useHasPermission`, `Can`, `useStepUp`, `useReadOnly`, `useRouteTemplate`, `useBeforeAuthRedirect`, `useOnlineStatus`, `useAppUpdate`, `useSwitchWorkspace`, `MFEErrorBoundary`, `RemoteBoundary`, `installGlobalErrorHandlers` |
+| `/react` | `PlatformProvider`, `useSession`, `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useApi`, `useApiClient`, `useT`, `useLocale`, `useFeatureFlag`, `useHasPermission`, `Can`, `useStepUp`, `useReadOnly`, `useRouteTemplate`, `useBeforeAuthRedirect`, `useOnlineStatus`, `useAppUpdate`, `useSwitchWorkspace`, `useSignOut`, `MFEErrorBoundary`, `RemoteBoundary`, `installGlobalErrorHandlers` |
 | `/testing` (dev only) | `createTestPlatform`, `mockApi`, `mockProblem`, `renderMetricInventory` |
-| `@platform/eslint-plugin` | `configs.recommended`; rules `no-sdk-root-import`, `no-sdk-deep-import`, `no-identity-headers`, `no-raw-storage`, `no-unsafe-html`, `no-runtime-css-in-js`, `api-route-template` |
+| `@bcbp-solutions-fzc-llc/eslint-plugin` | `configs.recommended`; rules `no-sdk-root-import`, `no-sdk-deep-import`, `no-identity-headers`, `no-raw-storage`, `no-unsafe-html`, `no-runtime-css-in-js`, `api-route-template` |
 
 ---
 
@@ -190,7 +190,7 @@ L2  tracing · logging · metrics     L5  react · testing
 
 | Component | Responsibility |
 |---|---|
-| `PlatformRuntime` (`globalThis[Symbol.for('@platform/frontend-sdk')]`) | One registry per page (identity, consent, config, session, token source, flags, permissions, manifest, i18n, change listeners) shared by every SDK copy; a second copy logs one error and binds to it when the major matches |
+| `PlatformRuntime` (`globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]`) | One registry per page (identity, consent, config, session, token source, flags, permissions, manifest, i18n, change listeners) shared by every SDK copy; a second copy logs one error and binds to it when the major matches |
 | OIDC provider (`/auth`) | Holds tokens in a closure; per-tab refresh lineage; `BroadcastChannel('platform-auth')` for `logout` / `workspace-switched` (never a token) |
 | Export pipelines (`/tracing`, `/logging`, `/metrics`) | OTLP/HTTP to `/otel`; drop-oldest bounded queues; consent gates; beacon on page hide |
 | Instrument port (`src/internal/instruments.ts`) | Where `/http`, `/mfe` and `/react` record platform metrics without importing names; a no-op until the Tier 1 names are ratified |
@@ -210,8 +210,8 @@ L2  tracing · logging · metrics     L5  react · testing
 
 ### 1. Prerequisites
 
-- **Toolchain:** React 18.3+ or 19, webpack 5 with Module Federation, Node ≥ 22 for builds.
-- **Packages:** `@platform/frontend-sdk`, plus `@platform/webpack-preset` and `@platform/eslint-plugin` as dev dependencies. They're published as GitHub Release tarballs (see [Releases](#releases)).
+- **Toolchain:** React 19 (`^19.0.0`; one React major for the shell and every remote, see [VERSIONING.md](VERSIONING.md#supported-react-versions)), webpack 5 with Module Federation, Node ≥ 22 for builds.
+- **Packages:** `@bcbp-solutions-fzc-llc/frontend-sdk`, plus `@bcbp-solutions-fzc-llc/webpack-preset` and `@bcbp-solutions-fzc-llc/eslint-plugin` as dev dependencies. They're published to GitHub Packages: map the scope in `.npmrc` and authenticate with a `read:packages` token ([VERSIONING.md](VERSIONING.md#consume-a-release)).
 - **Hosting:** the app is served behind the platform's CloudFront distribution: same-origin `/api`, `/otel`, `/config/runtime.json`, `/remotes/`, and the response headers of [`examples/cloudfront`](examples/cloudfront/README.md) (the CSP with the three Trusted Types policies).
 
 ### 2. Shell
@@ -356,6 +356,9 @@ pnpm verify
 | `pnpm contracts:sync` / `contracts:check` | Regenerate / check `contracts/` (`--update-pins` moves the pins to the checkouts' HEAD) |
 | `pnpm docs:sync` / `docs:check` | Generated docs and the diagram blocks in ARCHITECTURE.md |
 | `pnpm metrics:parity` | The SDK's metric checks vs gincommon's `metricslint` |
+| `pnpm publish:check` | The packed tarballs (`dist-packages/`) are publishable to GitHub Packages: scope, registry, repository link, one version, no `workspace:` specifiers; `--dist-tag` prints the tag a release uses |
+| `pnpm metrics:proposal` | The Tier 1 registry proposal merged into gincommon's registry, judged by `metricslint` (`registry`, `check -strict`, `refs` on `monitoring/`); `--emit <file>` writes the candidate `registry.json` |
+| `pnpm run rules-check` / `dashboards-check` | `promtool` check and unit tests for `monitoring/prometheus`, and the dashboards' PromQL syntax (Docker) |
 | `pnpm examples:check` | CSP and sharing checks on the example builds (after `pnpm build`) |
 | `pnpm changeset` | Record a change to a published package |
 | `pnpm run version-packages` | Release PR only: `changeset version` + `exports:sync` |
@@ -384,6 +387,7 @@ The same task names as platform-gincommon's Makefile, as `package.json` scripts.
 | `test-cover` | `make test-cover` | Tests with coverage (`coverage/`) |
 | `test-smoke` | `make test-smoke` | `test/smoke`: the example builds served as CloudFront serves them (after `pnpm build`), or a deployed shell with `SMOKE_BASE_URL` |
 | `test-browser` | (none) | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP (`test-browser-install` installs the browsers once) |
+| `test-react-floor` | (none) | The typecheck, unit suite, build and example checks on React 19.0.0, the floor of the peer range (CI job `react-floor`); restores the lockfile afterwards |
 | `test-stack` | `stack-up` | `test/stack`: the example shell in the three browsers against Keycloak, Envoy with the real IAM services, the distribution on floci and an OTel Collector (`stack-up` / `stack-down` start and remove it) |
 | `test-smoke-package` | `make test-smoke-image` | Build, pack the tarballs and run CI's tarball smoke tests against them (needs npm registry access) |
 | `build` | `make build` | Packages, then the example builds |
@@ -532,7 +536,7 @@ Build-time constants (shell): `__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack
 | **HTML** | Only through `sanitizeHtml` (DOMPurify + Trusted Types); lint rule `no-unsafe-html` |
 | **Tenant isolation in the browser** | Storage namespaced by realm or `trial:<tenant_id>`; cleared on logout and workspace switch; nothing written before sign-in |
 | **Redirects** | Every `returnUrl` and `navigate` target passes `isSafeRedirect` |
-| **Remote code** | Entries only from the page's origin or exact allowed origins, checked twice; SRI when the manifest gives it; kill switch |
+| **Remote code** | Entries only from the page's origin or exact allowed origins, checked twice; SRI on the entry when the manifest gives it, and on every lazily loaded chunk in production builds (`ChunkIntegrityPlugin`: the entry carries each chunk's sha384, a chunk without one fails closed); kill switch |
 | **Telemetry** | Redacted with gincommon's rules (sensitive keys, JWT, `Bearer`, URL queries); consent-gated; the collector drops per-browser attributes |
 | **Supply chain** | Actions pinned to commit SHAs; Trivy on dependencies, secrets and config; `pnpm audit --prod`; CycloneDX SBOM; Cosign-signed release checksums. Vulnerability reporting and trust model: [SECURITY.md](SECURITY.md) |
 
@@ -552,7 +556,7 @@ This follows the [Enterprise Platform Observability Standard](docs/observability
   - `platform_web_errors_total`;
   - `platform_web_vitals_seconds`, `platform_web_vital_ratings_total`.
 
-  They're recorded through the instrument port and stay no-ops until governance ratifies the names (design doc §D5, §D6 K).
+  They're recorded through the instrument port and stay no-ops until governance ratifies the names (design doc §D5, §D6 K). The submission, with semantic definitions, labels, dependencies, SLOs and the interim logs-and-traces coverage: [tier1-ratification.md](docs/observability/tier1-ratification.md); the entries: [tier1-proposal.md](docs/observability/tier1-proposal.md) (generated from `monitoring/registry/platform-web.proposal.json`). The dashboard and rules that use them are in `monitoring/`.
 - **Tier 2, `<domain>_*`:** registry entries only, through `getDomainMeter`.
 - **Tier 3, `<domain>_<service>_*`:** free to add through `getServiceMeter`, validated at registration and by `metricslint` in the remote's CI.
 
@@ -574,7 +578,7 @@ This repository publishes npm packages; the shell and remotes that use them are 
 
 | Artefact | Purpose |
 |---|---|
-| `platform-frontend-sdk-X.Y.Z.tgz`, `platform-webpack-preset-X.Y.Z.tgz`, `platform-eslint-plugin-X.Y.Z.tgz` | What shells and remotes install (no npm registry yet) |
+| `bcbp-solutions-fzc-llc-frontend-sdk-X.Y.Z.tgz`, `…-webpack-preset-…`, `…-eslint-plugin-…` | The tarballs published to GitHub Packages (`@bcbp-solutions-fzc-llc/*`; [VERSIONING.md](VERSIONING.md#consume-a-release)), also attached here |
 | `checksums.txt` + `checksums.txt.sigstore.json` (Cosign) | Integrity of the tarballs and the SBOM |
 | `sbom.cyclonedx.json` | CycloneDX SBOM (Trivy) |
 
@@ -601,7 +605,7 @@ SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as publi
 TAG=v1.0.0-alpha.1
 REPO=BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
 IDENTITY="^https://github\.com/${REPO}/\.github/workflows/release\.yml@refs/(tags/${TAG}|heads/main)$"
-gh release download "$TAG" -R "$REPO" -p checksums.txt -p checksums.txt.sigstore.json -p 'platform-*.tgz'
+gh release download "$TAG" -R "$REPO" -p checksums.txt -p checksums.txt.sigstore.json -p 'bcbp-solutions-fzc-llc-*.tgz'
 cosign verify-blob --bundle checksums.txt.sigstore.json \
   --certificate-identity-regexp "$IDENTITY" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -624,7 +628,7 @@ Six workflow files and one shared setup action. Shell logic lives in `.github/sc
 - **`validate-quality.yml`** (reusable), in order:
   1. HTML-escaped-operator guard, action SHA pins, lockfile drift;
   2. exports and docs checks;
-  3. lint (with `@platform/eslint-plugin` on the examples), typecheck, build;
+  3. lint (with `@bcbp-solutions-fzc-llc/eslint-plugin` on the examples), typecheck, build;
   4. API reports, dependency-cruiser, example CSP checks;
   5. `pnpm audit --prod`.
 - **`validate-contracts.yml`** (reusable): checks out the seven backend repos at their pins, then runs `contracts:check` and `metrics:parity`.
@@ -652,8 +656,8 @@ There's no image. The shell and remotes are static files on S3 behind CloudFront
 
 | App | Uses |
 |---|---|
-| Shell `app.bcbpsolutions.com` (`domain: portal`, `service: web-app`) | Every area; the bootstrap; the IAM ports; `@platform/webpack-preset` (role `shell`) |
-| Remotes (tenders, IAM administration, workflow design, dashboard) | Subpaths from the shell (`import: false`), `MFEErrorBoundary`, `useApi`, `useT`, `getServiceMeter`; `@platform/webpack-preset` (role `remote`); `@platform/eslint-plugin` |
+| Shell `app.bcbpsolutions.com` (`domain: portal`, `service: web-app`) | Every area; the bootstrap; the IAM ports; `@bcbp-solutions-fzc-llc/webpack-preset` (role `shell`) |
+| Remotes (tenders, IAM administration, workflow design, dashboard) | Subpaths from the shell (`import: false`), `MFEErrorBoundary`, `useApi`, `useT`, `getServiceMeter`; `@bcbp-solutions-fzc-llc/webpack-preset` (role `remote`); `@bcbp-solutions-fzc-llc/eslint-plugin` |
 
 None is deployed yet; [`examples/shell`](examples/shell) and [`examples/remote-tenders`](examples/remote-tenders) are the reference implementations, built and checked in CI.
 
@@ -685,7 +689,7 @@ None is deployed yet; [`examples/shell`](examples/shell) and [`examples/remote-t
 | Token validation, identity headers, authorization decisions | API gateway (Envoy) + IAM AuthZ Enrichment |
 | Realms, clients, token lifetimes, MFA policy | IAM realm provisioner / Keycloak |
 | Business validation and domain logic | Each remote and its services |
-| UI components and design system | `@platform/ui` |
+| UI components and design system | `@bcbp-solutions-fzc-llc/ui` |
 | Collector, Tempo, Loki, Mimir, Grafana | Platform observability infrastructure |
 | Ratifying `proposed` metrics | Observability governance (registry PRs in platform-gincommon) |
 | CloudFront, S3, WAF, deploys | Infrastructure (`examples/cloudfront` documents the requirements) |

@@ -1,0 +1,112 @@
+# Reference OpenTelemetry Collector configuration, tier 1 of 2: the GATEWAY behind the distribution's
+# /otel/* behavior, which receives the browser's telemetry (frontend SDK). Run as many replicas as the
+# traffic needs. It implements the export rules in docs/observability/README.md and design doc §C1:
+#
+#   - receives OTLP/HTTP on /otel/v1/{traces,logs,metrics}: CloudFront forwards the viewer path unchanged;
+#   - drops per-browser resource attributes (service.instance.id, browser.*, user_agent.*): anyone can
+#     POST to /otel, and each tab would otherwise be its own series;
+#   - allowlists metric NAMES (platform_web_* or a registered <domain>_*, the name's domain equal to its
+#     domain label, a _total/_seconds/_bytes suffix), so nobody can mint series in Mimir by POSTing
+#     made-up names, and label VALUES (the registry vocabulary for domain, environment, page_route, mfe,
+#     vital, rating; this deployment's environment; any value cut at 128 characters);
+#   - sends traces and logs on, and routes every metric point of one stream to the same aggregator
+#     (loadbalancing, routing_key streamID). delta_to_cumulative keeps each stream's running total in
+#     the memory of one Collector: two Collectors adding up the same stream would write two different
+#     totals for one series. aggregator.yaml is tier 2.
+#
+# The domain list comes from the metric registry (contracts/metric-registry.json, labels.domain);
+# test/collector checks it is the registry's, and runs both tiers in the real Collector image.
+#
+#   PLATFORM_ENVIRONMENT        dev | staging | prod (points with another environment are dropped)
+#   TRACES_OTLP_ENDPOINT        e.g. http://tempo:4318
+#   LOGS_OTLP_ENDPOINT          e.g. http://loki:3100/otlp
+#   AGGREGATOR_HOSTNAME         a DNS name resolving to every aggregator (a headless service, a Cloud Map name)
+#   AGGREGATOR_TLS_INSECURE     true only on a private network without TLS (default false)
+
+receivers:
+  otlp/browser:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        traces_url_path: /otel/v1/traces
+        logs_url_path: /otel/v1/logs
+        metrics_url_path: /otel/v1/metrics
+        # The SDK's largest request is a span batch (512 spans); beacons are at most 60 KiB.
+        max_request_body_size: 2097152
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
+  resource/browser:
+    attributes:
+      - key: service.instance.id
+        action: delete
+      - pattern: ^browser\.
+        action: delete
+      - pattern: ^user_agent\.
+        action: delete
+
+  # Dropped: a point whose name or labels are outside what the SDK can emit (the registry:
+  # packages/frontend-sdk/src/internal/generated/metric-registry.ts), or not this deployment's.
+  filter/browser-allowlist:
+    error_mode: ignore
+    metrics:
+      metric:
+        - not IsMatch(name, "^(platform_web|iam|workflow|billing|tender_management|notifications|documents|bff|portal)_[a-z0-9_]+_(total|seconds|bytes)$")
+      datapoint:
+        - attributes["environment"] != "${env:PLATFORM_ENVIRONMENT}"
+        - not IsMatch(attributes["domain"], "^(iam|workflow|billing|tender_management|notifications|documents|bff|portal)$")
+        - not IsMatch(metric.name, "^platform_web_") and not IsMatch(metric.name, Concat(["^", attributes["domain"], "_"], ""))
+        - not IsMatch(attributes["service"], "^[a-z][a-z0-9_-]{0,62}$")
+        - attributes["rating"] != nil and not IsMatch(attributes["rating"], "^(good|needs_improvement|poor)$")
+        - attributes["vital"] != nil and not IsMatch(attributes["vital"], "^(lcp|inp|cls|ttfb|fcp)$")
+        - attributes["mfe"] != nil and not IsMatch(attributes["mfe"], "^[a-z][a-z0-9_-]{0,62}$")
+        - attributes["page_route"] != nil and not IsMatch(attributes["page_route"], "^(unknown|/[A-Za-z0-9_./:*~-]*)$")
+
+  transform/browser-truncate:
+    error_mode: ignore
+    metric_statements:
+      - context: datapoint
+        statements:
+          - truncate_all(attributes, 128)
+    log_statements:
+      - context: log
+        statements:
+          - truncate_all(attributes, 4096)
+
+  batch:
+    timeout: 5s
+
+exporters:
+  otlphttp/traces:
+    endpoint: ${env:TRACES_OTLP_ENDPOINT}
+  otlphttp/logs:
+    endpoint: ${env:LOGS_OTLP_ENDPOINT}
+  loadbalancing/metrics:
+    routing_key: streamID
+    protocol:
+      otlp:
+        tls:
+          insecure: ${env:AGGREGATOR_TLS_INSECURE:-false}
+    resolver:
+      dns:
+        hostname: ${env:AGGREGATOR_HOSTNAME}
+        port: "4317"
+
+service:
+  pipelines:
+    traces/browser:
+      receivers: [otlp/browser]
+      processors: [memory_limiter, resource/browser, batch]
+      exporters: [otlphttp/traces]
+    logs/browser:
+      receivers: [otlp/browser]
+      processors: [memory_limiter, resource/browser, transform/browser-truncate, batch]
+      exporters: [otlphttp/logs]
+    metrics/browser:
+      receivers: [otlp/browser]
+      processors: [memory_limiter, resource/browser, filter/browser-allowlist, transform/browser-truncate, batch]
+      exporters: [loadbalancing/metrics]

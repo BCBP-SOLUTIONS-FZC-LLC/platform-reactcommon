@@ -1,8 +1,8 @@
 ---
-'@platform/frontend-sdk': minor
+'@bcbp-solutions-fzc-llc/frontend-sdk': minor
 ---
 
-Add `@platform/frontend-sdk/react`: `PlatformProvider`, session and workspace hooks (`useSession`,
+Add `@bcbp-solutions-fzc-llc/frontend-sdk/react`: `PlatformProvider`, session and workspace hooks (`useSession`,
 `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useBeforeAuthRedirect`, `useStepUp`,
 `useSwitchWorkspace`), `useReadOnly` (session context or a `DENY_TENANT_READ_ONLY` seen),
 `useFeatureFlag`, `useHasPermission` / `Can`, `useLocale` / `useT`, `useApi` / `useApiClient` bound to

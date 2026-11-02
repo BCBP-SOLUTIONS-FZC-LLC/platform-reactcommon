@@ -9,7 +9,7 @@ export default defineConfig({
   define: { __SDK_VERSION__: JSON.stringify(version) },
   // The examples import the SDK by package name; tests run it from source, before any build.
   resolve: {
-    alias: [{ find: /^@platform\/frontend-sdk\/([a-z0-9]+)$/, replacement: new URL('./packages/frontend-sdk/src/$1/index.ts', import.meta.url).pathname }],
+    alias: [{ find: /^@bcbp-solutions-fzc-llc\/frontend-sdk\/([a-z0-9]+)$/, replacement: new URL('./packages/frontend-sdk/src/$1/index.ts', import.meta.url).pathname }],
   },
   test: {
     environment: 'node',

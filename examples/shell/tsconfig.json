@@ -5,7 +5,7 @@
       "node"
     ],
     "paths": {
-      "@platform/frontend-sdk/*": [
+      "@bcbp-solutions-fzc-llc/frontend-sdk/*": [
         "./../../packages/frontend-sdk/src/*/index.ts"
       ]
     }

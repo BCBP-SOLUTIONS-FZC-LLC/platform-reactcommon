@@ -1,9 +1,9 @@
 # Versioning and releases
 
 This repository publishes three **npm packages** consumed by the platform's web shell and its remotes:
-- `@platform/frontend-sdk`;
-- `@platform/webpack-preset`;
-- `@platform/eslint-plugin`.
+- `@bcbp-solutions-fzc-llc/frontend-sdk`;
+- `@bcbp-solutions-fzc-llc/webpack-preset`;
+- `@bcbp-solutions-fzc-llc/eslint-plugin`.
 
 They always share **one version** (changesets `fixed` group). They're released with a **Git tag** `vX.Y.Z` and a GitHub Release carrying the package tarballs, and described in the root [CHANGELOG.md](CHANGELOG.md), one history for all three ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)). Changesets decide the version bump only; they don't write changelogs.
 
@@ -25,18 +25,30 @@ We use [SemVer 2.0.0](https://semver.org/): `MAJOR.MINOR.PATCH` (e.g. `1.2.3`). 
 | The subpath list itself (the exports map) and the package root throwing | Test seams (`set*InternalsForTests`, `resetRuntimeForTests`) |
 | The `runtime.json` schema (keys, defaults, validation), see [LLD §12.1](docs/lld/platform-reactcommon-lld.md#121-runtimejson) | The `PlatformRuntime` object's shape on `globalThis` (shared only between copies of the same major) |
 | Wire behaviour: headers sent and withheld, the RFC 9457 parsing, the reserved browser-storage keys | `contracts/` and `src/internal/generated/` files (generated; their **effects** on public behaviour are in scope) |
-| `@platform/webpack-preset` exports and the `platformShared` map | `examples/`, `scripts/`, `.github/` |
-| `@platform/eslint-plugin` rule names, options and `configs.recommended` | Log message wording (the catalogue in the LLD is informative) |
+| `@bcbp-solutions-fzc-llc/webpack-preset` exports and the `platformShared` map | `examples/`, `scripts/`, `.github/` |
+| `@bcbp-solutions-fzc-llc/eslint-plugin` rule names, options and `configs.recommended` | Log message wording (the catalogue in the LLD is informative) |
 | Telemetry field names and the metric names the SDK emits once ratified | `/testing` internals (its exports are in scope: `createTestPlatform`, `mockApi`, `mockProblem`, `renderMetricInventory`) |
 
-Import **subpaths** only (`@platform/frontend-sdk/http`). The root and deep paths are not API (`@platform/eslint-plugin` reports both).
+Import **subpaths** only (`@bcbp-solutions-fzc-llc/frontend-sdk/http`). The root and deep paths are not API (`@bcbp-solutions-fzc-llc/eslint-plugin` reports both).
 
 ### Module Federation and versions
 
-The shell provides the SDK to every remote as a **strict singleton** shared under `^<MAJOR>.0.0-0` (`@platform/webpack-preset`). So:
+The shell provides the SDK to every remote as a **strict singleton** shared under `^<MAJOR>.0.0-0` (`@bcbp-solutions-fzc-llc/webpack-preset`). So:
 - **Across majors:** a remote built for another major fails share negotiation. The failure stays in its `RemoteBoundary`, never breaking the shell. A MAJOR therefore means rebuilding the shell and every remote together.
 - **Within a major:** remotes run against **the shell's** SDK version. A remote requires `^<the SDK version it was built against>` (`sharedFor('remote')`), so a remote built on `1.4.0` is refused by a shell on `1.3.x`: the failure stays in its `RemoteBoundary` at share negotiation, never a missing export at run time. Rules: **upgrade the shell first**, then the remotes; **roll the shell back** only to an SDK at or above the newest one any deployed remote was built against.
-- **React and the OTel API** are shared the same way, with the ranges in `platformShared` (`react`/`react-dom` `^18.3.0 || ^19.0.0`, `@opentelemetry/api` `~1.10.0`). Narrowing any of them is a MAJOR.
+- **React and the OTel API** are shared the same way, with the ranges in `platformShared` (`react`/`react-dom` `^19.0.0`, `@opentelemetry/api` `~1.10.0`). Narrowing any of them is a MAJOR.
+
+### Supported React versions
+
+**One React major: React 19** (`^19.0.0`, peer and shared range alike).
+
+- **Why one major.** A page runs exactly one React: the shell's, shared to every remote as a strict singleton. A range spanning two majors would let a remote built and tested on one major run on a shell of the other, where it fails inside the page: React 19 removed `ReactDOM.render`, string refs, legacy context and `defaultProps` on function components, and form actions, `use()` and ref-as-a-prop don't exist in React 18. With one major, a remote on the wrong major is refused at share negotiation and shows its `RemoteBoundary` fallback (`reason=incompatible`).
+- **Tested at both ends.** CI runs everything on the lockfile's newest 19.x, and the `react-floor` job reruns the typecheck, the unit suite, the build and the example checks on **React 19.0.0** and `@types/react` 19.0.0 (`pnpm run test-react-floor`). The floor of the range is a tested claim.
+- **Moving to a new major (policy).** Support the next major alongside the current one only for a stated, dated window:
+  1. A minor release widens the range to both majors. Remotes build and test against both (the floor job gains a leg for each).
+  2. The shell upgrades once every deployed remote passes on the new major.
+  3. A MAJOR release narrows the range to the new major and drops the old one.
+- **History.** Until `1.0.0-alpha.1` the range was `^18.3.0 || ^19.0.0`, but nothing ran on React 18, and the reference shell and remote already needed 19 (form actions). It was narrowed during the alpha, when narrowing costs nothing: no frontend is deployed, and the only one in development is on 19.
 
 ### Guarantees
 
@@ -64,22 +76,83 @@ When a new **MAJOR** line ships, the previous major receives **security fixes on
 
 ## Consume a release
 
-There's no npm registry yet. The packages are attached to each GitHub Release:
+The packages are published to **GitHub Packages** (the npm registry at `npm.pkg.github.com`), under the organisation's scope:
 
-```bash
-gh release download v1.0.0-alpha.1 --repo BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon --pattern 'platform-*.tgz'
-pnpm add ./platform-frontend-sdk-1.0.0-alpha.1.tgz                     # shell and remotes
-pnpm add -D ./platform-webpack-preset-1.0.0-alpha.1.tgz ./platform-eslint-plugin-1.0.0-alpha.1.tgz
+| Package | For |
+|---|---|
+| `@bcbp-solutions-fzc-llc/frontend-sdk` | the shell and every remote |
+| `@bcbp-solutions-fzc-llc/webpack-preset` | their webpack builds (dev dependency) |
+| `@bcbp-solutions-fzc-llc/eslint-plugin` | their lint (dev dependency) |
+
+**Why this scope.** GitHub Packages accepts only packages scoped to the GitHub organisation that owns the repository. The earlier `@platform` name couldn't be used anywhere: on npmjs.com the `platform` organisation belongs to a third party (it publishes `@platform/ts`, `@platform/cli`, …). Any install that resolved `@platform/*` from the public registry could therefore have received someone else's code.
+
+**Setup in a consuming repository.** Add an `.npmrc` that maps the scope, so these packages never resolve from the public registry, and authenticate with a token that has `read:packages`:
+
+```ini
+@bcbp-solutions-fzc-llc:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
 ```
 
-Verify the download first: `checksums.txt` is Cosign-signed; see *Verifying a release* in the [README](README.md#cutting-a-release).
+- **Developers:** a classic personal access token with `read:packages` (and SSO-authorised for the organisation), exported as `NODE_AUTH_TOKEN`. Alternatively, `gh auth token` after `gh auth refresh -s read:packages`.
+- **GitHub Actions:** `NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` with `permissions: packages: read`. On each package's settings page (*Manage Actions access*), give the consuming repository read access once.
+
+```bash
+pnpm add @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.1
+pnpm add -D @bcbp-solutions-fzc-llc/webpack-preset@1.0.0-alpha.1 @bcbp-solutions-fzc-llc/eslint-plugin@1.0.0-alpha.1
+```
 
 | Pin style | Use when |
 |-----------|----------|
-| Exact version (the tarball for `X.Y.Z`) | Always: without a registry there are no ranges to resolve; commit the tarball or a lockfile entry that points at it |
-| The same `X.Y.Z` for all three packages | Always: they're released together, and `@platform/webpack-preset` / `@platform/eslint-plugin` embed facts about the SDK of the same version (its subpaths, the share range, the forbidden headers) |
+| Exact `X.Y.Z-alpha.N` | During the alpha: breaking changes bump `N` |
+| `^X.Y.Z` | From `1.0.0` (strict SemVer) |
+| The same version for all three packages | Always: they're released together, and `@bcbp-solutions-fzc-llc/webpack-preset` / `@bcbp-solutions-fzc-llc/eslint-plugin` embed facts about the SDK of the same version (its subpaths, the share range, the forbidden headers) |
 
-When a registry is chosen, this table gains the usual `^X.Y.Z` ranges. Release pipelines change only in `publish`.
+Dist-tags: a pre-release is published under its identifier (`alpha`, `rc`), and a stable release under `latest`. So `pnpm add @bcbp-solutions-fzc-llc/frontend-sdk` never installs a pre-release by accident.
+
+**Verifying what you install.** Each tarball has a GitHub build-provenance attestation from the release workflow:
+
+```bash
+npm pack @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.1
+gh attestation verify bcbp-solutions-fzc-llc-frontend-sdk-1.0.0-alpha.1.tgz --repo BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
+```
+
+The same tarballs are attached to the GitHub Release, with Cosign-signed `checksums.txt` (see *Verifying a release* in the [README](README.md#cutting-a-release)).
+
+## Publishing
+
+`release.yml`'s `npm-publish` job publishes, after every gate has passed on the tag:
+
+1. **What ships:** the tarballs the `package` job packed once, which `smoke` tested and `publish:check` validated (scope, registry, repository link, one version, no `workspace:` specifiers). `SHA256SUMS`, written when they were packed, is checked before anything is published.
+2. **Provenance:** GitHub Packages has no npm provenance, so the job attaches a build-provenance attestation per tarball (`actions/attest-build-provenance`, Sigstore).
+3. **Publish:** `npm publish` per tarball with the job's `GITHUB_TOKEN` (`packages: write`) under the dist-tag `publish:check` derived. A version already in the registry is skipped if its integrity equals the tarball's (a re-run after a later failure) and refused otherwise: versions are never overwritten. Afterwards the registry's integrity must equal the tarball's.
+4. **Then the GitHub Release** (`publish`), as before. The irreversible registry step comes first, as platform-fastapicommon's PyPI publish does.
+
+**One-time setup** (repository admin):
+- Gate the **`npm`** environment (*Settings → Environments*). `npm-publish` refuses to publish unless one of two gates is in place (`.github/scripts/check-npm-environment.sh`): a job that names a missing environment gets an unprotected one created on the spot, so without that check the gate would silently disappear.
+  - **Required reviewers** (an approval per release). GitHub offers them for public repositories, and for private ones only on GitHub Enterprise.
+  - **The tag gate** (this repository: private, on GitHub Team). The environment accepts only release tags, and a tag ruleset decides who may push them: who may push a `vX.Y.Z` tag is who may publish. There is no separate approval click.
+    ```sh
+    REPO=BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
+    # 1. npm accepts only release tags
+    gh api -X PUT "repos/$REPO/environments/npm" --input - <<'EOF'
+    { "deployment_branch_policy": { "protected_branches": false, "custom_branch_policies": true } }
+    EOF
+    gh api -X POST "repos/$REPO/environments/npm/deployment-branch-policies" -f name='v*.*.*' -f type=tag
+    # 2. only repository admins may create, move or delete v* tags
+    gh api -X POST "repos/$REPO/rulesets" --input - <<'EOF'
+    { "name": "release tags", "target": "tag", "enforcement": "active",
+      "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+      "rules": [{ "type": "creation" }, { "type": "update" }, { "type": "deletion" }],
+      "bypass_actors": [{ "actor_type": "RepositoryRole", "actor_id": 5, "bypass_mode": "always" }] }
+    EOF
+    # 3. what release.yml checks
+    REPO=$REPO bash .github/scripts/check-npm-environment.sh
+    ```
+    `actor_id` 5 is the repository *Admin* role; list a team (`"actor_type": "Team"`) instead to name the releasers. Under this gate a `workflow_dispatch` from `main` cannot reach `npm` (the environment admits tags only): publish from the tag push, or re-run that run.
+- After the first publish, on each package's page (*Package settings*), check that it is linked to this repository (from `repository` in `package.json`), and grant *Actions access* to the repositories that consume it.
+- Packages linked to a repository inherit its visibility. **This repository is private, so the packages are private**: installing them needs a token with `read:packages` from someone who can read them, and a consuming repository's workflows need *Actions access* on the package (above). `license` stays `UNLICENSED` while they are private; choose one (platform-fastapicommon publishes as Apache-2.0) before making the repository public. Deleting a version is possible in the UI, but never reuse its number.
+
+Run locally: `pnpm build && bash .github/scripts/pack-packages.sh && pnpm publish:check`. `.github/scripts/npm-publish.sh` takes `DRY_RUN=1`, or `NPM_REGISTRY=<a local registry>` (it was exercised against Verdaccio: a first publish, an idempotent re-run, and a refused different tarball under the same version).
 
 ## Maintainer release process
 
@@ -132,7 +205,7 @@ From then on, releases follow plain SemVer.
 
 | platform-reactcommon | React / react-dom | `@opentelemetry/api` | webpack | ESLint | Node (build) | TypeScript (types built with) |
 |--------------------|-------------------|----------------------|---------|--------|--------------|-------------------------------|
-| `1.0.0-alpha.N` | `^18.3.0 \|\| ^19.0.0` | `~1.10.0` (OTel JS 3) | `^5.100.0` | `^9 \|\| ^10` | `≥ 22` | `6.0` |
+| `1.0.0-alpha.N` | `^19.0.0` (tested at 19.0.0 and the newest 19.x) | `~1.10.0` (OTel JS 3) | `^5.100.0` | `^9 \|\| ^10` | `≥ 22` | `6.0` |
 
 The SDK targets evergreen browsers (ES2022), with Trusted Types where the browser supports them.
 

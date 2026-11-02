@@ -68,9 +68,11 @@ export interface PlatformRuntime {
   events: Map<string, Set<() => void>>;
   /** A DENY_TENANT_READ_ONLY answer was seen on this page (/http sets it; /react reads it). */
   readOnlyDenied: boolean;
+  /** The page's pagehide senders and their shared keepalive budget (src/internal/unload.ts). */
+  unload: unknown;
 }
 
-export const RUNTIME_KEY = Symbol.for('@platform/frontend-sdk');
+export const RUNTIME_KEY = Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk');
 
 /** Grants essential only: the default until the shell installs its consent provider. */
 export const ESSENTIAL_ONLY_CONSENT: RuntimeConsent = {
@@ -113,6 +115,7 @@ function createRuntime(): PlatformRuntime {
     appUpdate: undefined,
     events: new Map(),
     readOnlyDenied: false,
+    unload: undefined,
   };
 }
 
@@ -129,7 +132,7 @@ export function getRuntime(): PlatformRuntime {
   if (existing.owner !== OWNER) {
     const shared = majorOf(existing.sdkVersion) === majorOf(__SDK_VERSION__);
     console.error(
-      `@platform/frontend-sdk: a second copy (${__SDK_VERSION__}) was loaded next to ${existing.sdkVersion}. ` +
+      `@bcbp-solutions-fzc-llc/frontend-sdk: a second copy (${__SDK_VERSION__}) was loaded next to ${existing.sdkVersion}. ` +
         'Remotes must take the SDK from the shell through Module Federation (import: false), never bundle it. ' +
         (shared
           ? 'This copy uses the existing runtime.'

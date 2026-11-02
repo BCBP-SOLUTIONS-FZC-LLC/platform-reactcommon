@@ -1,9 +1,9 @@
 // The remote component of design doc §C4, as written there.
 import { useState } from 'react';
 import { useApi, useApiClient, useHasPermission, useRouteTemplate, useT,
-         MFEErrorBoundary } from '@platform/frontend-sdk/react';
-import { isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@platform/frontend-sdk/problem';
-import { problemMessage } from '@platform/frontend-sdk/i18n';
+         MFEErrorBoundary } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
+import { isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@bcbp-solutions-fzc-llc/frontend-sdk/problem';
+import { problemMessage } from '@bcbp-solutions-fzc-llc/frontend-sdk/i18n';
 
 interface Tender { id: string; title: string; deadline: string; version: number }
 

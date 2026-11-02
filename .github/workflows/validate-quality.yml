@@ -63,7 +63,7 @@ jobs:
             exit 1
           fi
 
-      - name: Lint (ESLint, dependency boundaries, @platform/eslint-plugin on the examples)
+      - name: Lint (ESLint, dependency boundaries, @bcbp-solutions-fzc-llc/eslint-plugin on the examples)
         run: pnpm lint
 
       - name: Typecheck
@@ -92,6 +92,11 @@ jobs:
       # rewrite, runtime.json, remote manifest). Set SMOKE_BASE_URL to run it against an environment.
       - name: Smoke tests (in-process)
         run: pnpm run test-smoke
+
+      # monitoring/: promtool check + alert unit tests, and the dashboards' PromQL syntax (as
+      # platform-events' rules-check / dashboards-check). Registry compliance is test/unit/monitoring.
+      - name: Monitoring rules and dashboards (promtool)
+        run: pnpm run rules-check && pnpm run dashboards-check
 
       # Runtime dependencies of the published packages only (dev tooling is not shipped).
       - name: Vulnerability check

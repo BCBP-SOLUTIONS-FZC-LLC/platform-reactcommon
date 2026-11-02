@@ -1,8 +1,8 @@
 ---
-'@platform/frontend-sdk': minor
+'@bcbp-solutions-fzc-llc/frontend-sdk': minor
 ---
 
-Add `@platform/frontend-sdk/auth`: `createOidcProvider` (Keycloak Authorization Code + PKCE S256,
+Add `@bcbp-solutions-fzc-llc/frontend-sdk/auth`: `createOidcProvider` (Keycloak Authorization Code + PKCE S256,
 tokens in memory only, pending-login records with RFC 9207 `iss` and ID-token claim checks, silent
 `prompt=none` restore with a per-tab loop guard and a signed-out mark, single-flight refresh that
 never resends a replaced refresh token and restores the lineage after an ambiguous failure, a

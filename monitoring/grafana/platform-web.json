@@ -1,0 +1,599 @@
+{
+  "title": "Web frontend (platform_web_*)",
+  "uid": "platform-web",
+  "tags": [
+    "platform",
+    "web",
+    "frontend",
+    "proposed"
+  ],
+  "description": "Tier 1 browser metrics recorded by @bcbp-solutions-fzc-llc/frontend-sdk for every web shell and its remotes. Every metric here is PROPOSED (monitoring/registry/platform-web.proposal.json) and awaits governance ratification; until then the SDK records none of them and the panels are empty. docs/observability/tier1-ratification.md.",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "domain",
+        "label": "Domain",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(platform_web_vital_ratings_total, domain)",
+          "refId": "domain"
+        },
+        "definition": "label_values(platform_web_vital_ratings_total, domain)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1
+      },
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(platform_web_vital_ratings_total{domain=~\"$domain\"}, service)",
+          "refId": "service"
+        },
+        "definition": "label_values(platform_web_vital_ratings_total{domain=~\"$domain\"}, service)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(platform_web_vital_ratings_total{domain=~\"$domain\",service=~\"$service\"}, environment)",
+          "refId": "environment"
+        },
+        "definition": "label_values(platform_web_vital_ratings_total{domain=~\"$domain\",service=~\"$service\"}, environment)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1
+      },
+      {
+        "name": "mfe",
+        "label": "Micro-frontend",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(platform_web_remote_load_seconds_count{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\"}, mfe)",
+          "refId": "mfe"
+        },
+        "definition": "label_values(platform_web_remote_load_seconds_count{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\"}, mfe)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Remotes (micro-frontends)",
+      "id": 1,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Remote load availability",
+      "id": 2,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Share of remote loads that succeeded (kill-switched loads excluded): the remote availability SLI (SLO 99.9%). Proposed metric platform_web_remote_load_seconds.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - (sum by (mfe) (rate(platform_web_remote_load_seconds_count{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\",mfe=~\"$mfe\",outcome=\"error\"}[$__rate_interval])) / sum by (mfe) (rate(platform_web_remote_load_seconds_count{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\",mfe=~\"$mfe\",outcome!=\"failure\"}[$__rate_interval])))",
+          "legendFormat": "{{mfe}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Remote load time (p95, successful loads)",
+      "id": 3,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Time from loadRemote to an evaluated module: manifest, remoteEntry.js with its integrity check, share negotiation and evaluation.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, mfe) (rate(platform_web_remote_load_seconds_bucket{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\",mfe=~\"$mfe\",outcome=\"success\"}[$__rate_interval])))",
+          "legendFormat": "{{mfe}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Remote load failures by reason",
+      "id": 4,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "disabled (kill switch), timeout, network (entry or chunk fetch, integrity), aborted, incompatible (share negotiation or evaluation; a release-order problem).",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (mfe, reason) (rate(platform_web_remote_load_failures_total{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\",mfe=~\"$mfe\"}[$__rate_interval]))",
+          "legendFormat": "{{mfe}} {{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "API calls from the browser",
+      "id": 5,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "API error ratio (5xx, timeout, network)",
+      "id": 6,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Browser API calls that ended in a server error or no answer: the browser API SLI (SLO 99.5%). Caller aborts are 4xx/client_error and are not errors.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(platform_web_http_client_duration_seconds_count{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\",mfe=~\"$mfe\",status_class=\"5xx\"}[$__rate_interval])) / sum(rate(platform_web_http_client_duration_seconds_count{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\",mfe=~\"$mfe\"}[$__rate_interval]))",
+          "legendFormat": "error ratio",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Calls with no HTTP status, by reason",
+      "id": 7,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "timeout, network and aborted calls: the server never sees these. Proposed metric platform_web_http_client_failures_total.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (rate(platform_web_http_client_failures_total{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\",mfe=~\"$mfe\"}[$__rate_interval]))",
+          "legendFormat": "{{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Browser vs server latency per route (p95)",
+      "id": 8,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "The same route template seen from the browser (retries, token refresh and network included) and from the backend services (platform_http_request_duration_seconds, same buckets). The gap is network, gateway and client time.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(platform_web_http_client_duration_seconds_bucket{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\",mfe=~\"$mfe\"}[$__rate_interval])))",
+          "legendFormat": "browser {{route}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(platform_http_request_duration_seconds_bucket{environment=~\"$environment\"}[$__rate_interval])))",
+          "legendFormat": "server {{route}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Core Web Vitals",
+      "id": 9,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Share of good page views",
+      "id": 10,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Core Web Vitals assessment: at least 75% of page views good on LCP, INP and CLS (the vitals SLO). Proposed metric platform_web_vital_ratings_total.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (vital) (rate(platform_web_vital_ratings_total{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\",rating=\"good\"}[$__rate_interval])) / sum by (vital) (rate(platform_web_vital_ratings_total{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\"}[$__rate_interval]))",
+          "legendFormat": "{{vital}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Vitals p75",
+      "id": 11,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "p75 of LCP, INP, TTFB and FCP (CLS has no unit and is in the ratings only). Good thresholds: LCP 2.5 s, INP 0.2 s, FCP 1.8 s, TTFB 0.8 s.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.75, sum by (le, vital) (rate(platform_web_vitals_seconds_bucket{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\"}[$__rate_interval])))",
+          "legendFormat": "{{vital}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Slowest pages: LCP p75 by page route",
+      "id": 12,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "The ten page routes with the slowest LCP. page_route is the registered router template, never a URL.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, histogram_quantile(0.75, sum by (le, page_route) (rate(platform_web_vitals_seconds_bucket{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\",vital=\"lcp\"}[$__rate_interval]))))",
+          "legendFormat": "{{page_route}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Errors in the page",
+      "id": 13,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 51
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Errors by capture point",
+      "id": 14,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "unhandled_error, unhandled_rejection, boundary (an error boundary caught it), chunk_load (a chunk of the running build is gone; the page reloads once).",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 52
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (source) (rate(platform_web_errors_total{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\",mfe=~\"$mfe\"}[$__rate_interval]))",
+          "legendFormat": "{{source}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Errors by micro-frontend",
+      "id": 15,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "The same errors by mfe: alerts route to the owning team of the remote.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 52
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (mfe) (rate(platform_web_errors_total{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\",mfe=~\"$mfe\"}[$__rate_interval]))",
+          "legendFormat": "{{mfe}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Telemetry health",
+      "id": 16,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 60
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Label values replaced to bound cardinality",
+      "id": 17,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "page_route values recorded as unknown (a route not registered with useRouteTemplate, or past the bound). Existing metric platform_telemetry_label_overflow_total, the SDK added as an emitter.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 61
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (label) (rate(platform_telemetry_label_overflow_total{domain=~\"$domain\",service=~\"$service\",environment=~\"$environment\",label=~\"page_route|mfe\"}[$__rate_interval]))",
+          "legendFormat": "{{label}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    }
+  ]
+}

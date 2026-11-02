@@ -8,7 +8,7 @@ only once these parts ran together. Unit, integration, smoke and the single-orig
 
 - Stack: `docker-compose.yml` (compose project `reactcommon-e2e`)
 - Suite: `test/stack/e2e.spec.ts`, config `test/stack/playwright.config.ts`
-- Run date: 2026-10-31. Repository: `test/layout` at `5c9645e` (plus this change).
+- Run date: 2026-10-31. Repository: `test/layout` at `5c9645e` (plus this change). Re-run on 2026-11-01 with the fixes for Issues 1 and 2 (status lines below).
 
 ## 1. Environment
 
@@ -34,7 +34,7 @@ flowchart LR
   GP["go-probe http-serve (real platform-gincommon)"]
   PG[(Postgres 17 + PgBouncer)]
   VK[(Valkey 8)]
-  OT["OTel Collector contrib 0.164.0 → JSON files"]
+  OT["OTel Collector contrib 0.164.0: /otel gateway → aggregator (examples/collector) → sink → JSON files"]
   B -->|HTTPS| E1 & E2
   E1 -->|"S3 behaviors (+ viewer-request function run by the shim)"| CF --> S3
   E1 -->|"/api/* (custom origin, by the shim)"| ENV
@@ -54,14 +54,14 @@ flowchart LR
 | Example shell and tenders remote | **Real**, built for `PLATFORM_ENVIRONMENT=staging` (`__ENVIRONMENT__` is a build-time define) | this repo |
 | `/config/runtime.json` | Real file, this environment's values (`idpOrigin https://auth.localtest.me`, `sampleRatio 1`) | `scripts/prepare.mjs` |
 | Keycloak | **Real** | `quay.io/keycloak/keycloak:26.8.1`, `start`, `KC_HOSTNAME=https://auth.localtest.me`, `KC_PROXY_HEADERS=xforwarded` |
-| Realms `tenant-acme`, `trial` | Built from IAM `realm-template.json` plus what `iam-realm-provisioner` adds (tender-web redirect, web origin and post-logout URIs, the `tenant_id` mapper and admin-only user-profile attribute on `trial`) | `iam-realm-provisioner@6ed5bb9` |
+| Realms `tenant-acme`, `trial` | Built from IAM `realm-template.json` plus what `iam-realm-provisioner` adds (tender-web redirect, web origin and post-logout URIs, the `tenant_id` mapper and admin-only user-profile attribute on `trial`) | `iam-realm-provisioner@6ed5bb9`; re-checked at `e542f0f` (RP #48) |
 | Envoy | **Real**. The config is written for this run from IAM HLD v1.58 §4.3, §8.2.7, §8.3, §11.1 and the `iam-authz-enrichment` README sketch. No checked-in gateway config exists. | `envoyproxy/envoy:v1.40.2`, `docker/envoy/envoy.template.yaml` |
 | iam-authz-enrichment | **Real**, built from its Dockerfile (GitHub token passed as a BuildKit secret) | `4bea2ea` |
-| iam-org-membership | **Real**: PUB-1, P-35, I-8 with Postgres + PgBouncer + Valkey + floci. Seeded by `docker/org-membership/seed.sql` | `3d17d87` |
+| iam-org-membership | **Real**: PUB-1, P-35, I-8 with Postgres + PgBouncer + Valkey + floci. Seeded by `docker/org-membership/seed.sql` | `3d17d87`; re-run at `98cf517` (O&M #47) |
 | "Tenders" API | **Real gincommon**: platform-interop-tests `go-probe http-serve`. Envoy maps `/api/tenders/{id}` to its `/errors/tenders/{id}` (404 `TENDER_NOT_FOUND` problem+json) and `/api/v1/probe/*` to `/whoami`, `/echo` | `platform-interop-tests@93e3481`, `platform-gincommon@98957b8` (v2) |
 | S3, CloudFront (API + S3 data plane), Lambda, Secrets Manager, WAFv2 API, SNS/SQS/Glue | **Emulated**: floci | `floci/floci:2.1.0-compat` |
 | CloudFront Functions execution, custom origins | **Shim** (`docker/edge/server.mjs`). See §6. | node:22-alpine |
-| OTel Collector | **Real**, with file exporters (`.state/otel/*.jsonl`) | `otel/opentelemetry-collector-contrib:0.164.0` |
+| OTel Collector | **Real**. `/otel/*` goes to the reference two-tier configuration (`examples/collector`: `otel-gateway`, then `otel-aggregator` for metrics), which hands everything to a sink Collector with file exporters (`.state/otel/*.jsonl`) | `otel/opentelemetry-collector-contrib:0.164.0` |
 | Valkey, Postgres, PgBouncer | Real | `valkey/valkey:8-alpine`, `postgres:17-alpine`, `edoburu/pgbouncer:latest` |
 | Not deployed | iam-catalog-admin, iam-tender-acl, iam-realm-provisioner (its realm output is reproduced statically), user profile, audit log, Billing | — |
 
@@ -101,7 +101,6 @@ pnpm run stack-down                  # containers, network, volumes and floci's 
 - `stack-up` needs Docker Desktop and permission to bind port 443. On a busy host, use `STACK_HTTPS_PORT=8443 pnpm run stack-up`; every origin then includes the port.
 - The token stays in the environment of the `docker compose build` process. It is never written to a file or printed.
 - Toggles to reproduce issues (scripts/prepare.mjs + `stack-constants.ts`):
-  - `STACK_AUDIENCE_MAPPER=false`: Issue 13.
   - `STACK_PACK_TRACE_REASON=true`: Issue 14.
   - `DEPLOY_SET_CACHE_CONTROL=false`: Issue 15, the deploy as the README literally says.
   - `STACK_ACME_TOKEN_LIFESPAN`, `AUTHZ_ORG_MEMBERSHIP_TIMEOUT`.
@@ -121,29 +120,30 @@ The emulator rows `E-n` are in §6.
 |---|---|---|---|---|
 | 1 | Anonymous → PUB-1 (Envoy bypass → org-membership) → Keycloak login form, PKCE S256 → callback → `/t/acme/`. P-35 with JWT, enriched by AuthZ Enrichment. Envoy log shows the upstream `x-tenant-id`/`x-user-id` | ✅ | ✅ | ✅ |
 | 2 | Forged `x-tenant-id` … `x-residency-mode` never reach an upstream: gincommon `/whoami` sees acme/alice. `/echo` shows exactly the 7 enriched headers and no `Authorization`. The bypass route shows none | ✅ | ✅ | ✅ |
-| 3 | Deep-link reload: `index.html` via spa-rewrite (`no-cache`), silent `prompt=none` restore, `/assets/*` immutable JS, manifest `no-cache`, `remoteEntry.js` immutable with `sha384` integrity, **remote renders** | ⚠️ Issue 1 | ⚠️ Issue 1 | ✅* |
-| 4 | Remote with the Issue 1 fix (TT `'allow-duplicates'`, applied through a shim test hook) → problem+json shown, ids and logs correlated | ⚠️ Issue 2 | ⚠️ Issue 2 | ⚠️ Issue 2 |
-| 5 | `/auth/callback` served by the rewrite, scripts from `/assets` | ✅ | ✅ | ✅ |
+| 3 | Deep-link reload: `index.html` via spa-rewrite (`no-cache`), silent `prompt=none` restore, `/assets/*` immutable JS, manifest `no-cache`, `remoteEntry.js` immutable with `sha384` integrity, **remote renders** under the production CSP | ✅ (Issue 1 fixed) | ✅ | ✅ |
+| 4 | The remote calls `/api/tenders/1` through Envoy and renders the gincommon problem+json with its trace id; `x-request-id` echoed; backend spans carry the browser's trace id | ✅ (Issue 2 fixed) | ✅ | ✅ |
+| 5 | `/auth/callback` served by the rewrite, scripts from `/assets` pinned with `integrity` | ✅ | ✅ | ✅ |
 | 6 | P-35 trace id continues through Envoy, ext_authz (authz-enrichment) and org-membership spans | ✅ | ✅ | ✅ |
 | 7 | Gateway 401 shape (jwt_authn) as the SDK parses it | ⚠️ Issue 3 | ⚠️ Issue 3 | ⚠️ Issue 3 |
 | 8 | ext_authz deny (dave) → 403 problem+json, `gatewayDenyCode` = `DENY_UNRESOLVABLE_SUBJECT` | ✅ | ✅ | ✅ |
 | 9 | gincommon problem through Envoy keeps `traceId` and `x-request-id` | ✅ | ✅ | ✅ |
-| 10 | Cold AuthZ cache: first request within the ext_authz budget | ✅/⚠️ Issue 12 (timing) | ✅ | ✅ |
-| 11 | Refresh lineage in one tab: rotation, no reuse error | ✅ | ✅ | ✅ |
-| 12 | Refresh cadence with a 60 s token | ⚠️ Issue 4 | ⚠️ Issue 4 | ⚠️ Issue 4 |
+| 10 | Cold AuthZ cache: first request within the ext_authz budget, never 503 | ✅ (Issue 12 fixed upstream) | ✅ | ✅ |
+| 11 | Refresh lineage in one tab: rotation, no reuse error (two refreshes of a 60 s token take up to 100 s; the wait is 120 s) | ✅ | ✅ | ✅ |
+| 12 | Refresh cadence with a 60 s token: exactly one refresh (200) in the first 55 s | ✅ (Issue 4 fixed) | ✅ | ✅ |
 | 13 | Two tabs, two refresh lineages in one Keycloak session (`revokeRefreshToken=true`) | ✅ | ✅ | ✅ |
-| 14 | Example offers a sign-out control | ⚠️ Issue 6 | ⚠️ Issue 6 | ⚠️ Issue 6 |
+| 14 | Example offers a sign-out control (`useSignOut`); the default sign-out goes to end-session and back to a signed-out app | ✅ (Issues 6, 10 fixed) | ✅ | ✅ |
 | 15 | Global logout: end-session with the SDK's exact parameters → back to `/`, "You are signed out", SSO gone | ✅ | ✅ | ✅ |
-| 16 | Shared device: after sign-out, `prompt=login`; bob signs in; P-35 is bob's | ⚠️ Issue 10 | ⚠️ Issue 10 | ⚠️ Issue 10 |
-| 17 | Cross-tab sign-out reaches the open tab | ⚠️ Issue 7 | ⚠️ Issue 7 | ⚠️ Issue 7 |
-| 18 | Real CSP violation → `/csp-report` → Lambda → Collector | ⚠️ E-6 | ⚠️ Issue 11 | ⚠️ Issue 11 |
-| 19 | With the Issue 11 fix: `x-origin-verify` enforced (403 without it), both report formats → `csp.violation` OTLP logs without query strings | ✅ | ✅ | ✅ |
-| 20 | Browser clock 3 min fast, 60 s token | ⚠️ Issue 8 | ⚠️ Issue 8 | ⏭ (Playwright clock hangs WebKit teardown) |
+| 16 | Shared device: after Sign out, a fresh Keycloak form with nothing of alice's; bob signs in; P-35 is bob's | ✅ (Issue 10 fixed) | ✅ | ✅ |
+| 17 | Cross-tab sign-out reaches the open tab: the app is unmounted (not left under the dialog), "You are signed out" shown | ✅ (Issue 7 fixed) | ✅ | ✅ |
+| 18 | Real CSP violation → `/csp-report` → Lambda → Collector | ⚠️ E-6 | ✅ (Issue 11 fixed) | ✅ |
+| 19 | The deployed Lambda: `x-origin-verify` enforced (403 without it), both report formats → `csp.violation` OTLP logs without query strings | ✅ | ✅ | ✅ |
+| 20 | Browser clock 3 min fast, 60 s token: signs in (token times judged on the provider's clock) | ✅ (Issue 8 fixed) | ✅ | ⏭ (Playwright clock hangs WebKit teardown) |
+| 24 | `/otel` through the reference Collector: two tabs' delta metrics (one with its clock 10 minutes slow) become one cumulative series without per-browser attributes; a minted metric name is dropped | ✅ | ✅ | ✅ |
 | 21 | `@gateway` PUB-1 per-IP rate limit: 429 after 20 requests. A viewer-sent `X-Forwarded-For` does not reset the bucket. The bucket refills | ✅ (gateway project, Chromium) | | |
 | 22 | `@gateway` WAF ACL associated, and its rate rule blocks a flood | ⚠️ E-3/E-4 | | |
 | 23 | `@gateway` Keycloak key rotation vs Envoy JWKS cache | ⚠️ Issue 9 | | |
 
-All three engines enforce Trusted Types (Chromium 156, Firefox 157, WebKit 27.2), so Issue 1 shows in each.
+All three engines enforce Trusted Types (Chromium 156, Firefox 157, WebKit 27.2), so Issue 1 showed in each until it was fixed.
 
 **Two full runs** (`pnpm run test-stack`, all four projects, serial): see §7 for the numbers.
 
@@ -158,27 +158,31 @@ Severity scale:
 
 ### Issue 1 — A remote cannot load under the production CSP: duplicate Trusted Types policy `platform-webpack`
 
+- **Status: fixed.** The CSP's `trusted-types` directive carries `'allow-duplicates'` (`examples/cloudfront/csp.mjs`, `response-headers-policy.json`, design doc §C3). One policy name for every app keeps the CSP independent of which remotes exist; names outside the list are still refused. Tests: `test/browser/csp.spec.ts` (a second `platform-webpack` is created in all three engines with no violation; an unlisted name is still refused and reported), `examples/cloudfront/test`, and stack tests 3–4.
+
 - **Symptom:** Every `RemoteBoundary` shows "Something went wrong."
 - **Evidence:** Chromium console:
   > Creating a TrustedTypePolicy named 'platform-webpack' violates the following Content Security Policy directive because a TrustedTypePolicy with that name already exists and the directive does not contain 'allow-duplicates': "trusted-types platform-sdk platform-webpack dompurify".
 
   `securitypolicyviolation` reports `trusted-types / trusted-types-policy`. The Collector receives `remote failed to load`, `reason=incompatible`, "module ./EditTender is not exposed or failed to load". Firefox 157 shows the same.
 - **Root cause:** The webpack preset gives the shell and every remote the same `output.trustedTypes.policyName: 'platform-webpack'`. The remote's runtime calls `trustedTypes.createPolicy('platform-webpack')` a second time in the same page. `csp.mjs` lists the name once and has no `'allow-duplicates'`. The `test/browser` CSP suite boots only the shell, so it never loads a second webpack runtime.
-- **Owner:** SDK (`@platform/webpack-preset`) + CloudFront config (`examples/cloudfront/csp.mjs`).
+- **Owner:** SDK (`@bcbp-solutions-fzc-llc/webpack-preset`) + CloudFront config (`examples/cloudfront/csp.mjs`).
 - **Severity:** Critical: no micro-frontend works in production.
 - **Suggested fix:** Give remotes their own policy name, e.g. `platform-webpack-<remote>`, and generate the CSP `trusted-types` list from the manifest. Or add `'allow-duplicates'` to the CSP (simplest; the suite's fix variant shows it gets past this step). Add a real-browser test that loads one remote under `securitypolicy()`.
 
 ### Issue 2 — The shell's share scope does not provide the SDK subpaths it never imports
 
+- **Status: fixed.** `platformWebpackConfig({ role: 'shell' })` adds `ProvideSdkPlugin`, which provides every shared SDK subpath (all but `/testing`), resolved as the shell's own imports are and registered lazily (`eager: false`: nothing loads until a remote uses it). Tests: `test/unit/webpack-preset` (a shell importing only `/logging` registers all 16 subpaths without evaluating any, and a remote using `/problem` gets the shell's copy; a shell that cannot resolve the SDK fails its build), `pnpm examples:check` (the built shell registers every subpath at the SDK version; it reported exactly `problem, storage, nav` before the fix), and stack test 4.
+
 - **Symptom:** With Issue 1 fixed, the remote still fails: "module ./EditTender failed to evaluate".
 - **Evidence:** The factory throws:
-  > Shared module @platform/frontend-sdk/problem doesn't exist in shared scope default
+  > Shared module @bcbp-solutions-fzc-llc/frontend-sdk/problem doesn't exist in shared scope default
 
   The built shell's federation metadata lists only `auth, authz, config, core, flags, http, logging, metrics, mfe, react, security, tracing` (and i18n). There is no `problem`, `storage`, `nav` or root.
 - **Root cause:** Webpack provides a shared module only if the host bundle actually references it. `sharedFor('shell')` declares every subpath, but the example shell never imports `/problem`. The remote gets the SDK with `import: false`, so it has no fallback. `test/e2e/shell.test.tsx` mocks federation, so it cannot see this.
 - **Owner:** SDK (webpack preset) / example shell.
 - **Severity:** Critical: any remote that uses an SDK subpath the shell does not happen to use breaks at runtime, in production only.
-- **Suggested fix:** Have the preset add a generated "provide all SDK subpaths" module to the shell entry (`import('@platform/frontend-sdk/<each>')` in a never-executed branch, or `eager` provides). Have `pnpm examples:check` assert the shell's provided set ⊇ `SDK_SUBPATHS`.
+- **Suggested fix:** Have the preset add a generated "provide all SDK subpaths" module to the shell entry (`import('@bcbp-solutions-fzc-llc/frontend-sdk/<each>')` in a never-executed branch, or `eager` provides). Have `pnpm examples:check` assert the shell's provided set ⊇ `SDK_SUBPATHS`.
 
 Issue 18 makes this hard to diagnose: the logged error has no `cause`.
 
@@ -202,6 +206,8 @@ Issue 18 makes this hard to diagnose: the logged error has no `cause`.
 
 ### Issue 4 — Refresh storm when the access token lives ≤ 60 s
 
+- **Status: fixed.** `scheduleRefresh` (`auth/oidc.ts`) uses a lead of `min(60 s, lifetime / 3)` and jitter of at most `min(10 s, lead / 2)`, so a token is refreshed no sooner than half its lifetime after it was issued (a 60 s token: 30–50 s; a 300 s token: unchanged, 230–250 s). A separate minimum interval is not needed: each new token reschedules from its own lifetime. Tests: `test/unit/auth/oidc-edges.test.ts` (a 60 s token over 10 minutes, at the earliest, middle and latest jitter: one refresh every 30, 40 or 50 s; the old code never stopped refreshing) and stack test 12.
+
 - **Symptom:** 9–29 (Chromium), 15 (Firefox) and 11–23 (WebKit) `refresh_token` grants in 45 s with a 60 s token.
 - **Root cause:** `oidc.ts` schedules the refresh at `expiresAt − REFRESH_LEAD_MS (60 s) ± 10 s`. When `expires_in ≤ 60`, every refresh is due at once. Keycloak's template uses 300 s, but realm admins can shorten it, and the provisioner does not pin it.
 - **Owner:** SDK.
@@ -214,6 +220,8 @@ With `revokeRefreshToken=true` and `refreshTokenMaxReuse=0`, two tabs sharing on
 
 ### Issue 6 — The example shell has no way to sign out
 
+- **Status: fixed.** `/react` has `useSignOut()` (global by default since Issue 10; `{ global: false }` signs out of this browser only), backed by an optional `signOut` the shell gives `PlatformProvider`; the example shell passes `idp.logout` and renders a **Sign out** button. Tests: `test/unit/react` (the hook, and its rejection without a shell), `test/e2e/shell.test.tsx` (the button signs out, clears app storage, tells other tabs), stack test 14.
+
 - **Symptom:** No control calls `IdentityProvider.logout()` (local or `{ global: true }`). Only the trial wrong-workspace dialog has a sign-out button.
 - **Owner:** Example.
 - **Severity:** Medium: the reference integration cannot exercise logout, and the shared-device flow (§C1) is unreachable.
@@ -221,12 +229,16 @@ With `revokeRefreshToken=true` and `refreshTokenMaxReuse=0`, two tabs sharing on
 
 ### Issue 7 — A sign-out in another tab leaves this tab rendering the app
 
+- **Status: fixed** (in the example; the SDK already moved the tab to `anonymous`/`signed-out`). The example shell's session listener now shows the signed-out screen on that state; the next sign-in uses `prompt=login`. Tests: `test/e2e/shell.test.tsx`, stack test 17.
+
 - **Symptom:** The SDK moves the tab to `anonymous` / `signed-out` (BroadcastChannel). The example subscribes only to `expired`, so the workspace stays on screen with no token. Its next API call is a 401 text/plain (Issue 3).
 - **Owner:** Example (or the SDK's `PlatformProvider`).
 - **Severity:** Medium (shared device).
 - **Suggested fix:** In `bootstrap.tsx`, on `anonymous` with reason `signed-out`, unmount the app and `showSignedOut`.
 
 ### Issue 8 — A client clock a few minutes fast makes sign-in fail silently with short tokens
+
+- **Status: fixed.** `/auth` judges ID-token times on the provider's clock: the token comes straight from the token endpoint, so its `iat` is the provider's time at receipt, and the device's offset is taken from it (also for `auth_time` / step-up). Beyond 10 minutes the sign-in fails visibly: `anonymous` with the new reason `device-clock`, an error log with `clock_offset_s`, and the example shell's "Check your device's clock" screen. Tests: `test/unit/auth/oidc.test.ts` (3 min ahead and 9 min behind with 60 s tokens sign in; 20 min off is `device-clock`; step-up on the provider's clock), `test/e2e/shell.test.tsx`, stack test 20.
 
 - **Symptom:** With the browser clock +3 min and a 60 s token, the code exchange succeeds, but the ID token is rejected (`exp + 60 s skew < now`). The user lands back on the identifier screen, with no message (`url=/`, screen "Sign in … Continue"). There was no redirect loop.
 - **Root cause:** `idTokenProblem` compares `exp` and `iat` with the local clock, allowing 60 s. Real laptops drift. The window equals the token lifetime plus 60 s.
@@ -238,6 +250,7 @@ With `revokeRefreshToken=true` and `refreshTokenMaxReuse=0`, two tabs sharing on
 
 ### Issue 9 — Keycloak key rotation: new tokens fail at Envoy until the JWKS cache expires
 
+- **Status: open (Platform, gateway).** IAM confirms the Keycloak half is operational: rotate in two phases (the new key passive, so it is in the JWKS; wait more than Envoy's `cache_duration`; then make it active), and offers to write it up as a realm runbook (2026-11-03). Envoy's JWKS cache settings stay with Platform.
 - **Symptom:** After adding a higher-priority RS256 key, P-35 with a fresh token returns `401` ("Jwt verification fails").
 - **Evidence:** Test 23 (`kid` FOsetg…).
 - **Root cause:** The jwt_authn `remote_jwks.cache_duration` (300 s here; default 600 s) does not refetch on an unknown `kid`. Keycloak signs with the new active key immediately.
@@ -252,6 +265,8 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ### Issue 10 — Shared device: after a local sign-out, `prompt=login` shows the previous user
 
+- **Status: fixed** (decided 2026-11-03, with IAM's recommendation). `IdentityProvider.logout()`, and so the shell's `signOut` and `useSignOut()`, is **global by default**: it ends the Keycloak SSO session at the realm's end-session endpoint and returns to `<origin>/`, so the next person on the device signs in from scratch. `{ global: false }` is the documented opt-out for a local-only sign-out. The example shell relies on the default. Tests: `test/unit/auth/oidc.test.ts` (the default sends the end-session request; `{ global: false }` sends none), `test/unit/react` (`useSignOut()` passes no option, so the provider's default applies), `test/e2e/shell.test.tsx` (the Sign out button goes to end-session and back to a signed-out app), stack test 16.
+- **Before:** IAM needed nothing changed on their side and recommended making **Sign out** a full Keycloak sign-out (`logout({ global: true })`) by default, at least on shared devices (2026-11-03). Keycloak already allows the redirect back (`<origin>/*` is registered for `tender-web`); test 15 shows it working. They confirm that `prompt=login` with the hint cleared does not help: while the previous user's Keycloak session is alive, the re-login page still shows their username.
 - **Symptom:** The next "Sign in" carries `prompt=login`. Keycloak, with alice's SSO session still alive, shows "Please re-authenticate to continue" with **alice's username** (`#kc-attempted-username`) and only a password field. Bob must find "Restart login" (`#reset-login`).
 - **Root cause:** A local logout leaves the Keycloak SSO session alive by design. `prompt=login` re-authenticates the *same* subject.
 - **Owner:** SDK / example (sign-out policy) + Keycloak config.
@@ -259,6 +274,8 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 - **Suggested fix:** On a sign-out from a shared device, end the SSO session (`logout({ global: true })`, the default for "Sign out" in the example). Or have the SDK send `prompt=login` with `login_hint` cleared and an end-session first.
 
 ### Issue 11 — The `/csp-report` Lambda throws on every invocation in a real Lambda runtime
+
+- **Status: fixed.** `handler(event)` is the Lambda entry point and calls `handle(event, { fetch, env })`; the runtime's `context` can no longer land in `deps`. Tests: `examples/cloudfront/test` (the handler called exactly as the runtime does, `(event, context)`), stack tests 18–19 against the deployed function (the stack's hand-patched second Lambda is gone).
 
 - **Symptom:** Every report → `502` at the distribution.
 - **Evidence:** floci Lambda container log:
@@ -275,6 +292,7 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ### Issue 12 — The first request after an AuthZ cache miss can be denied 503
 
+- **Status: fixed upstream** (iam-authz-enrichment #40, `fae20d1`, AE-48, LLD rev 1.49). With no cached entry to fall back on, the I-8 call waits up to `ORG_MEMBERSHIP_COLD_TIMEOUT` (120 ms) instead of 40 ms, inside the 250 ms ext_authz budget; with a stale entry it keeps 40 ms and serves the stale entry on failure. It also keeps 64 idle connections to org-membership (Go's default was 2). The stack sets `ORG_MEMBERSHIP_COLD_TIMEOUT` explicitly; tests 1, 8 and 10 now fail on any 503 (they used to retry, reload or expect it), and the contract pin moved to `fae20d1` (no contract change).
 - **Symptom:** `DENY_SERVICE_UNAVAILABLE` (503, `ext_authz_denied`, `UAEX`) on a user's first API call.
 - **Evidence:** authz-enrichment log:
 
@@ -292,6 +310,11 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
   - Alert on `DENY_SERVICE_UNAVAILABLE` rate.
 
 ### Issue 13 — Access tokens from the realm template have no `aud`, so Envoy's audience check rejects them
+
+- **Status: fixed upstream** (iam-realm-provisioner #48, `e542f0f`, RP-D21; re-checked 2026-11-01). Every public client (`tender-web`, `tender-mobile`) gets an `oidc-audience-mapper` with its own client ID, on access tokens only. It is added at realm creation and converged on the shared `trial` realm at startup; `tender-gateway` gets none. Verified three ways:
+  - **Upstream tests:** the provisioner's Keycloak 26 integration tests, run here against a real Keycloak container, pass. `TestKeycloakAdmin_EnsureSharedRealm_CreatesAndConverges` covers the shared realm and `…_CreateRealmFromTemplate_HardenedWebClient` a dedicated realm, and both assert the client in `aud` of real access tokens.
+  - **Stack:** the stack now adds exactly that mapper to every public client and lists `audiences: [tender-web, tender-mobile]` in Envoy, as RP #48 specifies. Its own workaround toggle (`STACK_AUDIENCE_MAPPER`) is gone.
+  - **E2E test:** test 1 asserts `aud` contains `tender-web` on the access token from the real login.
 
 - **Symptom:** With the template as-is, P-35 returns `403 text/plain ""`.
 - **Evidence:**
@@ -312,6 +335,8 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ### Issue 15 — The deploy steps produce no `Cache-Control` on `/assets` and `/remotes`
 
+- **Status: fixed** (docs). `examples/cloudfront/README.md` gives the deploy as commands with `--cache-control` per prefix (`public, max-age=31536000, immutable` on `/assets` and `/remotes/<name>/<version>`, `no-cache` on the manifest, `runtime.json`, `index.html` and `version.json`, written last), and says why: a cache policy sets the edge TTL, never the viewer's header. `examples/cloudfront/test` pins every upload's header and the order.
+
 - **Symptom:** An object uploaded as `examples/cloudfront/README.md` says (`aws s3 cp`, no metadata) is served without `Cache-Control`.
 - **Evidence:** `GET /assets/readme-literal.js` returned only `content-type: text/javascript`.
 - **Root cause:** The README's behaviours table says "`max-age=31536000, immutable`", but CloudFront cache policies (CachingOptimized) control the *edge* TTL. They never add a `Cache-Control` header to the viewer response. Browsers fall back to heuristic caching, and `no-cache` on `index.html`, `runtime.json` and the manifest is equally absent.
@@ -321,6 +346,7 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ### Issue 16 — Access tokens carry name and e-mail although the SDK asks only for `openid`
 
+- **Status: fixed upstream** (iam-realm-provisioner #49, `b67687c`, RP-D22, LLD v1.49). On `tender-web` and `tender-mobile`, `profile` and `email` are optional scopes, and two client mappers (`id_token_name`, `id_token_email`) put name and e-mail in the ID token and userinfo only. Access tokens keep `sub`, `aud`, `tenant_id` and `auth_time` (Keycloak's lightweight access token was rejected: it drops `auth_time`, which AuthZ Enrichment's MFA check reads). The SDK needs no change: it asks for `openid` and reads both from the ID token. The stack mirrors #49 (`test/stack/scripts/prepare.mjs`); test 1 asserts the access token has no `name`, `email`, `given_name`, `family_name`, `preferred_username` or `email_verified`, keeps `auth_time`, and the ID token has alice's name and e-mail.
 - **Evidence:** The access token has `scope: "openid profile email"`, `name`, `email`, `preferred_username`, `given_name`, `family_name`.
 - **Root cause:** Keycloak's default client scopes `profile` and `email` are default, not optional, on `tender-web`. HLD §4.1: "JWTs carry only `sub` and standard OIDC claims". The tokens travel to the gateway on every call.
 - **Owner:** Keycloak config (realm template).
@@ -328,6 +354,14 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 - **Suggested fix:** Make `profile` and `email` optional client scopes on `tender-web`. Keep `name` and `email` in the ID token only if the shell needs them.
 
 ### Issue 17 — PUB-1 returns 500 unless Org & Membership's system pool can read the tables
+
+- **Status: fixed upstream** (iam-org-membership #47, merged as `98cf517`, the same tree as the reviewed `4d2598e`; re-run 2026-11-01).
+  - **The fix:** migration `000007_migrator_grants` grants the BYPASSRLS migrator DML on every table it does not own (`rls_violation_log` read-only, `schema_migrations` none), with default privileges for later tables, and fails loudly rather than skip (MIG-10).
+  - **Local compose:** it now has a separate `postgres` superuser, an RLS-bound app role (`NOSUPERUSER NOBYPASSRLS`; before, the app was the superuser, so RLS never applied locally), migrations and `SYSTEM_DATABASE_URL` as the migrator, and `CATALOG_ADMIN_BASE_URL`.
+
+  Verified two ways:
+  - **Upstream test:** O&M's `TestMigratorGrants_SysPoolRoleNotOwner`, run here, passes. It migrates as another role (this issue's exact case) and checks that PUB-1's `ResolveByIdentifier` and the reconcilers' writes work through the migrator, and that it cannot erase the RLS audit log.
+  - **Stack:** rebuilt from scratch with O&M's new role layout, and the seed's `GRANT` workaround removed. PUB-1 answers 200, and the full suite passes (§7).
 
 - **Symptom:** `GET /api/v1/public/tenants/resolve` → `500 INTERNAL_ERROR` (`*pgconn.PgError`). With `SYSTEM_DATABASE_URL` unset, every resolve is RLS-filtered to `found:false`.
 - **Root cause:** PUB-1 reads through the BYPASSRLS `org_membership_migrator` pool. In the service's own docker-compose, the schema is migrated by `org_membership_app` (`MIGRATION_DATABASE_URL`), so the migrator owns nothing and has no `SELECT`. That compose also omits `SYSTEM_DATABASE_URL` and `CATALOG_ADMIN_BASE_URL`; without the latter, startup panics.
@@ -337,17 +371,30 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ### Issue 18 — `loadRemote` logs drop the cause
 
+- **Status: fixed.** Logged errors carry `exception.cause`: the cause chain as "Type: message ← Type: message", three deep, cleaned and redacted like the message, at most 1 KiB. Tests: `test/unit/logging`.
+
 - **Evidence:** The Collector record for Issue 2 has `exception.message` "module ./EditTender failed to evaluate" and nothing about the missing shared module. Diagnosing it needed a patched container global.
 - **Owner:** SDK (`mfe/remote.ts` / logging error serialisation).
 - **Severity:** Low.
 - **Suggested fix:** Serialise `error.cause` (`exception.cause.*`, sanitised) in `getLogger().error`.
+
+### Issue 19 — An aborted refresh hijacks the user's navigation (found once remotes loaded)
+
+- **Status: fixed.** While its refresh request is in flight, `doRefresh` listens for `beforeunload` and `pagehide` (only then: a standing `beforeunload` listener keeps Firefox from using its back/forward cache). If the request fails after one of them fired, the page is leaving: the tokens are dropped and the restore waits 10 s, which a page that unloads never reaches. A page that stays (a cancelled navigation, a download) restores then, and a logout meanwhile cancels it. Tests: `test/unit/auth/oidc-edges.test.ts` (no redirect after `beforeunload` or `pagehide`; restore after 10 s for a page that stays; logout cancels it; a `beforeunload` before the request does not count; listeners removed), `test/browser/navigation.spec.ts` (in Chromium, Firefox and WebKit a leaving page **does** see its in-flight request rejected, for an address-bar and a link navigation, and always after `beforeunload`: so the bug was possible in every engine, and the signal the fix uses is always there first), and the stack's `gotoDeepLink`, which now fails instead of retrying when a navigation is replaced.
+
+- **Symptom:** In a signed-in tab, a full navigation (a link, a typed URL, a reload of a deep link) sometimes lands back on the page being left (`/t/acme/`) after a `prompt=none` round trip, instead of on the new URL. Seen in WebKit (1 of 6 repeated runs of stack test 4) and in Firefox (twice in one full run, tests 3 and 4).
+- **Evidence (Playwright trace):** four `refresh_token` grants in 400 ms after sign-in (Issue 4). One is in flight when the navigation to `/t/acme/tenders/1/edit` starts; WebKit aborts it (status −1) together with the navigation's own request; 14 ms later the **old** page navigates to `…/openid-connect/auth?prompt=none` with the old URL as its return URL.
+- **Root cause:** `doRefresh()` (`auth/oidc.ts`) treats a rejected token `fetch` as an ambiguous outcome (the token may have rotated), drops the tokens and calls `restoreLineage()` at once, which `location.assign`s the IdP. A fetch aborted because the page is navigating away looks the same as a network failure, and the SDK's redirect replaces the user's navigation.
+- **Owner:** SDK (`/auth`).
+- **Severity:** Medium: wrong page after a navigation, intermittent; Issue 4's refresh storm widens the window.
+- **Suggested fix:** Defer the restore by a macrotask or two (or until the next visibility/online check): when the page is unloading, the timer never runs; otherwise restore as now. Fixing Issue 4 also narrows the window. The stack tests record it (`gotoDeepLink` annotates "Issue 19" and loads the URL again) rather than fail on it.
 
 ### Observations (no issue raised)
 
 - **Issuer and hostname:** With `KC_HOSTNAME=https://auth.localtest.me` and `KC_PROXY_HEADERS=xforwarded`, the issuer is identical for the browser, the `iss` callback parameter (RFC 9207, checked by the SDK) and Envoy. Envoy fetches JWKS from the internal `http://keycloak:8080` URL, and the issuer still matches.
 - **CORS:** Keycloak's token endpoint CORS (web origin `https://app.localtest.me`) works in all three engines. `/api`, `/otel` and `/csp-report` are same-origin, so neither the gateway nor the Collector needs CORS.
 - **Cookies across hosts:** Silent `prompt=none` restore (top-level navigation to `auth.`) works in WebKit (ITP) as well as Chromium and Firefox. No third-party cookie is needed.
-- **Collector path:** CloudFront cannot strip `/otel` (an origin path only prepends). The Collector's OTLP/HTTP receiver must use `traces_url_path: /otel/v1/traces` etc., as `docker/otel/collector.yaml` does. JSON content type and beacons are accepted.
+- **Collector path:** CloudFront cannot strip `/otel` (an origin path only prepends). The Collector's OTLP/HTTP receiver must use `traces_url_path: /otel/v1/traces` etc., as the reference gateway (`examples/collector/gateway.yaml`) does. JSON content type and beacons are accepted.
 - **No browser spans without consent:** The example CMP grants only `essential` and has no consent UI, so browser spans never leave the page. Correlation works through the `traceparent` header: Envoy, authz-enrichment, org-membership and go-probe spans carry the browser's trace id. Essential error logs arrive.
 - **Strip-list placement:** The HLD strip-list must run *before* jwt_authn/ext_authz. Envoy's route-level `request_headers_to_remove` runs in the router and would also strip the enriched values. The stack uses the `header_mutation` HTTP filter first (test 2).
 - **Per-IP rate limit:** Per-IP limits need `xff_num_trusted_hops: 1` (CloudFront appends the viewer IP). A viewer-forged `X-Forwarded-For` does not buy a new bucket (test 21). HLD's 20/IP/hour shared by an office behind one NAT is very tight for identifier-first login; the stack uses 20/IP/minute.
@@ -357,7 +404,7 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ## 5. What could not be run, and why
 
-- **Remote → API → problem rendered by the remote**, and **SDK-sent API spans/logs from inside a remote**: blocked by Issues 1 and 2 in every engine. The HTTP-level equivalent (test 9) and the ext_authz deny parse (test 8) cover the gateway side.
+- **SDK-sent spans and logs from inside a remote:** the example CMP grants only `essential`, and the boundary logs an API error as a warning, which needs telemetry consent. So no browser record reaches the Collector for test 4; correlation is shown through the backend spans and `x-request-id`.
 - **Chromium's Reporting API delivery** (`report-to`): no report reached `/csp-report` in 2 min, even with `--ignore-certificate-errors` (E-6, self-signed endpoint). Firefox and WebKit (`report-uri`) did deliver.
 - **WAF enforcement**, **CloudFront compression and edge caching** (TTLs, `x-cache`), real **OAC**/S3 403 semantics, **HTTP/2/3**, and **CloudFront's exact origin header set**: emulator limitations (§6). The shim approximates the documented header behaviour.
 - **MFA enrolment** for trial users (`requires-mfa`), the trial wrong-workspace path (invitation email), trial → paid conversion: these need the realm provisioner, notification and billing services, which were not deployed.
@@ -388,9 +435,8 @@ floci *did* reproduce:
 - Secrets Manager.
 - The IAM services' SNS/SQS/Glue topology.
 
-The shim (`docker/edge/server.mjs`, about 200 lines) has one test-only hook. When the request carries cookie
-`e2e-csp-fix=tt-allow-duplicates`, it appends `'allow-duplicates'` to the CSP, so the Issue 1 fix can be tried
-without redeploying the policy. It never caches, compresses or enforces WAF.
+The shim (`docker/edge/server.mjs`, about 200 lines) has no test hooks (the cookie that tried the Issue 1 CSP
+fix is gone with the fix). It never caches, compresses or enforces WAF.
 
 ## 7. Runs
 
@@ -426,6 +472,16 @@ to the identifier screen. The remaining failures are timeouts across a sleep (24
 
 No unexpected failure points to anything other than the documented issues or host sleep. Two consecutive green
 full runs could not be obtained on this host during this session.
+
+After review round 4, with the machine awake and on AC power:
+
+| Run | As expected | Unexpected | Wall time | Note |
+|---|---|---|---|---|
+| 4 (host awake, on AC, review round 4) | 51 | 8 → 3 test defects, fixed | 15.9 min | `/auth/callback` regex predates the HTML `integrity` pin; the one-tab refresh wait (90 s) was shorter than two refreshes of a 60 s token can take; cross-tab sign-out left the previous user's app mounted under the dialog (shell fixed: it unmounts the app) |
+| 5 (the same, after the fixes) | **62** | **0** (1 skipped) | 15.2 min | |
+| 6 (review round 5: `/otel` through the reference two-tier Collector) | **65** | **0** (1 skipped) | 15.2 min | test 24 added in each browser |
+| 7 (IAM fixes: authz-enrichment #40, realm-provisioner #49) | **65** | **0** (1 skipped) | 15.2 min | Issue 12 strict in tests 1, 8, 10; Issue 16 asserted in test 1 |
+| 8 (sign-out global by default, Issue 10) | **65** | **0** (1 skipped) | 15.8 min | tests 14 and 16 on the real Sign out button, strict |
 
 To re-verify, rerun with the machine awake and on AC power:
 

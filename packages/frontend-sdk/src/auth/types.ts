@@ -62,9 +62,11 @@ export type SessionState =
       /**
        * 'signed-out': the signed-out mark is set, so never log in automatically.
        * 'login-required': a prompt=none attempt for `workspace` answered login_required, interaction_required or consent_required.
+       * 'device-clock': the sign-in was refused because the device's clock is more than 10 minutes off
+       *   the identity provider's; tell the user to set it (signing in again cannot succeed until then).
        * 'none': no session and no hint (first visit, rejected callback, loop guard).
        */
-      readonly reason: 'none' | 'signed-out' | 'login-required';
+      readonly reason: 'none' | 'signed-out' | 'login-required' | 'device-clock';
     }
   | { readonly status: 'authenticated'; readonly user: SessionUser; readonly workspace: Workspace; readonly expiresAt: number }
   | {
@@ -85,7 +87,12 @@ export interface IdentityProvider {
   init(): Promise<Extract<SessionState, { status: 'authenticated' | 'anonymous' }>>;
   /** `prompt: 'login'` forces credentials even when Keycloak's SSO session is alive (used after the idle timeout). */
   login(o: { workspace: Workspace; returnUrl?: string; loginHint?: string; prompt?: 'login' }): Promise<void>;
-  /** Local: drop tokens, clear storage, set the signed-out mark. Global: also ends the Keycloak SSO session. */
+  /**
+   * Signs out: drops the tokens, clears app storage, sets the signed-out mark and tells the other tabs,
+   * then ends the Keycloak SSO session at the realm's end-session endpoint (the page navigates there and
+   * comes back to `/`). `{ global: false }` is a local-only sign-out: the SSO session stays alive, so on a
+   * shared device the next sign-in shows the previous user's re-login form (report Issue 10).
+   */
   logout(o?: { global?: boolean }): Promise<void>;
   getAccessToken(): Promise<string | undefined>;
   /** Single-flight per tab: concurrent callers share one in-flight refresh. */

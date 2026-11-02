@@ -1,0 +1,5 @@
+# The stack's gateway: examples/collector/gateway.yaml with a short batch timeout, so the e2e suite
+# sees the browser's telemetry quickly. Its traces and logs go to the stack Collector (environment).
+processors:
+  batch:
+    timeout: 500ms

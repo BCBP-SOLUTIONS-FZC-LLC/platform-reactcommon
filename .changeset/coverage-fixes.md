@@ -1,5 +1,5 @@
 ---
-'@platform/frontend-sdk': patch
+'@bcbp-solutions-fzc-llc/frontend-sdk': patch
 ---
 
 `/logging`: sensitive keys inside class instances are now redacted (`sanitizeFields` passes class

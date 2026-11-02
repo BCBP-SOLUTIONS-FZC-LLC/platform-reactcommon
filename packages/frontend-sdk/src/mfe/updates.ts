@@ -3,9 +3,10 @@
 import { getIdentity } from '../core/index.ts';
 import { tryGetConfig } from '../config/index.ts';
 import { getRuntime } from '../internal/runtime.ts';
+import { getLogger } from '../logging/index.ts';
 import { RemoteLoadError } from './remote.ts';
 
-const RELOAD_GUARD_KEY = '@platform/frontend-sdk:chunk-reload';
+const RELOAD_GUARD_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:chunk-reload';
 const CHUNK_ERROR = /Loading (CSS )?chunk [\w-]+ failed|Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i;
 
 interface UpdateState {
@@ -60,6 +61,9 @@ export function reloadOnceForChunkError(e: unknown): boolean {
     return false; // without a guard, never risk a reload loop
   }
   if (!store) return false;
+  // Essential: a deploy that removed the running build's chunks must be visible without telemetry
+  // consent. The reload's pagehide sends it by beacon.
+  getLogger().warn('chunk load failed: reloading', { error: e, version, essential: true });
   globalThis.location?.reload();
   return true;
 }

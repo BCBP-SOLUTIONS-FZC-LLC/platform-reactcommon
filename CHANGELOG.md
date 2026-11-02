@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to this project are documented in this file. The three packages (`@platform/frontend-sdk`, `@platform/webpack-preset`, `@platform/eslint-plugin`) share one version and this one history.
+All notable changes to this project are documented in this file. The three packages (`@bcbp-solutions-fzc-llc/frontend-sdk`, `@bcbp-solutions-fzc-llc/webpack-preset`, `@bcbp-solutions-fzc-llc/eslint-plugin`) share one version and this one history.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html); see [VERSIONING.md](VERSIONING.md) (pre-release `1.0.0-alpha.N` until the first environment).
@@ -11,7 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**`@platform/frontend-sdk` — Foundation**
+- `/react`: `useSignOut()` (global by default, see *Changed*; `{ global: false }` signs out of this browser only), backed by an optional `signOut` in `PlatformProvider`'s shell value. `/auth`: the `anonymous` reason `device-clock`.
+
+- **Publication to GitHub Packages** (`VERSIONING.md`, *Consume a release* and *Publishing*):
+  - `release.yml`'s `npm-publish` job publishes the gated tarballs, after every gate and before the GitHub Release, from the protected `npm` environment. It runs only after their `SHA256SUMS` check, attaches a build-provenance attestation per tarball, and is idempotent: a version is never overwritten, and the registry's integrity is checked after publishing;
+  - `pnpm publish:check` (the `package` job in CI and at release) validates the packed manifests and derives the dist-tag (`alpha`, `rc`, `latest`);
+  - the root `.npmrc` maps the scope to GitHub Packages.
+- **Subresource Integrity for lazily loaded chunks** (`@bcbp-solutions-fzc-llc/webpack-preset`, production): `ChunkIntegrityPlugin` gives every chunk a shell or remote loads after its entry a sha384, which the browser enforces. A chunk without one fails closed, and the build fails if a shipped chunk differs from its recorded hash. `crossOriginLoading` is now `'anonymous'`. `pnpm examples:check` and `test/browser/integrity.spec.ts` check it: in Chromium, Firefox and WebKit a tampered chunk is refused and never runs.
+
+- **Tier 1 metrics submitted for ratification** (`docs/observability/tier1-ratification.md`), as platform-events and platform-pgcommon did:
+  - the seven `platform_web_*` metrics, four labels, the `web_vitals` preset and two amendments, as registry entries in gincommon's schema (`monitoring/registry/platform-web.proposal.json`, rendered as `tier1-proposal.md`), validated by gincommon's `metricslint` (`pnpm metrics:proposal`, CI *Validate / Contracts*);
+  - `monitoring/`: a Grafana dashboard and Prometheus recording rules, alerts and SLOs (remote availability 99.9%, browser API success 99.5%, Core Web Vitals ≥ 75% good), all in `*.proposed` groups with `metric_status: proposed` until ratification; `promtool` unit tests and a PromQL gate (`pnpm run rules-check`, `dashboards-check`, CI *Validate / Quality*), and registry compliance in `test/unit/monitoring`;
+  - the runbooks renamed to the alert names, and an assessment of what logs and traces show until the metrics ship, with four gaps.
+
+**`@bcbp-solutions-fzc-llc/frontend-sdk` — Foundation**
 
 - **`/core`:**
   - page identity (`initializeCore`), validated against the platform registry vocabulary, including the multi-domain shell's `portal` domain (platform-gincommon v2.3.0);
@@ -30,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `parseProblemResponse`, which decodes as gincommon does, with synthetic problems for non-problem responses;
   - the gateway deny codes (`GATEWAY_DENY_CODES`, `gatewayDenyCode`).
 
-**`@platform/frontend-sdk` — Observability**
+**`@bcbp-solutions-fzc-llc/frontend-sdk` — Observability**
 
 - **`/tracing`:**
   - OTLP/HTTP browser tracing with gincommon's resource attributes and sampler (`ParentBased`, Go's exact `TraceIDRatioBased`);
@@ -48,14 +61,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - cardinality bounds;
   - a delta OTLP exporter gated on telemetry consent.
 
-**`@platform/frontend-sdk` — Data access**
+**`@bcbp-solutions-fzc-llc/frontend-sdk` — Data access**
 
 - **`/http`:** `createApiClient`.
   - **Requests:** route templates; identity headers refused; request id, trace context and session id on the page origin and allowlist; the token on the page origin only; an idempotency key on `POST`; a client deadline.
   - **Errors and retries:** the 401 path through the tab's single token refresh; retries with backoff and `Retry-After` for idempotent calls.
   - **Concurrency:** shared concurrent `GET`s; offline detection (`isOnline`, `subscribeOnline`).
 
-**`@platform/frontend-sdk` — Identity & access**
+**`@bcbp-solutions-fzc-llc/frontend-sdk` — Identity & access**
 
 - **`/auth`:** `createOidcProvider`, Keycloak Authorization Code + PKCE S256, with tokens in memory only.
   - **Sign-in:** pending-login records; RFC 9207 `iss` and ID-token claim checks.
@@ -68,7 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`/authz`:** UI permission hints (`hasPermission`, `roleMapAuthorizer`, `denyAll`, `setAuthorizer`, `setAuthzSubject`). Roles are re-parsed with gincommon's rule and fail closed.
 - **`/storage`:** per-workspace, per-app JSON storage (`storage`, `workspaceNamespace`, `clearAllAppStorage`). It refuses credential-like keys (`ForbiddenStorageKeyError`) and writes nothing before sign-in.
 
-**`@platform/frontend-sdk` — Micro-frontend platform**
+**`@bcbp-solutions-fzc-llc/frontend-sdk` — Micro-frontend platform**
 
 - **`/mfe`:**
   - `loadManifest`: per-remote validation of the entry origin, version, registry owner domain and SRI;
@@ -78,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`/flags`:** `getFlag` (typed by its fallback), `isRemoteKilled`, the runtime-config and session-context flag providers, `setFlagProvider`.
 - **`/nav`:** `navigate` through the shell's router (`registerNavigator`), and `isSafeRedirect` for return-URL validation.
 
-**`@platform/frontend-sdk` — UI support**
+**`@bcbp-solutions-fzc-llc/frontend-sdk` — UI support**
 
 - **`/i18n`:**
   - locale negotiation with `<html lang dir>` (RTL for Arabic);
@@ -87,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `problemMessage`.
 - **`/security`:** `sanitizeHtml` (DOMPurify; `TrustedHTML` where Trusted Types exist), `installTrustedTypesPolicy` (the CSP's `platform-sdk` policy) and `isAllowedOrigin`.
 
-**`@platform/frontend-sdk` — Developer surface**
+**`@bcbp-solutions-fzc-llc/frontend-sdk` — Developer surface**
 
 - **`/react`:** `PlatformProvider` and its hooks.
   - **Session and workspace:** `useSession`, `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useBeforeAuthRedirect`, `useStepUp`, `useSwitchWorkspace`.
@@ -96,14 +109,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Error handling:** `MFEErrorBoundary` and `RemoteBoundary`, and `installGlobalErrorHandlers` (errors, rejections, redacted CSP violations).
 - **`/testing`:** `createTestPlatform` (a real SDK runtime with in-memory logs and spans, a signed-in session, permissions and flags), `mockApi` and `mockProblem` (gincommon-shaped problems), and `renderMetricInventory` for `metricslint check` in a remote's CI.
 
-**`@platform/webpack-preset`**
+**`@bcbp-solutions-fzc-llc/webpack-preset`**
 
 - **`platformShared`:** React, react-dom, `@opentelemetry/api` `~1.10.0` and every SDK subpath except `/testing`, all as strict singletons, with the SDK under `^1.0.0-0`.
 - **`sharedFor('shell' | 'remote')`:** remotes never bundle the SDK.
 - **`containerName`:** the SDK's container-global rule.
 - **`platformWebpackConfig`:** Trusted Types policy `platform-webpack`, no `eval` devtools, hidden source maps, content hashes, `environment.globalThis`.
 
-**`@platform/eslint-plugin`**
+**`@bcbp-solutions-fzc-llc/eslint-plugin`**
 
 - **Rules:** `no-sdk-root-import`, `no-sdk-deep-import`, `no-identity-headers` (the SDK's forbidden-header list), `no-raw-storage`, `no-unsafe-html`, `no-runtime-css-in-js` and `api-route-template`.
 - **`configs.recommended`:** all seven, plus `no-eval`, `no-implied-eval` and `no-new-func`.
@@ -138,7 +151,13 @@ Fixed before the first release, after a security and production-readiness review
 
 ### Changed
 
-- `@platform/webpack-preset`: a remote requires `^<the SDK version it was built against>` (`sharedFor('remote')`); the shell keeps `^1.0.0-0`. A shell with an older SDK refuses the remote inside its `RemoteBoundary` instead of failing on a missing export. `react/jsx-runtime`, `react/jsx-dev-runtime` and `react-dom/client` are shared like `react`.
+- **Breaking: signing out is global by default** (report Issue 10, with IAM's recommendation). `IdentityProvider.logout()`, the shell's `signOut` and `useSignOut()` now also end the Keycloak SSO session: after the local sign-out (tokens dropped, app storage cleared, other tabs told) the page goes to the realm's end-session endpoint and comes back to `<origin>/`. A local-only sign-out left that session alive, so on a shared device the next person's sign-in showed the previous user's re-login form with their username. **To keep the old behaviour**, pass `{ global: false }` (`signOut({ global: false })`, `logout({ global: false })`). Keycloak needs nothing: `tender-web` registers `<origin>/*` as an allowed post-logout redirect. The example shell relies on the default.
+
+- **Breaking: React 19 only.** The peer range and the Module Federation shared range for `react` / `react-dom` are `^19.0.0` (was `^18.3.0 || ^19.0.0`). A page runs one React, the shell's, so a range spanning two majors let a remote built on one major run on a shell of the other and fail inside the page; now such a remote is refused at share negotiation. Nothing ran on React 18 (the reference shell and remote already used React 19 form actions). The new CI job `react-floor` (`pnpm run test-react-floor`) runs the typecheck, the unit suite, the build and the example checks on React 19.0.0; the policy for the next major is in VERSIONING.md, *Supported React versions*.
+
+- **Breaking:** the packages are renamed from `@platform/*` to `@bcbp-solutions-fzc-llc/frontend-sdk`, `/webpack-preset` and `/eslint-plugin` (and the ESLint rules from `@platform/<rule>` to `@bcbp-solutions-fzc-llc/<rule>`). GitHub Packages requires the organisation's scope, and the `platform` scope on npmjs.com belongs to a third party, so any install that resolved `@platform/*` from the public registry could have received someone else's code. Imports, the shared-module keys, ESLint configs and SDK-owned storage keys change with the name.
+
+- `@bcbp-solutions-fzc-llc/webpack-preset`: a remote requires `^<the SDK version it was built against>` (`sharedFor('remote')`); the shell keeps `^1.0.0-0`. A shell with an older SDK refuses the remote inside its `RemoteBoundary` instead of failing on a missing export. `react/jsx-runtime`, `react/jsx-dev-runtime` and `react-dom/client` are shared like `react`.
 - `/config`: `telemetry.enabled` (default `true`) turns all trace, log and metric export off.
 - `/flags`: `read_only` is true when the platform or the tenant says so.
 - Release PRs run `pnpm run version-packages` (`changeset version` + `exports:sync`).
@@ -147,7 +166,43 @@ Fixed before the first release, after a security and production-readiness review
 
 ### Fixed
 
-- `@platform/webpack-preset`: the shell loads its scripts from `/` (`publicPath: '/'`, bundles under `assets/`); with `'auto'`, `index.html` served for a deep link or `/auth/callback` asked for its scripts under that route, so the shell never started there (found by the new `test/smoke`).
+- Production-readiness review, round 4 (`docs/e2e/integrated-deployment-report.md`, `test/browser/README.md`):
+  - **`/csp-report` Lambda** (Issue 11): it threw on every invocation, because the runtime calls `handler(event, context)` and `context` landed in `deps`. `handler(event)` is now the entry point and `handle(event, deps)` the logic.
+  - **Integrity roots:**
+    - the webpack preset pins the shell's entry in `index.html` (`integrity` and `crossorigin` on every `<script src>` the build's HTML loads), checked again before the build is reported;
+    - `/mfe` drops a manifest entry without `integrity` outside local, dev and test.
+  - **`/auth` device clock** (Issue 8): ID-token times are judged on the provider's clock (its `iat` at receipt), so a device a few minutes off signs in with short tokens. Beyond 10 minutes the session is `anonymous` with the new reason `device-clock`, which the example shell explains.
+  - **Telemetry on tab close** (known browser bugs 1 and 2): one `pagehide` budget for the page (`src/internal/unload.ts`): logs first, then the newest spans that fit. Spans are sent inside the listener (`sendBeacon`, else `fetch` keepalive), no longer after the OTLP exporter's `await`.
+  - **`sanitizeHtml`** (known browser bug 3): no CSP reports in Chromium for hostile input. A pre-pass removes handler and style attributes and `<style>` elements before DOMPurify parses.
+  - **`/http`** (known browser bug 4): never the native `AbortSignal.any`, which loses aborts in WebKit. The by-hand combination releases its listeners when the call ends.
+  - **`/auth`:** a restore deferred by a navigation away waits for the network if the page is offline by then.
+  - **`/logging`** (Issue 18): logged errors carry `exception.cause`.
+  - **Example shell** (Issues 6, 7): a Sign out control (`useSignOut`), and the signed-out screen after a sign-out here or in another tab, with the app unmounted rather than left under the dialog (a shared device).
+  - **CloudFront deploy steps** (Issue 15): `--cache-control` on every upload.
+  - **Release:** `npm-publish` refuses to publish unless publishing is gated: the `npm` environment requires reviewers, or (a private repository on GitHub Team, which has no reviewers there) it accepts only release tags and an active tag ruleset limits who may create, move or delete `v*` tags to admins and named teams.
+  - **Contracts:** the `iam-org-membership` pin moves to `98cf517` (#47). The two interop fixtures are regenerated, because the scope rename had edited their copied comments.
+
+- Production-readiness review, round 5:
+  - **`/metrics` on page hide:** the interval is collected when the page is hidden or closing and sent by `sendBeacon`, which outlives a closing tab. Before, the hide flush went through the exporter's plain fetch, and a closing tab lost the last interval of Tier 2 and Tier 3 metrics.
+  - **One keepalive budget for all three signals** (`src/internal/unload.ts`), in one priority order on hide and on `pagehide` (metrics' share, then logs, then spans), whatever order the signals were initialised in: the shell initialises tracing first, and on hide the spans took the budget and left the logs nothing.
+  - The ledger itself: what the hidden phase sends is recorded, so `pagehide` hands out only what is left (it handed out a fresh 60 KiB). Logs and spans leave the metrics interval its share, sized from the last interval (1–8 KiB). On hide, the logs no longer send several beacons past the budget: the newest that fit go by beacon, the rest by fetch a task later.
+  - **Reference Collector configuration** (`examples/collector`, two tiers):
+    - the gateway allowlists metric names and label values from the metric registry, drops per-browser attributes, and routes each metric stream to one aggregator;
+    - the aggregator converts delta to cumulative. One converter per stream, or replicas write conflicting totals for one series.
+    - Points are re-stamped on arrival: with device timestamps, `delta_to_cumulative` silently dropped a slow clock's or a late beacon's points.
+    - Tested in the Collector image with two gateways and two aggregators (`pnpm test-collector`, CI job `collector`), and used by the integrated stack.
+  - **Nightly integrated-deployment run** (`.github/workflows/stack-nightly.yml`): the stack suite against the pinned backend commits, or every default branch on dispatch; a failing scheduled run opens an issue.
+
+- `@bcbp-solutions-fzc-llc/webpack-preset`: `ProvideSdkPlugin` no longer runs in child compilations (HtmlWebpackPlugin's), which had emitted a second, unused copy of every provided SDK chunk into the shell's build (16 extra files, about 1.5 MB with maps, outside the integrity map).
+
+- Operational failures are visible without telemetry consent (`docs/observability/tier1-ratification.md` §5): `/http` logs an essential warning `api call got no response` for timeouts and network failures (rate-limited, offline and aborts excluded), `/mfe` logs `chunk load failed: reloading` before the reload, and `/auth`'s sign-in, workspace-resolve, refresh-restore and live-session-ended warnings are essential.
+- No remote could load in production (both found by the integrated E2E run, `docs/e2e/integrated-deployment-report.md`, Issues 1 and 2):
+  - CSP: the shell's and every remote's webpack runtime create the `platform-webpack` Trusted Types policy, so `trusted-types` now carries `'allow-duplicates'` (`examples/cloudfront/csp.mjs`, `response-headers-policy.json`);
+  - `@bcbp-solutions-fzc-llc/webpack-preset`: the shell provides every SDK subpath in the share scope (`ProvideSdkPlugin`, lazily), not only those it imports itself; a remote using one the shell never imports (such as `/problem`) failed with "Shared module … doesn't exist in shared scope". `pnpm examples:check` asserts it on the built shell.
+- `/auth` (integrated E2E run, Issues 4 and 19):
+  - a short-lived access token no longer causes a refresh storm: the refresh lead is at most a third of the token's lifetime (a 60 s token was refreshed many times a second; 300 s tokens are unchanged);
+  - a refresh request cancelled because the page is navigating away no longer redirects that page to the IdP (its `prompt=none` restore replaced the user's navigation). The page restores only if it is still there 10 s later.
+- `@bcbp-solutions-fzc-llc/webpack-preset`: the shell loads its scripts from `/` (`publicPath: '/'`, bundles under `assets/`); with `'auto'`, `index.html` served for a deep link or `/auth/callback` asked for its scripts under that route, so the shell never started there (found by the new `test/smoke`).
 - `/http`: a deduplicated GET started inside `withSpan` continues the caller's trace (`/tracing` adds `bindTraceContext`); `/react`: `MFEErrorBoundary` logs an API error with its `request_id` (both found by the new `test/integration`).
 - `/http` + `useApi`: a GET made right after every subscriber of a shared GET aborted no longer joins the dead request (`useApi` stayed `loading` under React StrictMode); failures while reading a body are `TimeoutError` / `AbortedError` / `NetworkError`; works without `AbortSignal.any` (Safari < 17.4); each subscriber of a deduplicated GET gets its own copy of `data`.
 - `/auth`, `/react`: `getSession()` returns one stable `loading` object before `initializeAuth` (React looped); hooks keep stable subscriptions; `useSession` follows a provider installed after its first render; the first recorded sign-in keeps a draft saved before the redirect.
@@ -155,6 +210,6 @@ Fixed before the first release, after a security and production-readiness review
 - `/metrics`: instruments created before `initializeCore` record once it has run.
 - `/storage`: a write that fails (storage full) is read back for the rest of the page, and the last saved value stays for a reload.
 - `/i18n`: a namespace registered during a locale change loads the new locale; `/logging`: `Map` and `Set` keep their contents.
-- `@platform/eslint-plugin`: `no-identity-headers` sees computed `['headers']`; the import rules see template-literal `require` / `import()`.
+- `@bcbp-solutions-fzc-llc/eslint-plugin`: `no-identity-headers` sees computed `['headers']`; the import rules see template-literal `require` / `import()`.
 
 [Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/commits/main
