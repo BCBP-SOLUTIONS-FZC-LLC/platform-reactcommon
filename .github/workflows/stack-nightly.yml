@@ -7,9 +7,12 @@
 #   pinned (default)  the commits contracts/sources.json pins; iam-realm-provisioner (not pinned) at main
 #   main              every repository at its default branch: catches upstream changes before a pin moves
 #
-# Token: PLATFORM_REPOS_TOKEN if set, else CI_REPO_READ_TOKEN. It needs Contents:Read on the eight
-# repositories below and is the IAM services' private Go modules token (GO_PRIVATE_TOKEN, a BuildKit
-# secret: never written to a file). A failed scheduled run opens (or comments on) one issue.
+# Tokens, both organisation secrets (no per-repository setup):
+#   CI_REPO_READ_TOKEN  checks out the private repositories below (PLATFORM_REPOS_TOKEN overrides it), as
+#                       validate-contracts.yml does
+#   GO_PRIVATE_TOKEN    the IAM services' private Go modules, handed to their Docker builds as the BuildKit
+#                       secret go_private_token, as the IAM repositories' own CI does; never written to a file
+# A failed scheduled run opens (or comments on) one issue.
 name: Nightly / Stack
 
 "on":
@@ -151,7 +154,7 @@ jobs:
         env:
           IAM_ROOT: ${{ github.workspace }}/iam
           SHARED_ROOT: ${{ github.workspace }}
-          GO_PRIVATE_TOKEN: ${{ secrets.PLATFORM_REPOS_TOKEN || secrets.CI_REPO_READ_TOKEN }}
+          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
         run: pnpm run stack-up
 
       - name: Stack tests
