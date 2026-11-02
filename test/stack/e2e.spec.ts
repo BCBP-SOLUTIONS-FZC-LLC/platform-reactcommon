@@ -9,6 +9,8 @@ import {
   cspViolations, decodeJwt, docker, STATE, deployed, edgeLog, envoyAccess, eventually, keycloakLogin, kcAdmin, logRecords,
   gotoDeepLink, navigateOnce, signInFromScratch, SIGNED_OUT_KEY, spans, traceIdOf, Traffic, watchCsp,
 } from './helpers.ts';
+// The SDK's problem parsing from source, as the unit tests use it: typechecked, no build needed first.
+import { gatewayDenyCode, parseProblemResponse } from '../../packages/frontend-sdk/src/problem/index.ts';
 import { STACK } from './stack-constants.ts';
 
 const { alice, bob, carol, dave } = STACK.users;
@@ -202,9 +204,6 @@ test.describe('the tenders remote, deep links and the API through Envoy → go-p
 
 test.describe('gateway responses as the SDK parses them', () => {
   test('jwt_authn, ext_authz and gincommon problem shapes through CloudFront → Envoy', async ({ page }) => {
-    const { parseProblemResponse } = (await import('../../packages/frontend-sdk/dist/problem/index.js')) as unknown as {
-      parseProblemResponse: (r: Response) => Promise<{ status: number }>;
-    };
     const asFetch = async (r: import('@playwright/test').APIResponse) => new Response(new Uint8Array(await r.body()), { status: r.status(), headers: r.headers() });
 
     // 1. No token: Envoy jwt_authn's own 401.
@@ -221,10 +220,6 @@ test.describe('gateway responses as the SDK parses them', () => {
   });
 
   test('ext_authz deny (realm account without a membership) is a problem+json the SDK maps to its deny code', async ({ page }) => {
-    const { parseProblemResponse, gatewayDenyCode } = (await import('../../packages/frontend-sdk/dist/problem/index.js')) as unknown as {
-      parseProblemResponse: (r: Response) => Promise<{ status: number; code?: string }>;
-      gatewayDenyCode: (p: unknown) => string | undefined;
-    };
     const t = new Traffic(page);
     // dave has a tenant-acme Keycloak account but no Org & Membership membership.
     await page.goto('/');
