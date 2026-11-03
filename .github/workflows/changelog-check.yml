@@ -5,7 +5,8 @@
 #     turns into the shared version of the three packages. A change that ships nothing (e.g.
 #     subpaths.json's documentation-only fields) adds an empty one: `pnpm changeset --empty`.
 # So release.yml's CHANGELOG gate never surprises anyone at tag time. A release PR (it consumes
-# the changesets: `pnpm changeset version`) must update CHANGELOG.md too, renaming [Unreleased].
+# the changesets: `pnpm changeset version` deletes them, or in pre mode moves them into
+# .changeset/pre/) must update CHANGELOG.md too, renaming [Unreleased].
 name: Changelog check
 
 "on":
@@ -48,7 +49,9 @@ jobs:
             echo "::error file=CHANGELOG.md,title=CHANGELOG not updated::This PR changes a published package but does not update CHANGELOG.md. Add an entry under the Unreleased section before merging."
             status=1
           fi
-          if grep -qE '^D\s+\.changeset/[^/]+\.md$' <<<"$changed"; then
+          # Consumed changesets: deleted (outside pre mode) or, in changesets v3's pre mode, moved
+          # into .changeset/pre/ (git reports a rename).
+          if grep -qE '^(D\s+\.changeset/[^/]+\.md|R[0-9]*\s+\.changeset/[^/]+\.md\s+\.changeset/pre/[^/]+\.md)$' <<<"$changed"; then
             echo "Release PR (changesets consumed by pnpm changeset version)."
           elif ! grep -E '^A\s+\.changeset/[^/]+\.md$' <<<"$changed" | grep -qv 'README\.md$'; then
             echo "::error title=Changeset missing::This PR changes a published package but adds no .changeset/*.md. Run 'pnpm changeset' to record its bump (patch, minor or major)."
