@@ -1,0 +1,54 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm install:*)",
+      "Bash(pnpm test:*)",
+      "Bash(pnpm verify:*)",
+      "Bash(pnpm lint:*)",
+      "Bash(pnpm typecheck:*)",
+      "Bash(pnpm build:*)",
+      "Bash(pnpm fmt:*)",
+      "Bash(pnpm api:*)",
+      "Bash(pnpm depcruise:*)",
+      "Bash(pnpm exports:*)",
+      "Bash(pnpm docs:*)",
+      "Bash(pnpm contracts:check:*)",
+      "Bash(pnpm examples:check:*)",
+      "Bash(pnpm publish:check:*)",
+      "Bash(pnpm metrics:parity:*)",
+      "Bash(pnpm run test-browser:*)",
+      "Bash(pnpm run test-collector:*)",
+      "Bash(pnpm run test-smoke:*)",
+      "Bash(pnpm run test-react-floor:*)",
+      "Bash(pnpm exec vitest:*)",
+      "Bash(pnpm exec playwright test:*)",
+      "Bash(pnpm exec tsc:*)",
+      "Bash(pnpm exec eslint:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)"
+    ],
+    "deny": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-generated.sh\"", "timeout": 10 }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit.sh\"", "timeout": 60 }]
+      }
+    ]
+  }
+}
