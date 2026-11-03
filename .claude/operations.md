@@ -16,7 +16,7 @@ Commands, CI, releases and the Docker suites. The README's *Local development*, 
 | `pnpm run ci` | What CI's quality and test gates run, with the coverage gate and the audit |
 | `pnpm test` · `pnpm test:coverage` | Vitest (unit, integration, e2e, examples', scripts'); gate 98% statements of `packages/*/src` |
 | `pnpm run test-smoke` | The served example builds (or `SMOKE_BASE_URL`) |
-| `pnpm run test-browser` (`test-browser-install` once) | Playwright × Chromium, Firefox, WebKit under the production CSP (~30 s) |
+| `pnpm run test-browser` (`test-browser-install` once) | Playwright × Chromium, Firefox, WebKit under the production CSP; builds the example remote with webpack and with Rspack for the SRI suite (~30 s) |
 | `pnpm run test-react-floor` | Typecheck, unit suite, build, examples on React 19.0.0 |
 | `pnpm run test-collector` | `examples/collector` in the Collector image (the version `docker-compose.yml` pins): 2 gateways + 2 aggregators |
 | `pnpm run stack-up` · `test-stack` · `stack-down [--purge]` | The integrated stack; `stack-up` builds the IAM images with `GO_PRIVATE_TOKEN` or `gh auth token` (a BuildKit secret, never written); ~16 min of tests |

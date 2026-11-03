@@ -19,7 +19,7 @@ gincommon's migration page maps removed metric names to their standard replaceme
 | An app-owned OIDC library, tokens in storage | `/auth` (`createOidcProvider`, shell only); remotes read `useSession`, `useCurrentUser` | — |
 | Hard-coded role checks | `useHasPermission(action, resource)`, `<Can>` (role map set by the shell from P-35) | — |
 | `import x from '@bcbp-solutions-fzc-llc/frontend-sdk'`, deep imports | Subpath imports (`@bcbp-solutions-fzc-llc/frontend-sdk/http`) | `@bcbp-solutions-fzc-llc/no-sdk-root-import`, `no-sdk-deep-import` |
-| Its own webpack Module Federation config | `platformWebpackConfig({ role: 'remote', name, exposes, mode })` | `pnpm examples:check`-style checks in the app's CI |
+| Its own Module Federation config (webpack, Rspack, or Rsbuild's `moduleFederation`) | `platformWebpackConfig({ role: 'remote', name, exposes, mode })`, `platformRspackConfig(…)` (`/rspack`) or `pluginPlatform({ role, name, exposes })` (`/rsbuild`; remove `moduleFederation`) | `pnpm examples:check`-style checks in the app's CI |
 | `eval`, `new Function`, inline scripts | Not allowed (CSP `script-src 'self'`) | `no-eval`, `no-implied-eval`, `no-new-func` |
 
 ## Upgrading a remote

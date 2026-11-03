@@ -1181,6 +1181,15 @@ The extra provides are lazy (`eager: false`): a subpath no remote uses is regist
 The shell's and each remote's webpack runtime create the same Trusted Types policy, `platform-webpack`,
 so the CSP's `trusted-types` directive carries `'allow-duplicates'`.
 
+**Rspack and Rsbuild.** The preset has two more entry points with the same shared map, output and
+integrity: `/rspack` (`platformRspackConfig`) and `/rsbuild` (`pluginPlatform`). They use Rspack's
+`ModuleFederationPluginV1`, the webpack-compatible container and share-scope protocol, not Rspack's
+default v2 runtime: `loadRemote` and every webpack build speak v1, so an app can move to Rspack without
+its shell or remotes moving with it. Rspack's global-object runtime keeps a `Function('return this')`
+fallback that webpack drops with `environment.globalThis`; the preset rewrites it to `globalThis` and
+fails a build that still contains it (CSP `script-src 'self'`). Rspack's sharing plugins are native and
+take their options when applied, so the shell's SDK provider resolves every subpath synchronously then.
+
 **Versioning.** The SDK is not started at `0.x`. A caret range on `0.x` pins the minor version
 (`^0.3.0` means below `0.4.0`), so with `strictVersion` every minor release would break every remote.
 It is published as `1.0.0-alpha.N` while nothing is deployed. The shell shares it under

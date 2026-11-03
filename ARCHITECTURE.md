@@ -10,7 +10,7 @@ This document describes the internal structure, dependency rules, and runtime fl
   - the header names, the redaction rules, and the Go trace sampler.
 
   It is the browser's side of IAM: Keycloak sign-in (Authorization Code + PKCE, tokens in memory only), workspace (realm) choice, session restore, idle timeout, step-up.
-- **`@bcbp-solutions-fzc-llc/webpack-preset`**: the Module Federation shared map (strict singletons, the SDK provided only by the shell) and CSP-safe output (Trusted Types, no `eval`, hidden source maps).
+- **`@bcbp-solutions-fzc-llc/webpack-preset`**: the Module Federation shared map (strict singletons, the SDK provided only by the shell), chunk integrity and CSP-safe output (Trusted Types, no `eval`, hidden source maps), for webpack 5 and, through its `/rspack` and `/rsbuild` entry points, Rspack and Rsbuild (the same v1 federation protocol, so the bundlers can be mixed).
 - **`@bcbp-solutions-fzc-llc/eslint-plugin`**: seven rules that enforce in consumer code what the design requires:
   - SDK subpaths only;
   - no identity headers;
@@ -703,7 +703,7 @@ During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `
 |---|---|
 | Unit | Vitest per subpath (`test/unit/<subpath>`). Node by default; `happy-dom` for React; `jsdom` for DOMPurify. Coverage gate ≥ 98 % statements of `packages/*/src` |
 | Integration / E2E | `test/integration`: subpaths wired together; `test/e2e`: the reference shell and remote booted end to end (both in-process, jsdom) |
-| Browser | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP: the keepalive budget on hide and tab close, page-lifecycle event order, SRI on lazy chunks, `AbortSignal.any` native and absent, Trusted Types (CI job `browser`); engine limits in `engine-notes.ts` |
+| Browser | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP: the keepalive budget on hide and tab close, page-lifecycle event order, SRI on lazy chunks (webpack and Rspack remotes), `AbortSignal.any` native and absent, Trusted Types (CI job `browser`); engine limits in `engine-notes.ts` |
 | Collector | `test/collector`: the reference two-tier Collector (`examples/collector`) in the Collector image, two gateways and two aggregators: per-stream routing, totals across device clocks, allowlists (`pnpm test-collector`, CI job `collector`); `examples/collector/test` keeps the allowlists equal to the registry |
 | Integrated | `test/stack`: the example shell in three engines against Keycloak, Envoy with the real IAM services, the distribution on floci and the two-tier Collector (`docker-compose.yml`); nightly in CI (`stack-nightly.yml`); findings in `docs/e2e/integrated-deployment-report.md` |
 | React floor | The typecheck, unit suite, build and example checks on React 19.0.0 (CI job `react-floor`) |
@@ -712,7 +712,7 @@ During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `
 | Fake backends | A Keycloak fake at the HTTP level (PKCE, rotation, reuse revokes the session); `mockApi` / `mockProblem` |
 | Parity | `metrics:parity`: SDK registration checks vs gincommon `metricslint`, inventory passes `-strict` |
 | Cross-language | interop-tests pair 4: the SDK's `/http` + `/problem` against the live Go and Python servers |
-| Build output | `examples:check` (CSP, container global, no SDK in remotes); real webpack builds in the preset's tests |
+| Build output | `examples:check` (CSP, container global, no SDK in remotes); real webpack, Rspack and Rsbuild builds in the preset's tests, including webpack and Rspack shells and remotes mixed; the browser SRI suite runs on a webpack-built and an Rspack-built remote |
 | Package | Smoke tests of the packed tarballs in an empty consumer project |
 
 ## Consumer conformance checklist
@@ -720,7 +720,7 @@ During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `
 A shell or remote conforms when:
 
 - It imports SDK subpaths only (`@bcbp-solutions-fzc-llc/eslint-plugin` `configs.recommended` passes).
-- It builds with `platformWebpackConfig({ role, name, exposes })` and adds no other shared config for React, OTel or the SDK.
+- It builds with `platformWebpackConfig({ role, name, exposes })`, `platformRspackConfig(…)` or Rsbuild's `pluginPlatform(…)`, and adds no other shared config for React, OTel or the SDK (with Rsbuild: no `moduleFederation` option).
 - **Shell:**
   - it runs the bootstrap in order, implements `WorkspaceResolver` and `SessionContextSource` as ports, and passes the PUB-1/P-35 contract cases;
   - it shows its own signed-out, session-ended and wrong-workspace screens, and never signs in automatically after a logout.

@@ -10,25 +10,16 @@
  * chunk-load error. The chain of trust: manifest (remote) or index.html (shell) → entry → chunks.
  *
  * Built on webpack's own hooks rather than webpack-subresource-integrity, whose Module Federation support
- * is broken and unmaintained (waysact/webpack-subresource-integrity#176, #220, #230).
+ * is broken and unmaintained (waysact/webpack-subresource-integrity#176, #220, #230). The same plugin runs
+ * on Rspack, whose JS API offers the same hooks (the script hook on its RuntimePlugin), so both bundlers
+ * fail closed the same way.
  */
-import { createHash } from 'node:crypto';
 import type { Chunk, Compilation, Compiler } from 'webpack';
+import { INTEGRITY_PLACEHOLDER, MISSING_INTEGRITY, integrityOf } from './shared.ts';
+
+export { INTEGRITY_PLACEHOLDER, MISSING_INTEGRITY, integrityOf };
 
 const NAME = 'PlatformChunkIntegrityPlugin';
-/** Replaced, after minification, by the map; a string literal so every minifier keeps it. */
-export const INTEGRITY_PLACEHOLDER = '__PLATFORM_CHUNK_INTEGRITY__';
-/**
- * The integrity a chunk the build did not hash gets at run time: well-formed, so the browser enforces
- * it (a malformed value would be ignored), and matching no content, so the load fails closed.
- */
-export const MISSING_INTEGRITY = `sha384-${Buffer.alloc(48).toString('base64')}`;
-
-/** The SRI value of `content` (sha384, as the remote manifest's integrity field). */
-export function integrityOf(content: Buffer | string): string {
-  return `sha384-${createHash('sha384').update(content).digest('base64')}`;
-}
-
 /** The script loader's addition: the chunk's integrity, or one that fails closed for an unknown chunk. */
 const createScriptCode = (require: string) =>
   [
@@ -36,6 +27,19 @@ const createScriptCode = (require: string) =>
     `  script.integrity = ${require}.sriHashes[chunkId] || ${JSON.stringify(MISSING_INTEGRITY)};`,
     '}',
   ].join('\n');
+
+type ScriptHook = { tap(name: string, fn: (source: string) => string): void };
+
+/**
+ * The hook through which a plugin adds to the <script> the chunk loader creates: webpack's
+ * LoadScriptRuntimeModule, Rspack's RuntimePlugin (the same `createScript` waterfall).
+ */
+function createScriptHook(webpack: Compiler['webpack'], compilation: Compilation): ScriptHook {
+  if (webpack.runtime?.LoadScriptRuntimeModule) return webpack.runtime.LoadScriptRuntimeModule.getCompilationHooks(compilation).createScript;
+  const rspack = (webpack as unknown as { RuntimePlugin?: { getCompilationHooks?(c: Compilation): { createScript: ScriptHook } } }).RuntimePlugin;
+  if (rspack?.getCompilationHooks) return rspack.getCompilationHooks(compilation).createScript;
+  throw new Error(`${NAME}: this bundler has no createScript hook (webpack 5 or Rspack is required)`);
+}
 
 /** The lazily loadable JS file of a chunk; undefined for chunks loaded as entries or without JS. */
 function lazyScript(chunk: Chunk): string | undefined {
@@ -143,10 +147,7 @@ export class ChunkIntegrityPlugin {
       compilation.hooks.additionalTreeRuntimeRequirements.tap(NAME, (chunk) => {
         compilation.addRuntimeModule(chunk, new IntegrityMapRuntimeModule());
       });
-      webpack.runtime.LoadScriptRuntimeModule.getCompilationHooks(compilation).createScript.tap(
-        NAME,
-        (source) => `${source}\n${createScriptCode(RuntimeGlobals.require)}`,
-      );
+      createScriptHook(webpack, compilation).tap(NAME, (source) => `${source}\n${createScriptCode(RuntimeGlobals.require)}`);
 
       // After minification, before source maps: the placeholder literal (with the quotes a minifier may
       // have changed) becomes the map.

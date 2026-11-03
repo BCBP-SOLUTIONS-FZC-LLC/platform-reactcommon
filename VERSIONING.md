@@ -81,7 +81,7 @@ The packages are published to **GitHub Packages** (the npm registry at `npm.pkg.
 | Package | For |
 |---|---|
 | `@bcbp-solutions-fzc-llc/frontend-sdk` | the shell and every remote |
-| `@bcbp-solutions-fzc-llc/webpack-preset` | their webpack builds (dev dependency) |
+| `@bcbp-solutions-fzc-llc/webpack-preset` | their builds (dev dependency): webpack 5, or Rspack 2 / Rsbuild 2 through its `/rspack` and `/rsbuild` entry points |
 | `@bcbp-solutions-fzc-llc/eslint-plugin` | their lint (dev dependency) |
 
 **Why this scope.** GitHub Packages accepts only packages scoped to the GitHub organisation that owns the repository. The earlier `@platform` name couldn't be used anywhere: on npmjs.com the `platform` organisation belongs to a third party (it publishes `@platform/ts`, `@platform/cli`, …). Any install that resolved `@platform/*` from the public registry could therefore have received someone else's code.
@@ -203,9 +203,9 @@ From then on, releases follow plain SemVer.
 
 ## Compatibility matrix
 
-| platform-reactcommon | React / react-dom | `@opentelemetry/api` | webpack | ESLint | Node (build) | TypeScript (types built with) |
-|--------------------|-------------------|----------------------|---------|--------|--------------|-------------------------------|
-| `1.0.0-alpha.N` | `^19.0.0` (tested at 19.0.0 and the newest 19.x) | `~1.10.0` (OTel JS 3) | `^5.100.0` | `^9 \|\| ^10` | `≥ 22` | `6.0` |
+| platform-reactcommon | React / react-dom | `@opentelemetry/api` | Bundler (preset peers, each optional) | ESLint | Node (build) | TypeScript (types built with) |
+|--------------------|-------------------|----------------------|---------------------------------------|--------|--------------|-------------------------------|
+| `1.0.0-alpha.N` | `^19.0.0` (tested at 19.0.0 and the newest 19.x) | `~1.10.0` (OTel JS 3) | webpack `^5.100.0` · `@rspack/core` `^2.2.0` · `@rsbuild/core` `^2.2.0` | `^9 \|\| ^10` | `≥ 22` | `6.0` |
 
 The SDK targets evergreen browsers (ES2022), with Trusted Types where the browser supports them.
 
