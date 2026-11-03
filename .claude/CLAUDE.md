@@ -76,4 +76,7 @@ Six layers inside the SDK (`subpaths.json` is the single source; `test/unit/sdk/
 | [`request-flows.md`](request-flows.md) | Shell bootstrap, sign-in, refresh, sign-out, API call, remote load, telemetry on hide/close |
 | [`api-reference.md`](api-reference.md) | Every subpath's exports (generated from the API reports) and the tooling packages |
 | [`wire-contracts.md`](wire-contracts.md) | Headers, storage keys, channel, OTLP paths, problem types, metric names, Collector |
-| [`operations.md`](operations.md) | Commands, CI, release, nightly, the stack, runners and secrets |
+| [`operations.md`](operations.md) | Commands, CI, release, nightly, the stack, runners and secrets; the Claude Code settings and hooks |
+
+**Skills:** `/release <version>` (user-only: the release PR, the tag steps, watching the publish) · `/ci-triage <run or job URL>` (fetch a failed run's logs and artifacts, match [`skills/ci-triage/known-causes.md`](skills/ci-triage/known-causes.md), reproduce, fix).
+**Subagents** (read-only; pass them a diff file): `invariant-reviewer` (tokens, identity headers, origins, CSP, unload, sign-out, redaction, generated files, layers) before a PR touching the SDK, the preset or the examples; `api-change-reviewer` (API report, changeset bump, CHANGELOG, docs) before a PR that changes the public surface or a default.
