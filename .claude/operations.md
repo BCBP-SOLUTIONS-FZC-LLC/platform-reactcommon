@@ -56,3 +56,11 @@ PRs target `main` and are squash-merged. For a stack, retarget each PR to `main`
 ## The Integrated Stack (`docker-compose.yml`, `test/stack`)
 
 Keycloak 26 (realms rendered from IAM's `realm-template.json` + the provisioner's mappers, `prepare.mjs`), Envoy (jwt_authn, ext_authz → AuthZ Enrichment), iam-org-membership + seed, go-probe (gincommon), Postgres/PgBouncer, Valkey, floci (S3, CloudFront API, Lambda `/csp-report`, Secrets Manager, WAF API; runs as root for the Docker socket), an edge shim for CloudFront's data-plane gaps, and the Collectors: `otel-gateway` + `otel-aggregator` (the reference config) in front of a file sink (`.state/otel/*.jsonl`). Findings and the run history: [`docs/e2e/integrated-deployment-report.md`](../docs/e2e/integrated-deployment-report.md); known emulator gaps are `E-n` there.
+
+## Claude Code Settings and Hooks (`.claude/settings.json`)
+
+- **Allowed without asking:** the read-only and test commands above (`pnpm test`, `verify`, `lint`, `typecheck`, `build`, `api`, `docs:*`, `exports:*`, the `*:check` scripts, the browser/Collector/smoke/React-floor suites, `pnpm exec vitest|playwright test|tsc|eslint`), read-only `git` and `gh run|pr view`. Anything that writes outside the working tree (push, PRs, merges, tags, releases, `contracts:sync`, `stack-up`) still asks.
+- **`hooks/guard-generated.sh`** (PreToolUse, Edit/Write): blocks hand edits to generated files (`contracts/*.json` and `fixtures/` except `sources.json`, `src/internal/generated/`, `packages/*/src/generated/`, `api/*.api.md`, the `docs:sync` outputs) with the command that regenerates them, and edits in the sibling repositories (`../..`, `../../../XPertPMS`).
+- **`hooks/post-edit.sh`** (PostToolUse, Edit/Write): `eslint --fix` on an edited `.ts/.tsx/.mts/.mjs/.js` (problems it cannot fix are shown to Claude), `pnpm docs:sync` after editing a `docs/architecture/mermaid/*.mmd`.
+- Both are tested by `scripts/lib/claude-hooks.test.ts` (part of `pnpm test`), as is the release skill's `release-changelog.mjs`. Personal overrides go in `.claude/settings.local.json` (ignored).
+- **Skills** (`.claude/skills/`): `release` (user-only) and `ci-triage` (with `fetch-failures.sh` and `known-causes.md`). **Subagents** (`.claude/agents/`): `invariant-reviewer`, `api-change-reviewer`.
