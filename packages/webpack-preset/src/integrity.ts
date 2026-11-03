@@ -14,23 +14,12 @@
  * on Rspack, whose JS API offers the same hooks (the script hook on its RuntimePlugin), so both bundlers
  * fail closed the same way.
  */
-import { createHash } from 'node:crypto';
 import type { Chunk, Compilation, Compiler } from 'webpack';
+import { INTEGRITY_PLACEHOLDER, MISSING_INTEGRITY, integrityOf } from './shared.ts';
+
+export { INTEGRITY_PLACEHOLDER, MISSING_INTEGRITY, integrityOf };
 
 const NAME = 'PlatformChunkIntegrityPlugin';
-/** Replaced, after minification, by the map; a string literal so every minifier keeps it. */
-export const INTEGRITY_PLACEHOLDER = '__PLATFORM_CHUNK_INTEGRITY__';
-/**
- * The integrity a chunk the build did not hash gets at run time: well-formed, so the browser enforces
- * it (a malformed value would be ignored), and matching no content, so the load fails closed.
- */
-export const MISSING_INTEGRITY = `sha384-${Buffer.alloc(48).toString('base64')}`;
-
-/** The SRI value of `content` (sha384, as the remote manifest's integrity field). */
-export function integrityOf(content: Buffer | string): string {
-  return `sha384-${createHash('sha384').update(content).digest('base64')}`;
-}
-
 /** The script loader's addition: the chunk's integrity, or one that fails closed for an unknown chunk. */
 const createScriptCode = (require: string) =>
   [

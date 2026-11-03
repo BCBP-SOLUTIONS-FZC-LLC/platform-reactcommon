@@ -203,9 +203,9 @@ From then on, releases follow plain SemVer.
 
 ## Compatibility matrix
 
-| platform-reactcommon | React / react-dom | `@opentelemetry/api` | webpack | ESLint | Node (build) | TypeScript (types built with) |
-|--------------------|-------------------|----------------------|---------|--------|--------------|-------------------------------|
-| `1.0.0-alpha.N` | `^19.0.0` (tested at 19.0.0 and the newest 19.x) | `~1.10.0` (OTel JS 3) | `^5.100.0` | `^9 \|\| ^10` | `≥ 22` | `6.0` |
+| platform-reactcommon | React / react-dom | `@opentelemetry/api` | Bundler (preset peers, each optional) | ESLint | Node (build) | TypeScript (types built with) |
+|--------------------|-------------------|----------------------|---------------------------------------|--------|--------------|-------------------------------|
+| `1.0.0-alpha.N` | `^19.0.0` (tested at 19.0.0 and the newest 19.x) | `~1.10.0` (OTel JS 3) | webpack `^5.100.0` · `@rspack/core` `^2.2.0` · `@rsbuild/core` `^2.2.0` | `^9 \|\| ^10` | `≥ 22` | `6.0` |
 
 The SDK targets evergreen browsers (ES2022), with Trusted Types where the browser supports them.
 

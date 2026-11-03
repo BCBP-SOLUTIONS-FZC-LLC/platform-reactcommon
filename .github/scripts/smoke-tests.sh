@@ -22,7 +22,7 @@ echo "::group::Install the tarballs and peers"
 npm install --no-audit --no-fund --loglevel=error \
   "${PKG_DIR}"/*.tgz \
   react@19 react-dom@19 @types/react@19 @types/react-dom@19 '@opentelemetry/api@~1.10.0' \
-  webpack@5 eslint@10 typescript@6 @types/node@22
+  webpack@5 @rspack/core@2.2.9 @rsbuild/core@2.2.13 eslint@10 typescript@6 @types/node@22
 echo "::endgroup::"
 
 cat > smoke.mjs <<'JS'
@@ -74,6 +74,25 @@ for (const s of subpaths.filter((x) => x !== 'testing')) {
   if (!bundle.includes(`("@bcbp-solutions-fzc-llc/frontend-sdk/${s}","${sdkPkg.version}",`)) fail(`the shell's share scope does not provide @bcbp-solutions-fzc-llc/frontend-sdk/${s}`);
 }
 
+// 2c. The Rspack and Rsbuild entry points load, and each loads only its own bundler (an Rsbuild app has
+// no @rspack/core of its own under pnpm; an Rspack or Rsbuild app has no webpack).
+const rspackPreset = await import('@bcbp-solutions-fzc-llc/webpack-preset/rspack');
+const rsbuildPreset = await import('@bcbp-solutions-fzc-llc/webpack-preset/rsbuild');
+if (typeof rspackPreset.platformRspackConfig !== 'function') fail('/rspack does not export platformRspackConfig');
+if (typeof rsbuildPreset.pluginPlatform !== 'function') fail('/rsbuild does not export pluginPlatform');
+if (rspackPreset.platformRspackConfig({ role: 'remote', name: 'iam-admin', exposes: {}, mode: 'production' }).output.uniqueName !== 'iam_admin') fail('/rspack config lost the container name');
+const presetDir = 'node_modules/@bcbp-solutions-fzc-llc/webpack-preset/dist';
+const bareImports = (file, seen = new Set()) => {
+  if (seen.has(file)) return [];
+  seen.add(file);
+  const text = readFileSync(`${presetDir}/${file}`, 'utf8');
+  return [...text.matchAll(/^import\s(?:[^'"]*?from\s)?["']([^"']+)["']/gm)].flatMap(([, spec]) => (spec.startsWith('./') ? bareImports(spec.slice(2), seen) : [spec]));
+};
+for (const [entry, allowed] of [['index.js', 'webpack'], ['rspack.js', '@rspack/core'], ['rsbuild.js', '@rsbuild/core']]) {
+  const bundlers = bareImports(entry).filter((s) => ['webpack', '@rspack/core', '@rsbuild/core'].includes(s));
+  if (bundlers.some((b) => b !== allowed)) fail(`dist/${entry} imports [${bundlers}], only ${allowed} is allowed`);
+}
+
 // 3. eslint-plugin's recommended config runs.
 const { Linter } = await import('eslint');
 const plugin = (await import('@bcbp-solutions-fzc-llc/eslint-plugin')).default;
@@ -84,14 +103,14 @@ const messages = new Linter().verify("import x from '@bcbp-solutions-fzc-llc/fro
 const ids = messages.map((m) => m.ruleId).sort().join(',');
 if (ids !== '@bcbp-solutions-fzc-llc/no-raw-storage,@bcbp-solutions-fzc-llc/no-sdk-root-import') fail(`eslint-plugin reported [${ids}]`);
 
-console.log(`smoke: ${subpaths.length} SDK subpaths import, root throws, preset shares ${shared.length} modules, a preset shell provides every subpath, eslint-plugin rules run`);
+console.log(`smoke: ${subpaths.length} SDK subpaths import, root throws, preset shares ${shared.length} modules, a preset shell provides every subpath, /rspack and /rsbuild load only their bundler, eslint-plugin rules run`);
 JS
 node smoke.mjs
 
 # 4. The published types: a consumer importing every subpath typechecks.
 node -e "
 const s = Object.keys(require('./node_modules/@bcbp-solutions-fzc-llc/frontend-sdk/package.json').exports).filter((k) => k !== '.' && k !== './package.json');
-require('fs').writeFileSync('types.ts', s.map((k, i) => 'import * as m' + i + \" from '@bcbp-solutions-fzc-llc/frontend-sdk\" + k.slice(1) + \"';\").join('\n') + '\nexport const all = [' + s.map((_, i) => 'm' + i).join(', ') + '];\nimport { platformShared } from \'@bcbp-solutions-fzc-llc/webpack-preset\';\nimport plugin from \'@bcbp-solutions-fzc-llc/eslint-plugin\';\nexport const more = [platformShared, plugin];\n');
+require('fs').writeFileSync('types.ts', s.map((k, i) => 'import * as m' + i + \" from '@bcbp-solutions-fzc-llc/frontend-sdk\" + k.slice(1) + \"';\").join('\n') + '\nexport const all = [' + s.map((_, i) => 'm' + i).join(', ') + '];\nimport { platformShared } from \'@bcbp-solutions-fzc-llc/webpack-preset\';\nimport { platformRspackConfig } from \'@bcbp-solutions-fzc-llc/webpack-preset/rspack\';\nimport { pluginPlatform } from \'@bcbp-solutions-fzc-llc/webpack-preset/rsbuild\';\nimport plugin from \'@bcbp-solutions-fzc-llc/eslint-plugin\';\nexport const more = [platformShared, platformRspackConfig, pluginPlatform, plugin];\n');
 "
 cat > tsconfig.json <<'JSON'
 { "compilerOptions": { "target": "ES2022", "module": "ESNext", "moduleResolution": "Bundler", "strict": true, "noEmit": true, "skipLibCheck": false, "lib": ["ESNext", "DOM"], "jsx": "react-jsx", "types": ["node"] }, "files": ["types.ts"] }

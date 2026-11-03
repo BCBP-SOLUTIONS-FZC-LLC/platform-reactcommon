@@ -53,8 +53,9 @@ No api-extractor report for this package; its surface is `src/index.ts`. LLD §1
 |---|---|---|
 | `@bcbp-solutions-fzc-llc/webpack-preset/rspack` | `platformRspackConfig(options)` | The same settings as `platformWebpackConfig` for Rspack 2, with `ModuleFederationPluginV1` (webpack-compatible protocol) |
 | | `ProvideSdkRspackPlugin`, `GlobalThisOnlyPlugin` | The shell's SDK provider; the runtime without the `Function('return this')` fallback |
-| | `containerName`, `platformShared`, `sharedFor`, `integrityOf`, `MISSING_INTEGRITY`, `INTEGRITY_PLACEHOLDER` | As in the main entry |
-| `@bcbp-solutions-fzc-llc/webpack-preset/rsbuild` | `pluginPlatform({ role, name?, exposes? })` | Rsbuild 2 plugin: the Rspack preset with Rsbuild's mode; refuses Rsbuild's `moduleFederation` option |
+| | `containerName`, `platformShared`, `sharedFor`, `integrityOf`, `MISSING_INTEGRITY`, `INTEGRITY_PLACEHOLDER`, `type PresetOptions`, `type SharedConfig` | As in the main entry |
+| `@bcbp-solutions-fzc-llc/webpack-preset/rsbuild` | `pluginPlatform({ role, name?, exposes? })` | Rsbuild 2 plugin: the Rspack preset (with the Rspack inside `@rsbuild/core`) in Rsbuild's mode; refuses Rsbuild's `moduleFederation` option |
+| | `type PlatformPluginOptions`, `PLUGIN_PLATFORM_NAME` (`'platform-preset'`) | The plugin's options (`PresetOptions` without `mode`); its Rsbuild plugin name |
 
 ## `@bcbp-solutions-fzc-llc/eslint-plugin`
 

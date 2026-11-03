@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Rspack and Rsbuild** (`@bcbp-solutions-fzc-llc/webpack-preset`):
   - `@bcbp-solutions-fzc-llc/webpack-preset/rspack`: `platformRspackConfig(options)`, the webpack preset's settings for Rspack 2 (same mode, devtool, output, ids, shared map). Module Federation uses Rspack's `ModuleFederationPluginV1`, the webpack-compatible protocol, so Rspack and webpack shells and remotes load each other; Rspack's default `ModuleFederationPlugin` (the v2 runtime) does not interoperate. `ProvideSdkRspackPlugin` makes the shell provide every SDK subpath; `GlobalThisOnlyPlugin` removes Rspack's `Function('return this')` fallback, which CSP `script-src 'self'` forbids; `ChunkIntegrityPlugin` works unchanged (the script hook comes from Rspack's `RuntimePlugin`).
   - `@bcbp-solutions-fzc-llc/webpack-preset/rsbuild`: `pluginPlatform({ role, name?, exposes? })` for Rsbuild 2, with Rsbuild's mode. It refuses Rsbuild's own `moduleFederation` option.
-  - Each entry point loads only its bundler: webpack, `@rspack/core` and `@rsbuild/core` are optional peer dependencies.
+  - Each entry point loads only its bundler: the main entry webpack, `/rspack` `@rspack/core`, `/rsbuild` `@rsbuild/core` (and the Rspack it bundles, so an Rsbuild app needs no `@rspack/core`). All three are optional peer dependencies; the tarball smoke test checks each entry's imports and types.
   - Tested with real Rspack and Rsbuild builds, a mixed estate in both directions, and the SRI browser tests on an Rspack-built remote in Chromium, Firefox and WebKit.
 
 ### Fixed

@@ -3,6 +3,7 @@
  * the options and the CSP-safe output settings. No bundler is imported here, so each entry point loads
  * only the bundler it is for.
  */
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { SDK_PACKAGE, SDK_SHARE_RANGE, SDK_SUBPATHS, SDK_VERSION } from './generated/sdk.ts';
 
@@ -161,6 +162,20 @@ export function sdkVersionAt(file: string, readJson: (path: string) => { name?: 
     dir = up;
   }
   return undefined;
+}
+
+// The SRI helpers (ChunkIntegrityPlugin in integrity.ts), here so the entry points' types need no bundler.
+/** Replaced, after minification, by the map; a string literal so every minifier keeps it. */
+export const INTEGRITY_PLACEHOLDER = '__PLATFORM_CHUNK_INTEGRITY__';
+/**
+ * The integrity a chunk the build did not hash gets at run time: well-formed, so the browser enforces
+ * it (a malformed value would be ignored), and matching no content, so the load fails closed.
+ */
+export const MISSING_INTEGRITY = `sha384-${Buffer.alloc(48).toString('base64')}`;
+
+/** The SRI value of `content` (sha384, as the remote manifest's integrity field). */
+export function integrityOf(content: Buffer | string): string {
+  return `sha384-${createHash('sha384').update(content).digest('base64')}`;
 }
 
 export { SDK_PACKAGE };

@@ -253,6 +253,7 @@ With Rsbuild, don't set its `moduleFederation` option: it adds Rspack's v2 Modul
 
 ```tsx
 // webpack: platformWebpackConfig({ role: 'remote', name: 'tenders', exposes: { './EditTender': './src/EditTender.tsx' }, mode })
+// Rspack: platformRspackConfig({ …the same }) · Rsbuild: pluginPlatform({ role: 'remote', name: 'tenders', exposes: { … } })
 export default function EditTender({ id }: { id: string }) {
   return (
     <MFEErrorBoundary mfe="tenders">
@@ -516,7 +517,7 @@ test/
 
 ### Coverage
 
-`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.7% today (1340 tests). Don't lower the threshold.
+`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.7% today (1342 tests). Don't lower the threshold.
 
 ---
 

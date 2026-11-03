@@ -1,6 +1,7 @@
 /**
- * The preset as an Rsbuild plugin (`@bcbp-solutions-fzc-llc/webpack-preset/rsbuild`): platformRspackConfig
- * merged into the Rspack config Rsbuild generates, with the mode Rsbuild builds in.
+ * The preset as an Rsbuild plugin (`@bcbp-solutions-fzc-llc/webpack-preset/rsbuild`): the Rspack preset,
+ * built with the Rspack @rsbuild/core bundles, merged into the Rspack config Rsbuild generates, with the
+ * mode Rsbuild builds in. Imports only `@rsbuild/core`.
  *
  * ```ts
  * // rsbuild.config.ts
@@ -15,14 +16,23 @@
  *
  * @packageDocumentation
  */
-import type { RsbuildPlugin } from '@rsbuild/core';
-import { platformRspackConfig } from './rspack.ts';
+import { rspack, type RsbuildPlugin } from '@rsbuild/core';
+import { rspackPresetWith } from './rspack-preset.ts';
 import type { PresetOptions } from './shared.ts';
 
 export const PLUGIN_PLATFORM_NAME = 'platform-preset';
 
-/** The preset's options for Rsbuild: the mode comes from Rsbuild (`rsbuild build` / `rsbuild dev`). */
-export type PlatformPluginOptions = Omit<PresetOptions, 'mode'>;
+/**
+ * The preset's options for Rsbuild (PresetOptions without the mode, which comes from Rsbuild: `rsbuild build`
+ * / `rsbuild dev`). Written out, so this entry's types reference no other entry's (whose types import webpack).
+ */
+export interface PlatformPluginOptions {
+  role: 'shell' | 'remote';
+  /** Remote: its manifest name, e.g. 'tenders'. Shell: ignored ('shell'). */
+  name?: string;
+  /** Remote: modules it exposes, e.g. { './EditTender': './src/EditTender.tsx' }. */
+  exposes?: Record<string, string>;
+}
 
 export function pluginPlatform(o: PlatformPluginOptions): RsbuildPlugin {
   return {
@@ -36,10 +46,12 @@ export function pluginPlatform(o: PlatformPluginOptions): RsbuildPlugin {
         return mergeRsbuildConfig(config, { output: { assetPrefix: o.role === 'shell' ? '/' : 'auto' } });
       });
       api.modifyRspackConfig((config, { isProd, mergeConfig }) => {
-        const preset = platformRspackConfig({ ...o, mode: isProd ? 'production' : 'development' } as PresetOptions);
+        // The Rspack this Rsbuild bundles: an Rsbuild app needs no @rspack/core of its own.
+        const preset = rspackPresetWith(rspack, { ...o, mode: isProd ? 'production' : 'development' } as PresetOptions);
         const merged = mergeConfig(config, preset);
-        // The preset's file names and devtool win over Rsbuild's defaults (static/js/…, its source maps).
-        merged.output = { ...merged.output, ...preset.output };
+        // The preset's file names and devtool win over Rsbuild's defaults (static/js/…, its source maps);
+        // output.environment keeps the flags Rsbuild derives from its browserslist, plus globalThis.
+        merged.output = { ...merged.output, ...preset.output, environment: { ...merged.output?.environment, ...preset.output?.environment } };
         if (preset.devtool !== undefined) merged.devtool = preset.devtool;
         return merged;
       });

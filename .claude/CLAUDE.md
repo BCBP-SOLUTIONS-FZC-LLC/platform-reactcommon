@@ -31,7 +31,7 @@ Node ≥ 22 (`.nvmrc` 22), pnpm 12 (corepack), TypeScript 6, ESM only, **React 1
 pnpm run setup        # install + git hooks (once per clone)
 pnpm verify           # exports, docs, lint, typecheck, tests, build, examples, API reports, depcruise
 pnpm test             # Vitest: unit, integration, e2e (+ examples', scripts' tests)
-pnpm test:coverage    # with coverage of packages/*/src (gate 98% statements; 98.7% today, 1340 tests)
+pnpm test:coverage    # with coverage of packages/*/src (gate 98% statements; 98.7% today, 1342 tests)
 pnpm lint / typecheck / build
 pnpm api / api:check  # api-extractor reports (packages/frontend-sdk/api/*.api.md)
 pnpm exports:sync / docs:sync / contracts:sync    # generated files; *:check in CI

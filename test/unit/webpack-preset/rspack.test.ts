@@ -307,6 +307,27 @@ describe('Rsbuild: pluginPlatform', () => {
     expect(entry).not.toMatch(/\beval\(|\bFunction\(/);
   });
 
+  it('keeps the output.environment flags Rsbuild derives from its browserslist, and adds globalThis', async () => {
+    const root = mkdtempSync(join(dir, 'rsbuild-env-'));
+    writeFileSync(join(root, 'index.js'), '// entry\n');
+    const configs = async (plugins: ReturnType<typeof pluginPlatform>[]) => {
+      const rsbuild = await createRsbuild({ cwd: root, rsbuildConfig: { mode: 'production', plugins, source: { entry: { index: './index.js' } }, logLevel: 'silent' } });
+      return (await rsbuild.initConfigs())[0]!.output!.environment;
+    };
+    const plain = await configs([]);
+    expect(await configs([pluginPlatform({ role: 'remote', name: 'rsb-env', exposes: {} })])).toEqual({ ...plain, globalThis: true });
+  });
+
+  it('/rsbuild uses the Rspack @rsbuild/core bundles: its modules never import @rspack/core at run time', () => {
+    // pnpm does not hoist @rsbuild/core's own @rspack/core: an Rsbuild-only app has none the preset could resolve.
+    const src = join(import.meta.dirname, '..', '..', '..', 'packages', 'webpack-preset', 'src');
+    for (const file of ['rsbuild.ts', 'rspack-preset.ts', 'integrity.ts', 'shared.ts']) {
+      const text = readFileSync(join(src, file), 'utf8');
+      expect(text, file).not.toMatch(/^import (?!type\b)[^;]*from '@rspack\/core'/m);
+      expect(text, file).not.toMatch(/^import [^;]*from '\.\/rspack\.ts'/m);
+    }
+  });
+
   it('refuses Rsbuild\'s own moduleFederation option (the v2 protocol)', async () => {
     const root = mkdtempSync(join(dir, 'rsbuild-mf-'));
     writeFileSync(join(root, 'index.js'), '// entry\n');

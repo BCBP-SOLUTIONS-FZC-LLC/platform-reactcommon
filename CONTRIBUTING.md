@@ -32,7 +32,7 @@ packages/
     contracts/              ← Generated from pinned backend commits (never edited)
     api/<subpath>.api.md    ← api-extractor report: the reviewed public API
     subpaths.json           ← Subpaths, layers, functional areas, allowed imports (single source)
-  webpack-preset/           ← platformShared, sharedFor, platformWebpackConfig
+  webpack-preset/           ← platformShared, sharedFor, platformWebpackConfig; platformRspackConfig (/rspack), pluginPlatform (/rsbuild)
   eslint-plugin/            ← Consumer lint rules (src/rules.ts)
 test/                       ← All tests, not beside production code (as platform-gincommon)
   unit/<subpath>/           ← One folder per SDK subpath; unit/sdk, unit/webpack-preset, unit/eslint-plugin
@@ -106,7 +106,7 @@ Review the diff: a contract change that alters public behaviour (a new problem t
 | E2E | `test/e2e/` | The reference shell and remote booted end to end in-process |
 | Smoke | `test/smoke/` | Optional locally (`pnpm run test-smoke`, after `pnpm build`); the example builds served as CloudFront does, or a deployed shell at `SMOKE_BASE_URL` |
 | Contract | `test/unit/` (fixtures from `contracts/`) | Identity, redaction and problem fixtures shared with Go and Python |
-| Build | `test/unit/webpack-preset/`, `pnpm examples:check` | Real webpack builds: container globals, no SDK in remotes, no `eval` |
+| Build | `test/unit/webpack-preset/` (incl. `rspack.test.ts`), `pnpm examples:check` | Real webpack, Rspack and Rsbuild builds: container globals, no SDK in remotes, no `eval` or `Function`, a mixed webpack/Rspack estate |
 | Examples | `examples/*/test/` | The shell's IAM ports against the contract cases; the CloudFront CSP and Lambda |
 | Browser | `test/browser/` | Playwright in Chromium, Firefox and WebKit (`pnpm run test-browser`): keepalive and tab close, page-lifecycle order, `AbortSignal.any`, Trusted Types, the production CSP. Known SDK bugs are `test.fail` in `known-bugs.ts` |
 | Stack | `test/stack/` | The example shell against a production-like deployment (`pnpm run stack-up`, then `pnpm run test-stack`, then `pnpm run stack-down`; needs Docker and `gh auth token` for the IAM images). The stack is `docker-compose.yml` with its configs in `docker/`. Local only, not in CI. Findings: `docs/e2e/integrated-deployment-report.md` |
