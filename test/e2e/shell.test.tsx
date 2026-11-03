@@ -77,10 +77,15 @@ const user = (fn: () => void) => act(async () => fn());
  * clock, inside act so React commits what they caused.
  */
 async function until(done: () => boolean): Promise<void> {
-  for (let i = 0; i < 200; i++) {
+  // 200 turns of the fake clock (5 s of page time), then up to 2 s more of real time with the clock held:
+  // WebCrypto (PKCE) runs on real time, which a busy 2-core CI runner stretched past the 200 turns (the
+  // Sign in redirect "never" came), and more page time would fire timers the test did not ask for.
+  const start = process.hrtime.bigint();
+  const realMs = () => Number(process.hrtime.bigint() - start) / 1e6;
+  for (let i = 0; i < 200 || realMs() < 2_000; i++) {
     await act(async () => {
       await new Promise((r) => setImmediate(r));
-      await vi.advanceTimersByTimeAsync(25);
+      if (i < 200) await vi.advanceTimersByTimeAsync(25);
     });
     if (bootError) throw bootError;
     if (done()) return;
