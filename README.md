@@ -8,7 +8,7 @@ The platform's shared **frontend SDK for React micro-frontends**: the browser-si
 It is also the browser's side of IAM: Keycloak sign-in with tokens kept in memory only, workspace (realm) choice, session restore, step-up MFA.
 
 **Repository:** `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon`
-**Packages:** `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin`. pnpm monorepo, Node ≥ 22, TypeScript 6, ESM only. One version for all three (`1.0.0-alpha.N` until the first environment). **Never deployed**: consumers install the packages; `examples/` holds a reference shell and remote that are built and checked in CI, never run in production.
+**Packages:** `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin`. pnpm monorepo, Node ≥ 22, TypeScript 6, ESM only, React 19. One version for all three (`1.0.0-alpha.N` until the first environment); the first release is **`v1.0.0-alpha.1`** (2026-11-03), on GitHub Packages. **Never deployed**: consumers install the packages; `examples/` holds a reference shell and remote that are built and checked in CI, never run in production.
 **Design:**
 - **Decisions:** [`docs/design/frontend-sdk-design.md`](docs/design/frontend-sdk-design.md) is the decision record, including the public API per subpath.
 - **Implementation:** [ARCHITECTURE.md](ARCHITECTURE.md) and the [LLD](docs/lld/platform-reactcommon-lld.md) describe what's built.
@@ -360,6 +360,9 @@ pnpm verify
 | `pnpm metrics:proposal` | The Tier 1 registry proposal merged into gincommon's registry, judged by `metricslint` (`registry`, `check -strict`, `refs` on `monitoring/`); `--emit <file>` writes the candidate `registry.json` |
 | `pnpm run rules-check` / `dashboards-check` | `promtool` check and unit tests for `monitoring/prometheus`, and the dashboards' PromQL syntax (Docker) |
 | `pnpm examples:check` | CSP and sharing checks on the example builds (after `pnpm build`) |
+| `pnpm run test-browser` | Playwright in Chromium, Firefox and WebKit under the production CSP (`--project=<engine>` for one; `test-browser-install` once) |
+| `pnpm run test-collector` | The reference two-tier Collector (`examples/collector`) in the Collector image: two gateways, two aggregators (Docker) |
+| `pnpm run stack-up` · `test-stack` · `stack-down` | The integrated stack (`docker-compose.yml`): Keycloak, Envoy, the real IAM services, floci, the Collectors; then the suite in three engines (about 16 min); `stack-up` takes the private Go modules token from `gh auth token` |
 | `pnpm changeset` | Record a change to a published package |
 | `pnpm run version-packages` | Release PR only: `changeset version` + `exports:sync` |
 | `pnpm run ci` | Everything CI's quality and test gates run, with the coverage gate and the audit |
@@ -434,10 +437,13 @@ The example shell can't run end to end on its own: it needs Keycloak, the IAM AP
 
 ```
 shell / remotes
-    ├── spans ──OTLP/HTTP POST /otel/v1/traces──┐
-    ├── logs  ──OTLP/HTTP POST /otel/v1/logs ───┼──▶ CloudFront /otel/* ──▶ OTel Collector ──▶ Tempo · Loki · Mimir
-    └── metrics ─OTLP/HTTP POST /otel/v1/metrics┘    (delta → cumulative, label allowlists)
+    ├── spans ──OTLP/HTTP POST /otel/v1/traces──┐                     Collector gateway ──traces, logs──▶ Tempo · Loki
+    ├── logs  ──OTLP/HTTP POST /otel/v1/logs ───┼──▶ CloudFront /otel/* ──▶ (scrub, allowlists,
+    └── metrics ─OTLP/HTTP POST /otel/v1/metrics┘                      route by stream) ──metrics──▶ aggregator ──▶ Mimir
+                                                                                         (delta → cumulative)
 ```
+
+The reference Collector configuration is [`examples/collector`](examples/collector/gateway.yaml) (LLD §7.6). When the page is hidden or closing, the three signals share the browser's keepalive budget in one order: the metrics interval's share, then logs, then the newest spans; requests that must outlive the tab start inside the listener (LLD §7.5).
 
 ### In tests (no infrastructure)
 
@@ -472,12 +478,13 @@ test/
   smoke/                 the example builds served as CloudFront serves them, or a deployed shell (SMOKE_BASE_URL)
   browser/               Playwright: the SDK in Chromium, Firefox and WebKit under the production CSP (test/browser/README.md)
   stack/                 Playwright against the production-like stack in docker-compose.yml and docker/
-                         (docs/e2e/integrated-deployment-report.md)
+                         (docs/e2e/integrated-deployment-report.md); nightly in CI (stack-nightly.yml)
+  collector/             the reference Collector (examples/collector) in its image, two tiers (Docker)
   fixtures/              shared fakes and helpers (Keycloak, render, parity cases, the boundaries tree)
   testenv/               loads .env and sets defaults (OBSERVABILITY_DOMAIN, ENVIRONMENT, SMOKE_BASE_URL)
 ```
 
-`pnpm test` runs unit, integration and e2e (and the examples' and scripts' own tests); smoke is left out, as in gincommon, and runs with `pnpm run test-smoke`. The real-browser suite runs with `pnpm run test-browser` (`--project=chromium|firefox|webkit` for one engine; `pnpm run test-browser-install` installs the browsers once). Coverage is measured on `packages/*/src`.
+`pnpm test` runs unit, integration and e2e (and the examples' and scripts' own tests); smoke is left out, as in gincommon, and runs with `pnpm run test-smoke`. The real-browser suite runs with `pnpm run test-browser` (`--project=chromium|firefox|webkit` for one engine; `pnpm run test-browser-install` installs the browsers once). The Docker suites run on their own: `pnpm run test-collector`, and `pnpm run stack-up && pnpm run test-stack`. Coverage is measured on `packages/*/src`.
 
 ### Canonical tests (do not break)
 
@@ -497,7 +504,7 @@ test/
 
 ### Coverage
 
-`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 99.2% today. Don't lower the threshold.
+`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.8% today (1295 tests). Don't lower the threshold.
 
 ---
 
@@ -588,7 +595,7 @@ SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as publi
 
 | Version | Status | Notes |
 |---|---|---|
-| `1.0.0-alpha.N` | Current line | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`) |
+| `1.0.0-alpha.N` | Current line; **`1.0.0-alpha.1`** released 2026-11-03 | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`) |
 | `1.0.0` | Cut with the first end-to-end environment | Strict SemVer from then on |
 
 ### Cutting a release
@@ -597,7 +604,10 @@ SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as publi
 2. Tag the merge commit `vX.Y.Z` (the version it set) and push the tag. `release.yml` does the rest:
    1. **Verify.** The tag must be reachable from `origin/main` (and a manual dispatch must start from `main` or the tag), all package versions must equal the tag, and `CHANGELOG.md` must have its section (`## [X.Y.Z]`; a pre-release tag may use its base version's section).
    2. **Gates.** The same gates as `ci.yml`, at the tag: tests, quality, contracts, package, Trivy, smoke, interop.
-   3. **Publish.** Checksums over the tarballs and SBOM, a Cosign keyless `sign-blob` with verification, and the GitHub Release with that CHANGELOG section as its notes. A tag with a pre-release part is marked as a pre-release.
+   3. **npm-publish.** The tarballs go to GitHub Packages under the dist-tag `publish:check` derives (`alpha`, `rc`, `latest`), each with a build-provenance attestation. Only if publishing is gated (`.github/scripts/check-npm-environment.sh`): this private repository on GitHub Team has no environment reviewers, so the `npm` environment accepts only release tags and the "release tags" ruleset lets only admins create, move or delete `v*` tags; pushing the tag is the approval.
+   4. **Publish.** Checksums over the tarballs and SBOM, a Cosign keyless `sign-blob` with verification, and the GitHub Release with that CHANGELOG section as its notes. A tag with a pre-release part is marked as a pre-release.
+
+In changesets v3's pre mode, `version-packages` moves the consumed changesets into `.changeset/pre/`; that is expected, and `changelog-check.yml` treats it as a release PR.
 
 **Verifying a release** (needs [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) ≥ 2.4):
 
@@ -617,12 +627,12 @@ sha256sum --check --ignore-missing checksums.txt   # macOS: shasum -a 256 -c --i
 
 ## CI
 
-Six workflow files and one shared setup action. Shell logic lives in `.github/scripts/` (shellcheck-clean), and every third-party action is pinned to a full commit SHA (checked in CI). Dependabot version updates are **disabled** (`.github/dependabot.yml.disabled`; re-enable with `git mv .github/dependabot.yml.disabled .github/dependabot.yml`).
+Seven workflow files and one shared setup action. Shell logic lives in `.github/scripts/` (shellcheck-clean), and every third-party action is pinned to a full commit SHA (checked in CI). Dependabot version updates are **disabled** (`.github/dependabot.yml.disabled`; re-enable with `git mv .github/dependabot.yml.disabled .github/dependabot.yml`).
 
 - **`ci.yml`:** the orchestrator, on every PR (any base) and pushes to `main`, skipping Markdown-only commits.
   1. In parallel: `validate-test`, `validate-quality`, `validate-contracts` and `package` (build + `pnpm pack` ×3).
   2. Then `trivy` (filesystem scan: runtime dependencies, secrets, config; CRITICAL/HIGH/UNKNOWN fails; SARIF; CycloneDX SBOM) and `smoke` (the tarballs installed into an empty consumer).
-  3. Then `interop` (platform-interop-tests at a pinned SHA, pair 4 at this ref).
+  3. Then `interop` (platform-interop-tests at a pinned SHA, pair 4 at this ref), `browser` (Playwright, three engines), `react-floor` (React 19.0.0) and `collector` (the reference Collector in its image).
   4. Finally `pr-summary` (one updated PR comment, also on failure).
 - **`validate-test.yml`** (reusable): a frozen install, then `pnpm test:coverage`, then `coverage-gate.sh` (**≥ 98%**), then the coverage report is uploaded.
 - **`validate-quality.yml`** (reusable), in order:
@@ -632,10 +642,13 @@ Six workflow files and one shared setup action. Shell logic lives in `.github/sc
   4. API reports, dependency-cruiser, example CSP checks;
   5. `pnpm audit --prod`.
 - **`validate-contracts.yml`** (reusable): checks out the seven backend repos at their pins, then runs `contracts:check` and `metrics:parity`.
-- **`changelog-check.yml`:** a PR that changes a published package must add a `.changeset/*.md` and update `CHANGELOG.md`. A release PR (which consumes changesets) passes with the `CHANGELOG.md` change alone.
-- **`release.yml`** (`v*` tags or manual): `verify`, then the `ci.yml` gates at the tag, then `publish`.
+- **`changelog-check.yml`:** a PR that changes a published package must add a `.changeset/*.md` and update `CHANGELOG.md`. A release PR (which consumes changesets: deletes them, or in pre mode moves them into `.changeset/pre/`) passes with the `CHANGELOG.md` change alone.
+- **`release.yml`** (`v*` tags or manual): `verify`, then the `ci.yml` gates at the tag, then `npm-publish` (GitHub Packages, gated), then `publish` (GitHub Release).
+- **`stack-nightly.yml`** (01:30 UTC, or dispatch with `upstream: pinned|main`): the integrated stack (`test/stack`) against the backends checked out at their pins; a failing scheduled run opens or comments on one issue.
 
-**Secrets:** the org secrets `CI_REPO_READ_TOKEN` (sibling checkouts; `PLATFORM_REPOS_TOKEN` overrides it for contracts if set) and `GO_PRIVATE_TOKEN` (interop), as platform-gincommon uses them.
+**Secrets:** the org secrets `CI_REPO_READ_TOKEN` (private checkouts; `PLATFORM_REPOS_TOKEN` overrides it if set) and `GO_PRIVATE_TOKEN` (interop, and the nightly's IAM image builds as a BuildKit secret), as platform-gincommon and the IAM services use them.
+
+**Runners:** the repository is private, so jobs run on GitHub's private-repository runners (7 GB RAM, 2 cores). The SDK build sets its own heap (`--max-old-space-size=4096`), and timing-dependent tests wait on real time, not only on fake clocks.
 
 ---
 

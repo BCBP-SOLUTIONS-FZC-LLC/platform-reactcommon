@@ -15,7 +15,7 @@ platform's infrastructure repository owns the distribution; it takes these files
 | Path | Origin | Cache policy | Origin request | Headers policy | Notes |
 |---|---|---|---|---|---|
 | `/api/*` | API gateway / ALB | CachingDisabled | AllViewerExceptHostHeader | none (the gateway owns them) | All methods, WAF. Envoy strips `x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`. `/api/v1/public/tenants/resolve` routes without `jwt_authn`/`ext_authz`, with a per-IP rate limit and CAPTCHA |
-| `/otel/*` | OTel Collector (OTLP/HTTP) | CachingDisabled | no cookies, no `Authorization` | security headers | POST only. WAF rate rule, 1 MB body limit. Unauthenticated by design (pre-login errors) |
+| `/otel/*` | OTel Collector gateway (OTLP/HTTP; reference config [`examples/collector`](../collector/gateway.yaml)) | CachingDisabled | no cookies, no `Authorization` | security headers | POST only. WAF rate rule, 1 MB body limit. Unauthenticated by design (pre-login errors) |
 | `/csp-report` | Lambda function URL (`AuthType NONE`) + custom origin header `x-origin-verify` | CachingDisabled | no cookies | security headers | POST only, WAF rate rule, 64 KB limit (also enforced by the handler). **Not** OAC: see [`/csp-report`](#csp-report) |
 | `/config/runtime.json` | S3 | TTL 0, honour `Cache-Control: no-cache` + ETag | — | security headers | One object per environment (see `examples/shell/public/config/runtime.json`) |
 | `/version.json` | S3 | as above | — | security headers | Written **last** by the deploy |

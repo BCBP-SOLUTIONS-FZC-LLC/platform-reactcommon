@@ -12,3 +12,8 @@ playwright-report/
 test-results/
 test/browser/.build/
 /.state/
+
+# Claude Code: the .claude/*.md reference set is tracked; personal settings and worktrees are not.
+.claude/settings.local.json
+.claude/worktrees/
+.claude/scheduled_tasks.lock
