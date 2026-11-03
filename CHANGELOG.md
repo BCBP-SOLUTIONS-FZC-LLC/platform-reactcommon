@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> **First release** (`1.0.0-alpha.1`). Everything below is new. The SDK implements design-doc steps 0–14; the browser's Tier 1 metrics (step 15) wait for governance to ratify their names.
+## [1.0.0-alpha.1] - 2026-11-03
+
+> **First release.** Everything below is new. The SDK implements design-doc steps 0–14; the browser's Tier 1 metrics (step 15) wait for governance to ratify their names.
 
 ### Added
 
@@ -212,4 +214,5 @@ Fixed before the first release, after a security and production-readiness review
 - `/i18n`: a namespace registered during a locale change loads the new locale; `/logging`: `Map` and `Set` keep their contents.
 - `@bcbp-solutions-fzc-llc/eslint-plugin`: `no-identity-headers` sees computed `['headers']`; the import rules see template-literal `require` / `import()`.
 
-[Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/commits/main
+[Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.1...HEAD
+[1.0.0-alpha.1]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/releases/tag/v1.0.0-alpha.1

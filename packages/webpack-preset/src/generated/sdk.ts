@@ -9,7 +9,7 @@ export const SDK_SUBPATHS = ["core","problem","authz","config","security","stora
  * The SDK version this release was built with: the SDK and the tooling packages share one version
  * (changesets `fixed`), so it is the SDK a remote built with this preset compiles against.
  */
-export const SDK_VERSION = '1.0.0-alpha.0';
+export const SDK_VERSION = '1.0.0-alpha.1';
 
 /** The range the shell shares the SDK under (any release of the major); remotes require `^${SDK_VERSION}`. */
 export const SDK_SHARE_RANGE = '^1.0.0-0';
