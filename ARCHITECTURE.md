@@ -10,7 +10,7 @@ This document describes the internal structure, dependency rules, and runtime fl
   - the header names, the redaction rules, and the Go trace sampler.
 
   It is the browser's side of IAM: Keycloak sign-in (Authorization Code + PKCE, tokens in memory only), workspace (realm) choice, session restore, idle timeout, step-up.
-- **`@bcbp-solutions-fzc-llc/webpack-preset`**: the Module Federation shared map (strict singletons, the SDK provided only by the shell) and CSP-safe output (Trusted Types, no `eval`, hidden source maps).
+- **`@bcbp-solutions-fzc-llc/webpack-preset`**: the Module Federation shared map (strict singletons, the SDK provided only by the shell), chunk integrity and CSP-safe output (Trusted Types, no `eval`, hidden source maps), for webpack 5 and, through its `/rspack` and `/rsbuild` entry points, Rspack and Rsbuild (the same v1 federation protocol, so the bundlers can be mixed).
 - **`@bcbp-solutions-fzc-llc/eslint-plugin`**: seven rules that enforce in consumer code what the design requires:
   - SDK subpaths only;
   - no identity headers;
@@ -720,7 +720,7 @@ During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `
 A shell or remote conforms when:
 
 - It imports SDK subpaths only (`@bcbp-solutions-fzc-llc/eslint-plugin` `configs.recommended` passes).
-- It builds with `platformWebpackConfig({ role, name, exposes })` and adds no other shared config for React, OTel or the SDK.
+- It builds with `platformWebpackConfig({ role, name, exposes })`, `platformRspackConfig(…)` or Rsbuild's `pluginPlatform(…)`, and adds no other shared config for React, OTel or the SDK (with Rsbuild: no `moduleFederation` option).
 - **Shell:**
   - it runs the bootstrap in order, implements `WorkspaceResolver` and `SessionContextSource` as ports, and passes the PUB-1/P-35 contract cases;
   - it shows its own signed-out, session-ended and wrong-workspace screens, and never signs in automatically after a logout.

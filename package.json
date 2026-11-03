@@ -70,6 +70,8 @@
     "@opentelemetry/sdk-metrics": "^3.0.0",
     "@opentelemetry/sdk-trace": "^3.0.0",
     "@playwright/test": "1.64.1",
+    "@rsbuild/core": "2.2.13",
+    "@rspack/core": "2.2.9",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",

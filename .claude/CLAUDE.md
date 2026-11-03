@@ -9,7 +9,7 @@ A **pnpm monorepo** of three npm packages released together under one version (c
 | Package | What it is |
 |---|---|
 | `@bcbp-solutions-fzc-llc/frontend-sdk` | 17 subpaths (`/core`, `/config`, `/problem`, `/tracing`, `/logging`, `/metrics`, `/http`, `/auth`, `/authz`, `/storage`, `/mfe`, `/flags`, `/nav`, `/i18n`, `/security`, `/react`, `/testing`); the root import throws (no barrel) |
-| `@bcbp-solutions-fzc-llc/webpack-preset` | Module Federation config: shared singletons, `ProvideSdkPlugin`, `ChunkIntegrityPlugin` (sha384 on every lazy chunk and the HTML's scripts) |
+| `@bcbp-solutions-fzc-llc/webpack-preset` | Module Federation config for webpack 5, and Rspack / Rsbuild via `/rspack`, `/rsbuild` (v1 protocol, interoperable): shared singletons, `ProvideSdkPlugin`, `ChunkIntegrityPlugin` (sha384 on every lazy chunk and the HTML's scripts) |
 | `@bcbp-solutions-fzc-llc/eslint-plugin` | Seven rules (`no-identity-headers`, `no-raw-storage`, `no-unsafe-html`, …) and `configs.recommended` |
 
 Node ≥ 22 (`.nvmrc` 22), pnpm 12 (corepack), TypeScript 6, ESM only, **React 19 only** (`^19.0.0`, floor tested in CI). Published to **GitHub Packages** (`@bcbp-solutions-fzc-llc` scope, `read:packages` to install). The repository is **private** on GitHub Team. Nothing here is deployed: `examples/` holds a reference shell, a remote, CloudFront snippets and the reference OTel Collector configuration.

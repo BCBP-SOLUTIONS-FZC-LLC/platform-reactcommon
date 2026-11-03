@@ -81,7 +81,7 @@ The packages are published to **GitHub Packages** (the npm registry at `npm.pkg.
 | Package | For |
 |---|---|
 | `@bcbp-solutions-fzc-llc/frontend-sdk` | the shell and every remote |
-| `@bcbp-solutions-fzc-llc/webpack-preset` | their webpack builds (dev dependency) |
+| `@bcbp-solutions-fzc-llc/webpack-preset` | their builds (dev dependency): webpack 5, or Rspack 2 / Rsbuild 2 through its `/rspack` and `/rsbuild` entry points |
 | `@bcbp-solutions-fzc-llc/eslint-plugin` | their lint (dev dependency) |
 
 **Why this scope.** GitHub Packages accepts only packages scoped to the GitHub organisation that owns the repository. The earlier `@platform` name couldn't be used anywhere: on npmjs.com the `platform` organisation belongs to a third party (it publishes `@platform/ts`, `@platform/cli`, …). Any install that resolved `@platform/*` from the public registry could therefore have received someone else's code.

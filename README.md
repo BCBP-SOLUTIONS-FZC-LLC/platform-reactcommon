@@ -95,7 +95,7 @@ The 17 subpaths fall into seven functional areas, each with its own page in [`do
 | `/mfe` | `loadManifest`, `loadRemote`, `RemoteDisabledError`, `RemoteLoadError`, `isChunkLoadError`, `reloadOnceForChunkError`, `startVersionPolling`, `subscribeAppUpdate` |
 | `/flags` | `getFlag`, `setFlagProvider`, `runtimeConfigFlagProvider`, `sessionContextFlagProvider`, `isRemoteKilled` |
 | `/nav` | `navigate(appId, path)`, `registerNavigator`, `isSafeRedirect` |
-| `@bcbp-solutions-fzc-llc/webpack-preset` | `platformWebpackConfig({ role, name, exposes, mode })`, `platformShared`, `sharedFor(role)`, `containerName(remote)`, `ProvideSdkPlugin` (added to the shell: every SDK subpath in the share scope) |
+| `@bcbp-solutions-fzc-llc/webpack-preset` | webpack 5: `platformWebpackConfig({ role, name, exposes, mode })`, `platformShared`, `sharedFor(role)`, `containerName(remote)`, `ProvideSdkPlugin` (added to the shell: every SDK subpath in the share scope), `ChunkIntegrityPlugin`. **Rspack:** `/rspack` → `platformRspackConfig(…)` (same settings, Rspack's v1-compatible Module Federation). **Rsbuild:** `/rsbuild` → `pluginPlatform({ role, name, exposes })` |
 
 ### UI support — `/i18n`, `/security`
 
@@ -210,7 +210,7 @@ L2  tracing · logging · metrics     L5  react · testing
 
 ### 1. Prerequisites
 
-- **Toolchain:** React 19 (`^19.0.0`; one React major for the shell and every remote, see [VERSIONING.md](VERSIONING.md#supported-react-versions)), webpack 5 with Module Federation, Node ≥ 22 for builds.
+- **Toolchain:** React 19 (`^19.0.0`; one React major for the shell and every remote, see [VERSIONING.md](VERSIONING.md#supported-react-versions)), a bundler with the preset: webpack 5 (`@bcbp-solutions-fzc-llc/webpack-preset`), Rspack 2 (`…/webpack-preset/rspack`) or Rsbuild 2 (`…/webpack-preset/rsbuild`), Node ≥ 22 for builds. Shells and remotes built with different ones work together (the same Module Federation protocol and shared map).
 - **Packages:** `@bcbp-solutions-fzc-llc/frontend-sdk`, plus `@bcbp-solutions-fzc-llc/webpack-preset` and `@bcbp-solutions-fzc-llc/eslint-plugin` as dev dependencies. They're published to GitHub Packages: map the scope in `.npmrc` and authenticate with a `read:packages` token ([VERSIONING.md](VERSIONING.md#consume-a-release)).
 - **Hosting:** the app is served behind the platform's CloudFront distribution: same-origin `/api`, `/otel`, `/config/runtime.json`, `/remotes/`, and the response headers of [`examples/cloudfront`](examples/cloudfront/README.md) (the CSP with the three Trusted Types policies).
 
@@ -236,7 +236,18 @@ const session = await idp.init();             // may redirect once (prompt=none)
 // authenticated → session context → authorizer, flags, rememberWorkspace → i18n → loadManifest → render
 ```
 
-Its webpack config is `platformWebpackConfig({ role: 'shell', mode })`.
+Its build config is `platformWebpackConfig({ role: 'shell', mode })` (webpack), `platformRspackConfig({ role: 'shell', mode })` from `@bcbp-solutions-fzc-llc/webpack-preset/rspack` (Rspack), or, with Rsbuild:
+
+```ts
+// rsbuild.config.ts
+import { defineConfig } from '@rsbuild/core';
+import { pluginReact } from '@rsbuild/plugin-react';
+import { pluginPlatform } from '@bcbp-solutions-fzc-llc/webpack-preset/rsbuild';
+
+export default defineConfig({ plugins: [pluginReact(), pluginPlatform({ role: 'shell' })] }); // the mode follows Rsbuild's
+```
+
+With Rsbuild, don't set its `moduleFederation` option: it adds Rspack's v2 Module Federation, which the platform's shells and remotes don't speak (the plugin refuses it).
 
 ### 3. Remote
 
@@ -500,6 +511,7 @@ test/
 - **`test/unit/sdk/dependency-rules.test.ts`** + `scripts/lib/subpaths.test.ts`: the layer rules and functional areas from `subpaths.json`.
 - **`examples/shell/test/iam.test.ts`**: the shell's PUB-1 / P-35 ports against the contract cases (contract #18).
 - **`test/unit/webpack-preset/preset.test.ts`**: real webpack builds. Checks the container global, no SDK in remotes and no `eval`, and that the shared version ranges agree with webpack's own semver.
+- **`test/unit/webpack-preset/rspack.test.ts`**: real Rspack and Rsbuild builds with the same checks (container, no SDK, no `eval` or `Function`, chunk integrity, the HTML pinned, every SDK subpath provided), and a mixed estate: an Rspack shell serving the SDK to a webpack remote and the other way round. `test/browser/integrity.spec.ts` runs the SRI checks on the remote built by each bundler.
 - **`examples/cloudfront/test/cloudfront.test.ts`**: the CSP equals the design doc's, and covers the SPA rewrite and the `/csp-report` Lambda.
 
 ### Coverage

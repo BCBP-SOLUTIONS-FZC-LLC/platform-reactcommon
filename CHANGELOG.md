@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Rspack and Rsbuild** (`@bcbp-solutions-fzc-llc/webpack-preset`):
+  - `@bcbp-solutions-fzc-llc/webpack-preset/rspack`: `platformRspackConfig(options)`, the webpack preset's settings for Rspack 2 (same mode, devtool, output, ids, shared map). Module Federation uses Rspack's `ModuleFederationPluginV1`, the webpack-compatible protocol, so Rspack and webpack shells and remotes load each other; Rspack's default `ModuleFederationPlugin` (the v2 runtime) does not interoperate. `ProvideSdkRspackPlugin` makes the shell provide every SDK subpath; `GlobalThisOnlyPlugin` removes Rspack's `Function('return this')` fallback, which CSP `script-src 'self'` forbids; `ChunkIntegrityPlugin` works unchanged (the script hook comes from Rspack's `RuntimePlugin`).
+  - `@bcbp-solutions-fzc-llc/webpack-preset/rsbuild`: `pluginPlatform({ role, name?, exposes? })` for Rsbuild 2, with Rsbuild's mode. It refuses Rsbuild's own `moduleFederation` option.
+  - Each entry point loads only its bundler: webpack, `@rspack/core` and `@rsbuild/core` are optional peer dependencies.
+  - Tested with real Rspack and Rsbuild builds, a mixed estate in both directions, and the SRI browser tests on an Rspack-built remote in Chromium, Firefox and WebKit.
+
+### Fixed
+
+- LLD §13.1 said `crossOriginLoading: false`; the preset sets `'anonymous'` (since chunk integrity).
+
 ## [1.0.0-alpha.1] - 2026-11-03
 
 > **First release.** Everything below is new. The SDK implements design-doc steps 0–14; the browser's Tier 1 metrics (step 15) wait for governance to ratify their names.

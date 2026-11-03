@@ -10,7 +10,9 @@
  * chunk-load error. The chain of trust: manifest (remote) or index.html (shell) → entry → chunks.
  *
  * Built on webpack's own hooks rather than webpack-subresource-integrity, whose Module Federation support
- * is broken and unmaintained (waysact/webpack-subresource-integrity#176, #220, #230).
+ * is broken and unmaintained (waysact/webpack-subresource-integrity#176, #220, #230). The same plugin runs
+ * on Rspack, whose JS API offers the same hooks (the script hook on its RuntimePlugin), so both bundlers
+ * fail closed the same way.
  */
 import { createHash } from 'node:crypto';
 import type { Chunk, Compilation, Compiler } from 'webpack';
@@ -36,6 +38,19 @@ const createScriptCode = (require: string) =>
     `  script.integrity = ${require}.sriHashes[chunkId] || ${JSON.stringify(MISSING_INTEGRITY)};`,
     '}',
   ].join('\n');
+
+type ScriptHook = { tap(name: string, fn: (source: string) => string): void };
+
+/**
+ * The hook through which a plugin adds to the <script> the chunk loader creates: webpack's
+ * LoadScriptRuntimeModule, Rspack's RuntimePlugin (the same `createScript` waterfall).
+ */
+function createScriptHook(webpack: Compiler['webpack'], compilation: Compilation): ScriptHook {
+  if (webpack.runtime?.LoadScriptRuntimeModule) return webpack.runtime.LoadScriptRuntimeModule.getCompilationHooks(compilation).createScript;
+  const rspack = (webpack as unknown as { RuntimePlugin?: { getCompilationHooks?(c: Compilation): { createScript: ScriptHook } } }).RuntimePlugin;
+  if (rspack?.getCompilationHooks) return rspack.getCompilationHooks(compilation).createScript;
+  throw new Error(`${NAME}: this bundler has no createScript hook (webpack 5 or Rspack is required)`);
+}
 
 /** The lazily loadable JS file of a chunk; undefined for chunks loaded as entries or without JS. */
 function lazyScript(chunk: Chunk): string | undefined {
@@ -143,10 +158,7 @@ export class ChunkIntegrityPlugin {
       compilation.hooks.additionalTreeRuntimeRequirements.tap(NAME, (chunk) => {
         compilation.addRuntimeModule(chunk, new IntegrityMapRuntimeModule());
       });
-      webpack.runtime.LoadScriptRuntimeModule.getCompilationHooks(compilation).createScript.tap(
-        NAME,
-        (source) => `${source}\n${createScriptCode(RuntimeGlobals.require)}`,
-      );
+      createScriptHook(webpack, compilation).tap(NAME, (source) => `${source}\n${createScriptCode(RuntimeGlobals.require)}`);
 
       // After minification, before source maps: the placeholder literal (with the quotes a minifier may
       // have changed) becomes the map.

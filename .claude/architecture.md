@@ -17,7 +17,8 @@ platform-reactcommon/
 │   │   ├── api/<subpath>.api.md      api-extractor reports: the SemVer surface
 │   │   ├── subpaths.json             subpaths, layers, areas, allowed imports (single source)
 │   │   └── tsup.config.ts            one entry per subpath; build heap 4 GB (package.json "build")
-│   ├── webpack-preset/               platformShared, sharedFor, platformWebpackConfig, ProvideSdkPlugin,
+│   ├── webpack-preset/               shared.ts (bundler-neutral), index.ts (webpack), rspack.ts, rsbuild.ts;
+│   │                                 platformShared, sharedFor, platformWebpackConfig, ProvideSdkPlugin,
 │   │                                 ChunkIntegrityPlugin (src/integrity.ts); src/generated/sdk.ts generated
 │   └── eslint-plugin/                src/rules.ts; src/generated/{sdk,forbidden-headers}.ts generated
 ├── examples/

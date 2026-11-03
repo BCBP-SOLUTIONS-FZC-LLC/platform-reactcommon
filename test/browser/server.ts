@@ -149,8 +149,12 @@ export async function startServer(port = Number(process.env.BROWSER_TEST_PORT ??
   const harnessFile = await buildHarness();
   const harnessJs = readFileSync(harnessFile);
   const harnessMap = readFileSync(`${harnessFile}.map`);
-  const remoteDir = join(BUILD_DIR, 'remote');
-  const { entryIntegrity } = await buildRemote(remoteDir);
+  // The tenders remote built by each bundler: /remotes/tenders (webpack), /remotes/tenders-rspack (Rspack).
+  const remotes = new Map<string, { dir: string; entryIntegrity: string }>();
+  for (const [base, bundler] of [['tenders', 'webpack'], ['tenders-rspack', 'rspack']] as const) {
+    const dir = join(BUILD_DIR, bundler === 'webpack' ? 'remote' : 'remote-rspack');
+    remotes.set(base, { dir, ...(await buildRemote(dir, bundler)) });
+  }
   const indexHtml = readFileSync(join(HERE, 'harness/index.html'));
   const headers: Record<string, string> = securityHeaders();
 
@@ -192,10 +196,11 @@ export async function startServer(port = Number(process.env.BROWSER_TEST_PORT ??
     if (method === 'GET' && path === '/harness.js.map') return page(res, 'application/json', harnessMap);
     if (method === 'GET' && path === '/favicon.ico') return send(res, 204, 'image/x-icon', '', headers);
     if (method === 'GET' && path === '/config/runtime.json') return json(res, 200, RUNTIME_CONFIG, { ...headers, 'cache-control': 'no-cache' });
-    // The tenders remote (integrity.spec.ts): its entry's integrity, and its files as CloudFront serves them.
-    if (method === 'GET' && path === '/remotes/tenders/integrity') return json(res, 200, { entry: entryIntegrity });
-    const remoteFile = /^\/remotes\/tenders\/([\w.-]+\.js)$/.exec(path)?.[1];
-    if (method === 'GET' && remoteFile && existsSync(join(remoteDir, remoteFile))) return page(res, 'text/javascript; charset=utf-8', readFileSync(join(remoteDir, remoteFile)));
+    // The tenders remote, from webpack and from Rspack (integrity.spec.ts): its entry's integrity, and its files as CloudFront serves them.
+    const remotePath = /^\/remotes\/(tenders(?:-rspack)?)\/(integrity|[\w.-]+\.js)$/.exec(path);
+    const remote = remotePath && remotes.get(remotePath[1]!);
+    if (method === 'GET' && remote && remotePath![2] === 'integrity') return json(res, 200, { entry: remote.entryIntegrity });
+    if (method === 'GET' && remote && existsSync(join(remote.dir, remotePath![2]!))) return page(res, 'text/javascript; charset=utf-8', readFileSync(join(remote.dir, remotePath![2]!)));
 
     // --- OTLP collectors -------------------------------------------------------------------------
     const otel = /^\/otel\/v1\/(traces|logs|metrics)$/.exec(path);

@@ -7,7 +7,7 @@
     "url": "git+https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon.git",
     "directory": "packages/webpack-preset"
   },
-  "description": "Webpack 5 Module Federation preset for the platform's shell and remotes: shared singletons, CSP-safe output (design doc §C3).",
+  "description": "Module Federation preset for the platform's shell and remotes, for webpack 5, Rspack and Rsbuild: shared singletons, the SDK provided by the shell, chunk integrity, CSP-safe output (design doc \u00a7C3).",
   "type": "module",
   "sideEffects": false,
   "files": [
@@ -17,6 +17,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./rspack": {
+      "types": "./dist/rspack.d.ts",
+      "import": "./dist/rspack.js"
+    },
+    "./rsbuild": {
+      "types": "./dist/rsbuild.d.ts",
+      "import": "./dist/rsbuild.js"
     }
   },
   "scripts": {
@@ -24,15 +32,30 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "platformShared": {
-    "_comment": "The versions every shell and remote share (design doc §C3). platformShared is generated from these pins; they must match @bcbp-solutions-fzc-llc/frontend-sdk's peer ranges (checked in tests).",
+    "_comment": "The versions every shell and remote share (design doc \u00a7C3). platformShared is generated from these pins; they must match @bcbp-solutions-fzc-llc/frontend-sdk's peer ranges (checked in tests).",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "@opentelemetry/api": "~1.10.0"
   },
   "peerDependencies": {
-    "webpack": "^5.100.0"
+    "webpack": "^5.100.0",
+    "@rspack/core": "^2.2.0",
+    "@rsbuild/core": "^2.2.0"
+  },
+  "peerDependenciesMeta": {
+    "webpack": {
+      "optional": true
+    },
+    "@rspack/core": {
+      "optional": true
+    },
+    "@rsbuild/core": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@rsbuild/core": "2.2.13",
+    "@rspack/core": "2.2.9",
     "webpack": "5.112.0"
   },
   "publishConfig": {

@@ -47,6 +47,15 @@ Import a subpath (`@bcbp-solutions-fzc-llc/frontend-sdk/http`), never the root (
 
 No api-extractor report for this package; its surface is `src/index.ts`. LLD §13.1.
 
+### Rspack and Rsbuild entry points
+
+| Entry | Export | Purpose |
+|---|---|---|
+| `@bcbp-solutions-fzc-llc/webpack-preset/rspack` | `platformRspackConfig(options)` | The same settings as `platformWebpackConfig` for Rspack 2, with `ModuleFederationPluginV1` (webpack-compatible protocol) |
+| | `ProvideSdkRspackPlugin`, `GlobalThisOnlyPlugin` | The shell's SDK provider; the runtime without the `Function('return this')` fallback |
+| | `containerName`, `platformShared`, `sharedFor`, `integrityOf`, `MISSING_INTEGRITY`, `INTEGRITY_PLACEHOLDER` | As in the main entry |
+| `@bcbp-solutions-fzc-llc/webpack-preset/rsbuild` | `pluginPlatform({ role, name?, exposes? })` | Rsbuild 2 plugin: the Rspack preset with Rsbuild's mode; refuses Rsbuild's `moduleFederation` option |
+
 ## `@bcbp-solutions-fzc-llc/eslint-plugin`
 
 Rules `no-sdk-root-import`, `no-sdk-deep-import`, `no-identity-headers`, `no-raw-storage`, `no-unsafe-html`, `no-runtime-css-in-js`, `api-route-template`; `configs.recommended` = all seven + `no-eval`, `no-implied-eval`, `no-new-func`. LLD §13.2.

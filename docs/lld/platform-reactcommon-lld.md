@@ -71,7 +71,7 @@ Where the two disagree, the code and this LLD describe what ships; the design do
 - **Micro-frontends:** the remote manifest, `loadRemote`, kill switches, chunk-load recovery and new-version detection.
 - **React bindings:** hooks, `PlatformProvider`, error boundaries and global error handlers.
 - **Testing:** a test platform with in-memory telemetry, plus API mocks.
-- **Build tooling:** the Module Federation shared map and CSP-safe output (`@bcbp-solutions-fzc-llc/webpack-preset`), and lint rules for consumers (`@bcbp-solutions-fzc-llc/eslint-plugin`).
+- **Build tooling:** the Module Federation shared map and CSP-safe output (`@bcbp-solutions-fzc-llc/webpack-preset`, for webpack 5, Rspack and Rsbuild), and lint rules for consumers (`@bcbp-solutions-fzc-llc/eslint-plugin`).
 
 ### 2.2 Out of scope (owned elsewhere)
 
@@ -701,9 +701,12 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 | `platformShared` | `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, `react-dom`, `react-dom/client` (pins from the preset's `package.json`, equal to the SDK's peer ranges), `@opentelemetry/api` `~1.10.0`, `@bcbp-solutions-fzc-llc/frontend-sdk` and every subpath except `/testing` under `^<major>.0.0-0`: all `singleton`, `strictVersion` |
 | `sharedFor('shell' \| 'remote')` | shell: `eager: false`; remote: the SDK with `import: false` and `requiredVersion: ^<the SDK version it was built against>` |
 | `containerName(remote)` | name with `-` → `_`; refuses `shell` and invalid names (the same rule as `loadRemote`) |
-| `platformWebpackConfig({ role, name?, exposes?, mode })` | Module Federation plugin (remote: `var` library named `containerName`, `remoteEntry.js`); shell: `publicPath: '/'` and bundles under `assets/` (index.html is served for every deep link, so its scripts load from the root; `/assets/*` is the immutable behavior), remote: `publicPath: 'auto'` (chunks relative to its `remoteEntry.js`); content hashes in production; `trustedTypes: { policyName: 'platform-webpack' }`; `crossOriginLoading: false`; `environment.globalThis: true`; devtool `hidden-source-map` (production) / `cheap-module-source-map`, never eval |
+| `platformWebpackConfig({ role, name?, exposes?, mode })` | Module Federation plugin (remote: `var` library named `containerName`, `remoteEntry.js`); shell: `publicPath: '/'` and bundles under `assets/` (index.html is served for every deep link, so its scripts load from the root; `/assets/*` is the immutable behavior), remote: `publicPath: 'auto'` (chunks relative to its `remoteEntry.js`); content hashes in production; `trustedTypes: { policyName: 'platform-webpack' }`; `crossOriginLoading: 'anonymous'`; `environment.globalThis: true`; in production `ChunkIntegrityPlugin` (sha384 for every lazy chunk, fail-closed; the HTML's scripts pinned); devtool `hidden-source-map` (production) / `cheap-module-source-map`, never eval |
 
-The SDK subpaths and share range come from `src/generated/sdk.ts`, which `pnpm exports:sync` generates from `subpaths.json`.
+| `/rspack`: `platformRspackConfig(options)` | The same mode, devtool, output and ids as `platformWebpackConfig` (tested equal), with Rspack's `ModuleFederationPluginV1` (the webpack-compatible container and share-scope protocol; Rspack's default plugin is the v2 runtime, which webpack builds and `loadRemote` don't speak), `ProvideSdkRspackPlugin` (shell; resolves each subpath with Rspack's resolver when applied, as its sharing plugins are native), `GlobalThisOnlyPlugin` (rewrites Rspack's global-object runtime to `globalThis`; Rspack keeps a `Function('return this')` fallback whatever `environment.globalThis` says), and the same `ChunkIntegrityPlugin` in production (its script hook comes from Rspack's `RuntimePlugin`) |
+| `/rsbuild`: `pluginPlatform({ role, name?, exposes? })` | An Rsbuild plugin: `platformRspackConfig` merged into Rsbuild's Rspack config with Rsbuild's mode; `output.assetPrefix` `/` (shell) or `auto` (remote); the preset's file names and devtool win over Rsbuild's defaults. It refuses Rsbuild's own `moduleFederation` option (the v2 protocol) |
+
+Shells and remotes built with webpack and Rspack interoperate: an Rspack shell provides the SDK to a webpack remote and the other way round (tested with real builds). The entry points load only their own bundler. The SDK subpaths and share range come from `src/generated/sdk.ts`, which `pnpm exports:sync` generates from `subpaths.json`.
 
 ### 13.2 `@bcbp-solutions-fzc-llc/eslint-plugin`
 
