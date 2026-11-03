@@ -9,9 +9,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const hook = (name: string) => join(ROOT, '.claude', 'hooks', name);
 
-function run(name: string, filePath: string | undefined, tool = 'Edit'): { code: number; stderr: string } {
+function run(name: string, filePath: string | undefined, tool = 'Edit', projectDir = ROOT): { code: number; stderr: string } {
   const input = JSON.stringify({ tool_name: tool, tool_input: filePath === undefined ? {} : { file_path: filePath } });
-  const r = spawnSync('bash', [hook(name)], { input, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: ROOT } });
+  const r = spawnSync('bash', [hook(name)], { input, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: projectDir } });
   return { code: r.status ?? -1, stderr: r.stderr };
 }
 
@@ -55,6 +55,19 @@ describe('guard-generated.sh', () => {
     expect(go.stderr).toContain('sibling repository');
     expect(run('guard-generated.sh', resolve(ROOT, '../../../XPertPMS/IAM/iam-org-membership/go.mod')).code).toBe(2);
     expect(run('guard-generated.sh', '/tmp/scratch/notes.md').code).toBe(0); // scratch space, Claude's memory
+  });
+
+  it('where the sibling directories do not exist (CI): files elsewhere stay editable, sibling paths are still blocked', () => {
+    // Regression: the sibling roots were resolved with `cd`; a missing one became "" and its pattern "/*" matched
+    // every path outside the project, Claude's memory and scratch files included.
+    const project = '/nonexistent/work/react/platform-reactcommon';
+    expect(run('guard-generated.sh', '/tmp/scratch/notes.md', 'Edit', project).code).toBe(0);
+    expect(run('guard-generated.sh', '/home/someone/.claude/projects/x/memory/m.md', 'Edit', project).code).toBe(0);
+    expect(run('guard-generated.sh', '/nonexistent/work/go/platform-gincommon/go.mod', 'Edit', project).code).toBe(2);
+    expect(run('guard-generated.sh', '/nonexistent/XPertPMS/IAM/iam-org-membership/go.mod', 'Edit', project).code).toBe(2);
+    expect(run('guard-generated.sh', `${project}/packages/frontend-sdk/src/http/client.ts`, 'Edit', project).code).toBe(0);
+    // A project near the filesystem root has no workspace above it: nothing outside it is treated as a sibling.
+    expect(run('guard-generated.sh', '/tmp/x.md', 'Edit', '/repo').code).toBe(0);
   });
 
   it('ignores calls without a path', () => {

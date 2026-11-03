@@ -15,12 +15,20 @@ block() {
 
 # Sibling repositories: the workspace (../.. : go/, python/, platform-interop-tests …) and the IAM services
 # (../../../XPertPMS, the stack's IAM_ROOT default). Read and build them; check pinned commits in scratch clones.
-workspace=$(cd "$root/../.." 2>/dev/null && pwd -P || true)
-iam=$(cd "$root/../../../XPertPMS" 2>/dev/null && pwd -P || true)
+# Derived from the path alone (the directories need not exist, e.g. on CI); never "/", which would match all.
+workspace=$(dirname "$(dirname "$root")")
+iam="$(dirname "$workspace")/XPertPMS"
+sibling() {
+  local dir="$1"
+  [ "$dir" != "/" ] && [ "$dir" != "//XPertPMS" ] && case "$f" in "$dir"/*) return 0 ;; esac
+  return 1
+}
 case "$f" in
   "$root"/*) ;;
-  "$workspace"/* | "$iam"/*)
-    block "$f is in a sibling repository, which this repository only reads and builds. Change it in that repository (its own PR), then move the pin in packages/frontend-sdk/contracts/sources.json." ;;
+  *)
+    if sibling "$workspace" || sibling "$iam"; then
+      block "$f is in a sibling repository, which this repository only reads and builds. Change it in that repository (its own PR), then move the pin in packages/frontend-sdk/contracts/sources.json."
+    fi ;;
 esac
 
 rel=${f#"$root"/}
