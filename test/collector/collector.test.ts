@@ -4,7 +4,7 @@
 // (gateway.override.yaml, aggregator.override.yaml). What the SDK sends goes in over OTLP/HTTP; what the
 // Collectors would hand to Mimir, Tempo and Loki comes out. Needs Docker: `pnpm test-collector` (CI job
 // `collector`).
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -188,19 +188,27 @@ function metricPoints(name: string): OutPoint[] {
   );
 }
 
-async function eventually<T>(fn: () => T | undefined, what: string, ms = 10_000): Promise<T> {
+async function eventually<T>(fn: () => T | undefined, what: string, ms = 10_000, detail?: () => string): Promise<T> {
   const until = Date.now() + ms;
   for (;;) {
     const v = fn();
     if (v !== undefined) return v;
-    if (Date.now() > until) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() > until) throw new Error(`timed out waiting for ${what}${detail ? `\n${detail()}` : ''}`);
     await new Promise((r) => setTimeout(r, 100));
   }
 }
 
+/** The last lines of each Collector's log, for a timeout's message (a CI failure that doesn't reproduce locally). */
+function collectorLogs(): string {
+  return [...gateways, ...aggregators].map((n) => `── ${n.container.slice(0, 12)}\n${((r) => `${r.stdout}${r.stderr}`.trim())(spawnSync('docker', ['logs', '--tail', '40', n.container], { encoding: 'utf8' }))}`).join('\n');
+}
+
 /** Waits until `name` has `n` output points (the batch timeouts are 200 ms), and a little longer for strays. */
 async function settled(name: string, n: number): Promise<OutPoint[]> {
-  await eventually(() => (metricPoints(name).length >= n ? true : undefined), `${n} points of ${name}`);
+  await eventually(() => (metricPoints(name).length >= n ? true : undefined), `${n} points of ${name}`, 10_000, () => {
+    const seen = metricPoints(name).map((p) => `aggregator ${p.aggregator}: ${p.value} (start ${p.start})`);
+    return `points seen (${seen.length}):\n${seen.join('\n')}\n${collectorLogs()}`;
+  });
   await new Promise((r) => setTimeout(r, 700));
   return metricPoints(name);
 }
