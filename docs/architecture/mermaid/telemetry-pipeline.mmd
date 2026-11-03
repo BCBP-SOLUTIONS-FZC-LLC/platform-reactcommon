@@ -13,10 +13,12 @@ graph LR
     end
 
     subgraph queues["Bounded queues (drop oldest, ≤ 2 sends in flight)"]
-        lq["logs: batch 50 · 5 s · queue 1000<br/>page hide → sendBeacon (≤ 60 KiB)"]
-        tq["spans: batch 512 · 5 s · queue 2048<br/>page hide → flush"]
+        lq["logs: batch 50 · 5 s · queue 1000"]
+        tq["spans: batch 512 · 5 s · queue 2048"]
         mq["metrics: delta temporality · every 60 s"]
     end
+
+    unload["hide / pagehide: one 60 KiB keepalive budget (src/internal/unload)<br/>metrics share reserved → logs by sendBeacon → newest spans<br/>started inside the listener · ledger of what is in flight"]
 
     otel["/otel/v1/{logs,traces,metrics}<br/>(same origin; CloudFront → OTel Collector)"]
 
@@ -29,4 +31,7 @@ graph LR
     lq --> otel
     tq --> otel
     mq --> otel
-    otel --> coll["Collector: deltatocumulative · label allowlists ·<br/>drops per-browser resource attributes"]
+    lq & tq & mq -.-> unload -.-> otel
+    otel --> gw["Collector gateway (examples/collector/gateway.yaml)<br/>drops per-browser attributes · name + label allowlists<br/>routes each metric stream to one aggregator"]
+    gw -->|"metrics"| agg["Collector aggregator (aggregator.yaml)<br/>arrival-time stamp · delta → cumulative → Mimir"]
+    gw -->|"traces · logs"| backends["Tempo · Loki"]

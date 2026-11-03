@@ -495,7 +495,7 @@ flowchart TD
 
 ## Telemetry pipeline
 
-Logs, traces and metrics leave the page over OTLP/HTTP to the same-origin `/otel` path. CloudFront forwards it to the OTel Collector; there is no Faro SDK and no second pipeline. Everything is redacted with the same rules as gincommon's log sanitizer, gated on consent, and queued with fixed bounds, so a slow or unreachable collector costs a fixed amount of memory. See [docs/observability](docs/observability/README.md).
+Logs, traces and metrics leave the page over OTLP/HTTP to the same-origin `/otel` path. CloudFront forwards it to the OTel Collector; there is no Faro SDK and no second pipeline. When the page is hidden or closing, the three signals share one 60 KiB keepalive budget in a fixed order (metrics' share, logs, spans), and every request that must outlive the tab starts inside the listener (`src/internal/unload`, LLD §7.5). The reference Collector configuration is two-tier (`examples/collector`, LLD §7.6): a gateway that scrubs, allowlists and routes each metric stream to one aggregator, which converts delta to cumulative. Everything is redacted with the same rules as gincommon's log sanitizer, gated on consent, and queued with fixed bounds, so a slow or unreachable collector costs a fixed amount of memory. See [docs/observability](docs/observability/README.md).
 
 > Source: [`docs/architecture/mermaid/telemetry-pipeline.mmd`](docs/architecture/mermaid/telemetry-pipeline.mmd)
 
@@ -515,10 +515,12 @@ graph LR
     end
 
     subgraph queues["Bounded queues (drop oldest, ≤ 2 sends in flight)"]
-        lq["logs: batch 50 · 5 s · queue 1000<br/>page hide → sendBeacon (≤ 60 KiB)"]
-        tq["spans: batch 512 · 5 s · queue 2048<br/>page hide → flush"]
+        lq["logs: batch 50 · 5 s · queue 1000"]
+        tq["spans: batch 512 · 5 s · queue 2048"]
         mq["metrics: delta temporality · every 60 s"]
     end
+
+    unload["hide / pagehide: one 60 KiB keepalive budget (src/internal/unload)<br/>metrics share reserved → logs by sendBeacon → newest spans<br/>started inside the listener · ledger of what is in flight"]
 
     otel["/otel/v1/{logs,traces,metrics}<br/>(same origin; CloudFront → OTel Collector)"]
 
@@ -531,7 +533,10 @@ graph LR
     lq --> otel
     tq --> otel
     mq --> otel
-    otel --> coll["Collector: deltatocumulative · label allowlists ·<br/>drops per-browser resource attributes"]
+    lq & tq & mq -.-> unload -.-> otel
+    otel --> gw["Collector gateway (examples/collector/gateway.yaml)<br/>drops per-browser attributes · name + label allowlists<br/>routes each metric stream to one aggregator"]
+    gw -->|"metrics"| agg["Collector aggregator (aggregator.yaml)<br/>arrival-time stamp · delta → cumulative → Mimir"]
+    gw -->|"traces · logs"| backends["Tempo · Loki"]
 ```
 
 Identity on every signal is the **page** identity (`initializeCore`: `domain` / `service` / `environment`, e.g. `portal` / `web-app`). Remotes are told apart by the `mfe` attribute or label, never by a second `domain`. The one exception is a remote's own Tier 2/3 metrics, which carry its manifest `ownerDomain` (design doc §D1).
@@ -604,23 +609,30 @@ graph LR
         tv["Trivy scan<br/>fs: deps · secrets · config → SARIF + SBOM"]
         sm["Smoke tests<br/>tarballs in an empty consumer"]
         io["Cross-language compatibility<br/>interop.yml (pair 4 at this ref)"]
+        br["Browser tests<br/>Playwright: Chromium · Firefox · WebKit"]
+        rf["React floor (19.0.0)<br/>types · unit tests · build"]
+        co["Collector config<br/>examples/collector in the Collector image"]
         ps["PR summary comment"]
         vt --> tv
         pk --> tv
         vt --> sm
         pk --> sm
         vt --> io
-        vt & vq & vc & pk & tv & sm & io --> ps
+        vt --> br & rf & co
+        vt & vq & vc & pk & tv & sm & io & br & rf & co --> ps
     end
 
     subgraph rel["release.yml  —  tag vX.Y.Z (one version, changesets fixed)"]
         vf["verify: tag on main · versions = tag · CHANGELOG.md section"]
-        gates["same gates as ci.yml, at the tag"]
+        gates["ci.yml gates at the tag<br/>(not browser, collector)"]
+        np["npm-publish: GitHub Packages (dist-tag alpha/rc/latest)<br/>publish gate: env limited to release tags + tag ruleset<br/>provenance attestation per tarball"]
         pub["publish: GitHub Release<br/>tarballs · SBOM · checksums.txt + Cosign bundle"]
-        vf --> gates --> pub
+        vf --> gates --> np --> pub
     end
 
-    cs["changelog-check.yml<br/>published package changed → .changeset/*.md + CHANGELOG.md"]
+    nightly["stack-nightly.yml — 01:30 UTC and on dispatch<br/>the integrated stack (test/stack) against pinned backends<br/>a failing scheduled run opens an issue"]
+
+    cs["changelog-check.yml<br/>published package changed → .changeset/*.md + CHANGELOG.md<br/>(release PR: changesets consumed, incl. moved to .changeset/pre/)"]
     rpr["release PR: pnpm changeset version"] --> tag["tag the merge commit"] --> vf
 ```
 
@@ -677,7 +689,11 @@ The browser is single-threaded; concurrency here means overlapping promises and 
 All three packages share one version (`fixed`). The release flow:
 1. A release PR runs `pnpm changeset version`.
 2. The merge commit is tagged `vX.Y.Z`.
-3. `release.yml` verifies the tag and versions, reruns every gate at the tag, and publishes a **GitHub Release** with the tarballs, a CycloneDX SBOM and Cosign-signed checksums. There's no npm registry yet.
+3. `release.yml` verifies the tag and versions and reruns the `ci.yml` gates at the tag (all but `browser` and `collector`).
+4. `npm-publish` publishes the three packages to **GitHub Packages** (`@bcbp-solutions-fzc-llc/*`), with a build-provenance attestation each, only if publishing is gated: required reviewers, or (this private repository on GitHub Team) an `npm` environment limited to release tags plus a tag ruleset over who may push them (`check-npm-environment.sh`).
+5. A **GitHub Release** carries the tarballs, a CycloneDX SBOM and Cosign-signed checksums.
+
+The first release is `v1.0.0-alpha.1` (2026-11-03).
 
 During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`, so a shell with an older SDK refuses it at share negotiation. `1.0.0` is cut with the first environment, and SemVer is strict from then on (design doc §C3 "Versioning").
 
@@ -687,7 +703,10 @@ During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `
 |---|---|
 | Unit | Vitest per subpath (`test/unit/<subpath>`). Node by default; `happy-dom` for React; `jsdom` for DOMPurify. Coverage gate ≥ 98 % statements of `packages/*/src` |
 | Integration / E2E | `test/integration`: subpaths wired together; `test/e2e`: the reference shell and remote booted end to end (both in-process, jsdom) |
-| Browser | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP: keepalive and tab close, page-lifecycle event order, `AbortSignal.any` native and absent, Trusted Types (CI job `browser`) |
+| Browser | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP: the keepalive budget on hide and tab close, page-lifecycle event order, SRI on lazy chunks, `AbortSignal.any` native and absent, Trusted Types (CI job `browser`); engine limits in `engine-notes.ts` |
+| Collector | `test/collector`: the reference two-tier Collector (`examples/collector`) in the Collector image, two gateways and two aggregators: per-stream routing, totals across device clocks, allowlists (`pnpm test-collector`, CI job `collector`); `examples/collector/test` keeps the allowlists equal to the registry |
+| Integrated | `test/stack`: the example shell in three engines against Keycloak, Envoy with the real IAM services, the distribution on floci and the two-tier Collector (`docker-compose.yml`); nightly in CI (`stack-nightly.yml`); findings in `docs/e2e/integrated-deployment-report.md` |
+| React floor | The typecheck, unit suite, build and example checks on React 19.0.0 (CI job `react-floor`) |
 | Smoke | `test/smoke`: the example builds served with the CloudFront headers and rewrite, or a deployed shell (`SMOKE_BASE_URL`) |
 | Contract | Shared fixtures from platform-interop-tests (headers, identity, redaction, problem bodies) and the PUB-1 / P-35 cases, run by the SDK and by the example shell's ports |
 | Fake backends | A Keycloak fake at the HTTP level (PKCE, rotation, reuse revokes the session); `mockApi` / `mockProblem` |
@@ -723,7 +742,8 @@ A shell or remote conforms when:
 | An open redirect after login | `returnUrl` must pass `isSafeRedirect` (same origin; no protocol-relative, backslash or control-character tricks) |
 | Tenant data seen by another tenant on a shared browser | `/storage` namespaced by realm or `trial:<tenant_id>`; `clearAllAppStorage` on logout and switch; `anon` writes are no-ops |
 | A malicious remote entry | Manifest entries limited to same origin or exact allowed origins, checked again before the script; SRI when given; kill switch |
-| Telemetry leaking secrets or PII | Redaction (sensitive keys, JWT/Bearer, URL query), bounded stack size, consent; the Collector drops per-browser attributes |
+| Telemetry leaking secrets or PII | Redaction (sensitive keys, JWT/Bearer, URL query), bounded stack size, consent; the Collector gateway drops per-browser attributes |
+| Forged telemetry flooding the metrics backend (`/otel` is public) | The gateway allowlists metric names and label values from the registry and cuts values at 128 characters; WAF rate rules on `/otel` (`examples/cloudfront`) |
 | A reload loop after a bad deploy or failed restore | Reload once per version; one `prompt=none` per tab |
 
 ## Developer tools

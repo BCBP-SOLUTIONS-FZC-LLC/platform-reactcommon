@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Packages | `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin` (one version, changesets `fixed`) |
-| Version | `1.0.0-alpha.N` (pre-release until the first end-to-end environment) |
+| Version | `1.0.0-alpha.1`, the first release (tag `v1.0.0-alpha.1`, 2026-11-03, GitHub Packages, dist-tag `alpha`); `1.0.0-alpha.N` until the first end-to-end environment |
 | Runtime | Evergreen browsers (ES2022, Trusted Types where supported); build tooling on Node ≥ 22 |
 | Peers | `react` / `react-dom` `^19.0.0` (one major; floor tested in CI), `@opentelemetry/api` `~1.10.0`, `webpack` `^5.100.0`, `eslint` `^9 \|\| ^10` |
 | Design record | [`docs/design/frontend-sdk-design.md`](../design/frontend-sdk-design.md) (decisions, public API per subpath, contracts, backend changes) |
@@ -16,6 +16,7 @@
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-10-31 | First LLD, written from the implementation of design-doc steps 0–14 plus the `portal` domain and the CI pipeline (all on `main`). Step 15 (Tier 1 metric binding) is open; see §15 |
+| 1.1 | 2026-11-03 | Aligned with the first release `1.0.0-alpha.1`: GitHub Packages distribution and its publish gate (§14.1), React 19 only, sign-out global by default (§8.7), one keepalive budget for all three signals on hide and `pagehide` (§7.5), metrics sent on page hide (§7.3), the reference two-tier Collector (§7.6), the test layers and nightly integrated run (§14.3), open items (§15) |
 
 ### Table of Contents
 
@@ -114,13 +115,22 @@ platform-reactcommon/
       subpaths.json             subpaths, layers, allowed imports (single source)
     webpack-preset/           @bcbp-solutions-fzc-llc/webpack-preset (src/generated/sdk.ts generated)
     eslint-plugin/            @bcbp-solutions-fzc-llc/eslint-plugin  (src/generated/{sdk,forbidden-headers}.ts generated)
-  test/                       unit/<subpath>, integration, e2e, smoke, fixtures, testenv (as platform-gincommon)
+  test/                       unit/<subpath>, integration, e2e, smoke, fixtures, testenv (as platform-gincommon);
+                              browser/ (Playwright, three engines, production CSP); collector/ (the reference
+                              Collector in its image, Docker); stack/ (the production-like stack, Docker)
   examples/shell, examples/remote-tenders, examples/cloudfront
+  examples/collector/         reference two-tier OTel Collector configuration (gateway.yaml, aggregator.yaml)
+  docker/, docker-compose.yml the integrated stack (Keycloak, Envoy, IAM services, floci, Collectors)
+  monitoring/                 the Tier 1 proposal, Grafana dashboard, Prometheus rules (proposed)
   scripts/                    sync-contracts, sync-exports, sync-docs, api-report, metrics-parity,
-                              check-examples (pure logic in scripts/lib, unit-tested)
-  docs/                       design/, architecture/, lld/, observability/, problem-details/
-  .github/                    ci.yml, release.yml, validate-*.yml, changelog-check.yml
+                              metrics-proposal, check-examples, check-publish (pure logic in scripts/lib, unit-tested)
+  docs/                       design/, architecture/, lld/, observability/, problem-details/, e2e/, areas/
+  .github/                    ci.yml, release.yml, validate-*.yml, changelog-check.yml, stack-nightly.yml;
+                              scripts/ (shell logic, incl. check-npm-environment.sh)
+  .claude/                    Claude Code reference set (CLAUDE.md and topic files)
 ```
+
+`src/internal/` also holds `unload` (the page's keepalive budget for hide and `pagehide`, §7.5) and `environments` (which environments are local).
 
 ### 3.1 Library dependencies (direct, `@bcbp-solutions-fzc-llc/frontend-sdk`)
 
@@ -151,7 +161,7 @@ Generated from `subpaths.json` into the exports map, the ESLint config (`eslint-
 | CI of a remote | `renderMetricInventory()` → `metricslint check`; `createTestPlatform`, `mockApi` in unit tests |
 | Gateway / backends | HTTP headers (§5.4.1), RFC 9457 bodies, `X-Trace-ID` / `X-Request-ID` echoes |
 | Keycloak | Fixed endpoints under `${idpOrigin}/realms/${realm}/protocol/openid-connect/` |
-| Collector | OTLP/HTTP JSON on `/otel/v1/{traces,logs,metrics}`; `sendBeacon` for logs on page hide |
+| Collector | OTLP/HTTP JSON on `/otel/v1/{traces,logs,metrics}`; on hide and `pagehide` one keepalive budget for all three signals (§7.5); the reference configuration is two-tier (§7.6) |
 
 ---
 
@@ -347,6 +357,7 @@ Any failure is a `RemoteLoadError` carrying the cause. One span `remote load` an
 | `navigator`, `trustedTypesPolicy` | `/nav`, `/security` | `/nav`, `/mfe` (script URLs), `/security` |
 | `readOnlyDenied` | `/http` | `/react` `useReadOnly` |
 | `events` (topic → listeners) | `src/internal/events` | `/react` |
+| `unload` (senders, keepalive ledger, reservations, metrics share) | `src/internal/unload` | `/tracing`, `/logging`, `/metrics` |
 
 Created on first use on `globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]`. A second SDK copy with the same major binds to it; another major keeps its own and logs one error. `resetRuntimeForTests()` exists for tests only.
 
@@ -385,7 +396,7 @@ The order is fixed by design doc §C2 and drawn in ARCHITECTURE.md § Shell boot
 | Provider | OTel JS 3 `TracerProvider`; resource `service.name`, `service.version`, `service.namespace` (= domain), `deployment.environment.name`; no `service.instance.id` (would explode cardinality) |
 | Sampler | `ParentBased`, root = `AlwaysOn` (ratio ≥ 1), `AlwaysOff` (≤ 0), else Go's `TraceIDRatioBased` algorithm, so browser and Go roots agree for the same trace id; default ratio 0.1 |
 | Propagation | W3C `traceparent` / `tracestate` to the page's origin and exact allowlisted origins only |
-| Export | Drop-oldest batch processor: batch 512, delay 5 s, queue 2048, ≤ 2 sends in flight; flush on page hide; spans dropped without `telemetry` consent (counted) |
+| Export | Drop-oldest batch processor: batch 512, delay 5 s, queue 2048, ≤ 2 sends in flight; spans dropped without `telemetry` consent (counted). Hidden: the newest spans that fit what is left of the page budget in one keepalive request, the rest from the next task; `pagehide`: the newest that fit, by `sendBeacon` (else fetch keepalive), started inside the listener, the rest counted in `droppedOnUnload` (§7.5) |
 | Context | `StackContextManager` (no zone.js) |
 
 ### 7.2 Logs (`/logging`)
@@ -402,7 +413,7 @@ Every record carries the envelope `trace_id`, `span_id` (active span), `request_
 | `warn` | `essential: true`, or `telemetry` consent |
 | `info`, `debug` | `telemetry` consent (and `level` allows) |
 
-The export uses batch 50, flush 5 s, queue 1 000 (drop oldest), and at most 2 sends in flight. On page hide, the queue drains through `navigator.sendBeacon` in chunks under 60 KiB; whatever the browser refuses goes back to the queue. Before `initializeLogging`, loggers write to the console in `local`/`dev` (and when there's no identity) and are no-ops otherwise.
+The export uses batch 50, flush 5 s, queue 1 000 (drop oldest), and at most 2 sends in flight. On page hide and `pagehide`, the newest queued records that fit what is left of the page budget go in one `navigator.sendBeacon`, first among the signals after the metrics share (§7.5); the rest, and anything the browser refuses, go back to the queue for fetch (a task later when hidden). Before `initializeLogging`, loggers write to the console in `local`/`dev` (and when there's no identity) and are no-ops otherwise.
 
 ### 7.3 Metrics (`/metrics`)
 
@@ -423,13 +434,37 @@ For a remote, `domain` is its manifest `ownerDomain` and `service` is the remote
 - known bucket presets, at most 50 buckets;
 - no reuse of a legacy name.
 
-Tier 3 label values are capped at 100 per label, and the overflow value is `__other__`. Export uses OTLP/HTTP with **delta** temporality every 60 s, through a consent gate that discards the interval when `telemetry` isn't granted. Up to 1 000 label sets per instrument are kept for `renderMetricInventory()`.
+Tier 3 label values are capped at 100 per label, and the overflow value is `__other__`. Export uses OTLP/HTTP with **delta** temporality every 60 s, through a consent gate that discards the interval when `telemetry` isn't granted. When the page is hidden or closing, the interval is collected then and sent by `sendBeacon` in the share the logs and spans leave it (§7.5); an empty interval sends nothing, a refused or oversized one goes through the exporter. Up to 1 000 label sets per instrument are kept for `renderMetricInventory()`.
 
 ### 7.4 Governance and CI
 
 `pnpm metrics:parity` compares the SDK's registration checks with gincommon's `metricslint` case by case (recorded differences are listed in the script). It also runs `metricslint check -strict` on the SDK's rendered inventory.
 
 The proposed Tier 1 browser metrics and their labels are listed in [docs/observability/README.md](../observability/README.md#tier-1-browser-metrics-proposed).
+
+### 7.5 Page hide and unload: one keepalive budget (`src/internal/unload`)
+
+Only keepalive requests (`sendBeacon`, fetch `keepalive`) outlive a closing tab, and the browser allows 64 KiB of their bodies in flight per page. The three signals share **one 60 KiB budget** (`PAGE_KEEPALIVE_BYTES`):
+
+| Element | Behaviour |
+|---|---|
+| Senders | `onUnload({ priority, send, hide })`: metrics `-1`, logs `0`, spans `1`. One `pagehide` listener and one `visibilitychange` listener run them in priority order, each with what the earlier ones left, so the order the signals were initialised in never decides who gets the budget |
+| Ledger | Every keepalive body sent is recorded (`spendKeepalive`) and counted for `KEEPALIVE_IN_FLIGHT_MS` (5 s); `keepaliveLeft()` is the budget minus those and minus active reservations. A `pagehide` right after the hidden phase hands out only what the hidden phase left |
+| Metrics share | Metrics are collected asynchronously, so they send last. Their sender only reserves a share synchronously (`reserveKeepalive`), released when the interval is collected; the share is the last interval's size ×1.25, 1–8 KiB (2 KiB before the first) |
+| Synchronous starts | Every unload request is started inside the listener: a closing tab may never run a later microtask |
+
+A close as browsers do it (hidden, then `pagehide`) delivers spans, logs and metrics within one budget in Chromium, Firefox and WebKit (`test/browser/keepalive.spec.ts`). Engine limits are recorded in `test/browser/engine-notes.ts`.
+
+### 7.6 Reference Collector (`examples/collector`)
+
+The platform's Collector is deployed elsewhere; this repository ships its **reference configuration**, in two tiers:
+
+| Tier | Does |
+|---|---|
+| Gateway (`gateway.yaml`, behind `/otel/*`, any number of replicas) | OTLP/HTTP on `/otel/v1/*`; drops `service.instance.id`, `browser.*`, `user_agent.*`; allowlists metric names (`platform_web_*` or a registered `<domain>_*` matching the `domain` label, with a unit suffix) and label values (registry vocabulary, this deployment's environment), cuts values at 128 characters; routes each metric stream to one aggregator (`loadbalancing`, `routing_key: streamID`) |
+| Aggregator (`aggregator.yaml`) | Re-stamps each delta with its arrival time (device clocks are not trusted), then `delta_to_cumulative` for Mimir. One converter per stream: two Collectors converting the same stream would write conflicting totals |
+
+`examples/collector/test` keeps the allowlists equal to the metric registry; `pnpm test-collector` (CI job `collector`) runs two gateways and two aggregators in the Collector image; the integrated stack routes `/otel` through both tiers.
 
 ---
 
@@ -456,7 +491,7 @@ After sign-in, the shell calls `rememberWorkspace({ ...workspace, slug })`, taki
   1. The `state` record must exist; otherwise the callback is ignored, the URL goes to `/`, and the page continues as a normal load.
   2. RFC 9207 `iss` must equal the record's issuer; otherwise the state is `anonymous` and the code is never exchanged.
   3. The code is exchanged, with a 15 s timeout.
-  4. ID-token claims: `iss`, `aud` contains `client_id`, `azp` if present, `nonce`, and `exp`/`iat` within ±60 s of skew. There's no signature check, because the token came straight from the token endpoint over TLS (OIDC Core §3.1.3.7).
+  4. ID-token claims: `iss`, `aud` contains `client_id`, `azp` if present, `nonce`. Times are judged on the **provider's clock**: the token came straight from the token endpoint, so its `iat` is the provider's time at receipt, and the device's offset is taken from it (also for `auth_time` and step-up). An offset beyond 10 minutes (`MAX_CLOCK_OFFSET_S`) fails visibly: `anonymous { device-clock }` and an error log with `clock_offset_s` (report Issue 8). There's no signature check, because the token came straight from the token endpoint over TLS (OIDC Core §3.1.3.7).
   5. In the trial realm, a valid `tenant_id` sets the storage namespace; without one it stays `anon` and an error is logged.
 - **Errors:** `?error=` answering a silent attempt (`login_required`, `interaction_required`, `consent_required`) becomes `anonymous { login-required, workspace }`. Any other error becomes `anonymous { none }`.
 - **URL:** before `init()` resolves, it is replaced with the record's `returnUrl` (which must be a safe redirect, else `/`).
@@ -649,6 +684,7 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 | `@bcbp-solutions-fzc-llc/frontend-sdk:workspaces` | local | `/auth` (workspace cache) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:signed-out` | local | `/auth` |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-activity` | local | `/auth` |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-user` | local | `/auth` (SHA-256 of realm + `sub`) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:pending:<state>` | session | `/auth` |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:restore-attempt` | session | `/auth` (loop guard) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:chunk-reload` | session | `/mfe` |
@@ -691,10 +727,11 @@ The SDK subpaths and share range come from `src/generated/sdk.ts`, which `pnpm e
 The packages are released together with one version (changesets `fixed`):
 1. A release PR runs `pnpm run version-packages` (`changeset version`, the bump, then `exports:sync`, the generated SDK version) and turns `[Unreleased]` in the root `CHANGELOG.md` into the version's section.
 2. The merge commit is tagged `vX.Y.Z`.
-3. `release.yml` verifies the tag (on `main`, versions equal to the tag, the `CHANGELOG.md` section present) and reruns every CI gate at the tag.
-4. It publishes a GitHub Release with the three tarballs, a CycloneDX SBOM, and `checksums.txt` with a Cosign keyless signature bundle.
+3. `release.yml` verifies the tag (on `main`, versions equal to the tag, the `CHANGELOG.md` section present) and reruns the CI gates at the tag (all but `browser` and `collector`).
+4. `npm-publish` publishes the three tarballs to **GitHub Packages** (`@bcbp-solutions-fzc-llc/*`, dist-tag from `publish:check`: `alpha`, `rc` or `latest`), with a build-provenance attestation each. It runs in the `npm` environment and refuses to publish unless publishing is gated (`.github/scripts/check-npm-environment.sh`): required reviewers, or (this private repository on GitHub Team) the environment accepts only release tags and an active tag ruleset limits creating, moving and deleting `v*` tags to admins and named teams. A version already published with the same integrity is skipped; a different one is refused.
+5. It publishes a GitHub Release with the three tarballs, a CycloneDX SBOM, and `checksums.txt` with a Cosign keyless signature bundle. Pre-release tags (`v1.0.0-alpha.N`) are marked as pre-releases.
 
-There's no npm registry yet. Pre-release tags (`v1.0.0-alpha.N`) are marked as pre-releases.
+The first release is `v1.0.0-alpha.1` (2026-11-03). Changesets v3's pre mode moves consumed changesets into `.changeset/pre/`; `changelog-check.yml` recognises that as a release PR.
 
 ### 14.2 Compatibility
 - **During the alpha:** breaking changes bump `N` and are listed in the CHANGELOG. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`.
@@ -705,7 +742,10 @@ See ARCHITECTURE.md § Testing strategy. Key guarantees under test:
 - the Keycloak fake revokes the whole session on any refresh-token reuse, and the tests assert no reuse across tabs and refresh failures;
 - tokens never appear in storage or the channel;
 - every redaction, identity, header and problem fixture shared with Go and Python passes;
-- the tarballs install and typecheck in an empty project.
+- the tarballs install and typecheck in an empty project;
+- in real engines (`test/browser`): the keepalive budget on tab close, page-lifecycle order, SRI on lazy chunks, Trusted Types;
+- the reference Collector in its image (`test/collector`, CI job `collector`): streams routed to one aggregator, totals correct across device clocks, allowlists;
+- the integrated deployment (`test/stack`, Docker): Keycloak, Envoy with the real IAM services, the distribution on floci, the two-tier Collector, in three engines. It runs nightly in CI (`stack-nightly.yml`, pinned backend commits or default branches on dispatch; a failing scheduled run opens an issue); results in `docs/e2e/integrated-deployment-report.md`.
 
 ---
 
@@ -715,6 +755,7 @@ See ARCHITECTURE.md § Testing strategy. Key guarantees under test:
 |---|---|---|
 | Tier 1 `platform_web_*` metrics (design step 15) | Waiting on governance ratification (§D5, §D6 K) | The instrument port is a no-op; `startWebVitals` records nothing |
 | OTLP → Prometheus name translation check for `platform_web_*` | Deferred to step 15 | — |
-| npm registry for the packages | Not chosen (GitHub Release only) | Consumers install from release tarballs |
+| Gateway issues from the integrated run (3: Envoy's own errors are not problem+json; 9: JWKS cache on key rotation; 14: `x-request-id` rewritten) | Open with Platform; IAM offers the two-phase key-rotation runbook | The SDK reads the gateway's plain replies as synthetic problems |
+| Reference Collector deployment | `examples/collector` is a reference; the platform Collector is deployed by Platform observability | The browser's metrics need the two tiers (§7.6) to aggregate correctly |
 | `createTestPlatform` option for remote → domain (`remotes`) | Proposed, not in §C1 | A remote's own tests cannot register Tier 2/3 metrics under its `ownerDomain` |
-| changesets v3 `pre.json` format | `changeset status` rewrites `.changeset/pre.json`; versioning is unaffected | Leave the committed file until the next `changeset version` |
+| changesets v3 pre mode | `changeset version` moves consumed changesets into `.changeset/pre/` instead of deleting them | `changelog-check.yml` accepts that as a release PR; `pnpm changeset pre exit` before `1.0.0` |
