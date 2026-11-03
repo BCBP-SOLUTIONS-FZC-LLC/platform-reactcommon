@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-alpha.2] - 2026-11-03
+
 ### Added
 
 - **Rspack and Rsbuild** (`@bcbp-solutions-fzc-llc/webpack-preset`):
@@ -226,5 +228,6 @@ Fixed before the first release, after a security and production-readiness review
 - `/i18n`: a namespace registered during a locale change loads the new locale; `/logging`: `Map` and `Set` keep their contents.
 - `@bcbp-solutions-fzc-llc/eslint-plugin`: `no-identity-headers` sees computed `['headers']`; the import rules see template-literal `require` / `import()`.
 
-[Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.1...HEAD
+[Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.2...HEAD
+[1.0.0-alpha.2]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.1...v1.0.0-alpha.2
 [1.0.0-alpha.1]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/releases/tag/v1.0.0-alpha.1
