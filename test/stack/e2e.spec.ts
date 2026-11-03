@@ -25,8 +25,11 @@ test.describe('sign-in through PUB-1, Keycloak and the gateway', () => {
     // PUB-1 through CloudFront → Envoy (no jwt_authn/ext_authz) → the real iam-org-membership.
     const resolve = t.apiCall('/api/v1/public/tenants/resolve');
     expect(resolve?.status).toBe(200);
-    expect(resolve!.json()).toEqual({ found: true, realm: 'tenant-acme', strategy: 'dedicated' });
     expect(resolve!.request.headers()['authorization']).toBeUndefined();
+    // The body, through the same path: the shell navigates to Keycloak as soon as this answer arrives, and
+    // Chromium may discard the response body before Playwright reads it (seen on the 2-core CI runner).
+    const answer = await page.request.get(resolve!.url.pathname + resolve!.url.search);
+    expect(await answer.json()).toEqual({ found: true, realm: 'tenant-acme', strategy: 'dedicated' });
 
     // Authorization Code + PKCE against the issuer the browser sees.
     const auth = t.authorize[0]!;

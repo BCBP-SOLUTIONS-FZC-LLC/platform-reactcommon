@@ -24,6 +24,11 @@ services:
   # ── AWS (emulated) ───────────────────────────────────────────────────────────────────────────
   floci:
     image: floci/floci:2.1.0-compat
+    # Lambda launches each function in a container through the Docker socket. The image runs as uid 1001,
+    # which a Linux host's root:docker 660 socket refuses ("BindException: Permission denied" in floci's
+    # ContainerLauncher, every /csp-report invocation a 502 in the nightly run); Docker Desktop does not
+    # enforce it. Socket access is root-equivalent on the host anyway, so root adds no privilege here.
+    user: "0:0"
     ports: ["127.0.0.1:18566:4566"]
     environment:
       FLOCI_DEFAULT_REGION: ap-south-1
