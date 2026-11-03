@@ -29,9 +29,9 @@ Commands, CI, releases and the Docker suites. The README's *Local development*, 
 
 | Workflow | Runs | Jobs |
 |---|---|---|
-| `ci.yml` | every PR (any base), pushes to `main` (not Markdown-only) | `validate-test`, `validate-quality`, `validate-contracts`, `package` → `trivy`, `smoke` → `interop`, `browser`, `react-floor`, `collector` → `pr-summary` |
-| `changelog-check.yml` | PRs touching `packages/*/src`, `package.json`, contracts, `subpaths.json` | changeset + CHANGELOG required; a release PR (changesets deleted, or moved into `.changeset/pre/`) needs only the CHANGELOG |
-| `release.yml` | `v*` tag (or dispatch from `main`) | `verify` → every `ci.yml` gate at the tag → `npm-publish` → `publish` |
+| `ci.yml` | every PR (any base), pushes to `main` (not Markdown-only) | `validate-test`, `validate-quality`, `validate-contracts`, `package`; then `trivy`, `smoke` (after `validate-test` + `package`) and `interop`, `browser`, `react-floor`, `collector` (after `validate-test`) → `pr-summary` |
+| `changelog-check.yml` | PRs touching `packages/*/src`, `packages/*/package.json`, contracts, `subpaths.json` | changeset + CHANGELOG required; a release PR (changesets deleted, or moved into `.changeset/pre/`) needs only the CHANGELOG |
+| `release.yml` | `v*` tag (or dispatch from `main`) | `verify` → `ci.yml`'s gates at the tag except `browser` and `collector` → `npm-publish` → `publish` |
 | `stack-nightly.yml` | 01:30 UTC; dispatch with `upstream: pinned \| main` | checks out 7 backend repos, `stack-up`, `test-stack`; artifacts on failure; a failing scheduled run opens/updates the "Nightly stack run failing" issue |
 
 **Runners:** the repo is private → 7 GB RAM, 2 cores. The SDK build sets `--max-old-space-size=4096` (the DTS worker ran out of the ~2 GB default). Tests must not depend on speed: bound waits by real time, poll cross-page effects, record engine limits.

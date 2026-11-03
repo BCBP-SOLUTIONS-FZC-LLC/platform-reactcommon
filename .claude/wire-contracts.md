@@ -34,6 +34,7 @@ Every API error is an RFC 9457 problem decoded as gincommon's client does (`cont
 | `@bcbp-solutions-fzc-llc/frontend-sdk:workspaces` | local | `/auth` (workspace cache) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:signed-out` | local | `/auth` (no silent sign-in; next login `prompt=login`) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-activity` | local | `/auth` (cross-tab idle) |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-user` | local | `/auth` (SHA-256 of realm + `sub`, never the `sub`) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:pending:<state>` | session | `/auth` (PKCE record, 10 min) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:restore-attempt` | session | `/auth` (loop guard) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:chunk-reload` | session | `/mfe` |

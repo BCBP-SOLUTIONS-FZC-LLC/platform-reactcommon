@@ -603,7 +603,7 @@ SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as publi
 1. Open a release PR: `pnpm run version-packages` bumps all three packages, consumes the changesets and regenerates the SDK facts (`exports:sync`: the version remotes require); rename `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) to `## [X.Y.Z] - YYYY-MM-DD` (the version it set) and add a new empty `[Unreleased]`. Commit the result, run `pnpm install` if the lockfile changes, and merge.
 2. Tag the merge commit `vX.Y.Z` (the version it set) and push the tag. `release.yml` does the rest:
    1. **Verify.** The tag must be reachable from `origin/main` (and a manual dispatch must start from `main` or the tag), all package versions must equal the tag, and `CHANGELOG.md` must have its section (`## [X.Y.Z]`; a pre-release tag may use its base version's section).
-   2. **Gates.** The same gates as `ci.yml`, at the tag: tests, quality, contracts, package, Trivy, smoke, interop.
+   2. **Gates.** The same gates as `ci.yml`, at the tag: tests, quality, contracts, package, Trivy, smoke, interop, React floor (not `browser` or `collector`).
    3. **npm-publish.** The tarballs go to GitHub Packages under the dist-tag `publish:check` derives (`alpha`, `rc`, `latest`), each with a build-provenance attestation. Only if publishing is gated (`.github/scripts/check-npm-environment.sh`): this private repository on GitHub Team has no environment reviewers, so the `npm` environment accepts only release tags and the "release tags" ruleset lets only admins create, move or delete `v*` tags; pushing the tag is the approval.
    4. **Publish.** Checksums over the tarballs and SBOM, a Cosign keyless `sign-blob` with verification, and the GitHub Release with that CHANGELOG section as its notes. A tag with a pre-release part is marked as a pre-release.
 
@@ -632,7 +632,7 @@ Seven workflow files and one shared setup action. Shell logic lives in `.github/
 - **`ci.yml`:** the orchestrator, on every PR (any base) and pushes to `main`, skipping Markdown-only commits.
   1. In parallel: `validate-test`, `validate-quality`, `validate-contracts` and `package` (build + `pnpm pack` ×3).
   2. Then `trivy` (filesystem scan: runtime dependencies, secrets, config; CRITICAL/HIGH/UNKNOWN fails; SARIF; CycloneDX SBOM) and `smoke` (the tarballs installed into an empty consumer).
-  3. Then `interop` (platform-interop-tests at a pinned SHA, pair 4 at this ref), `browser` (Playwright, three engines), `react-floor` (React 19.0.0) and `collector` (the reference Collector in its image).
+  3. After `validate-test` alone (in parallel with step 2): `interop` (platform-interop-tests at a pinned SHA, pair 4 at this ref), `browser` (Playwright, three engines), `react-floor` (React 19.0.0) and `collector` (the reference Collector in its image).
   4. Finally `pr-summary` (one updated PR comment, also on failure).
 - **`validate-test.yml`** (reusable): a frozen install, then `pnpm test:coverage`, then `coverage-gate.sh` (**≥ 98%**), then the coverage report is uploaded.
 - **`validate-quality.yml`** (reusable), in order:

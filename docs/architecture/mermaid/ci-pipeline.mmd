@@ -22,7 +22,7 @@ graph LR
 
     subgraph rel["release.yml  —  tag vX.Y.Z (one version, changesets fixed)"]
         vf["verify: tag on main · versions = tag · CHANGELOG.md section"]
-        gates["same gates as ci.yml, at the tag"]
+        gates["ci.yml gates at the tag<br/>(not browser, collector)"]
         np["npm-publish: GitHub Packages (dist-tag alpha/rc/latest)<br/>publish gate: env limited to release tags + tag ruleset<br/>provenance attestation per tarball"]
         pub["publish: GitHub Release<br/>tarballs · SBOM · checksums.txt + Cosign bundle"]
         vf --> gates --> np --> pub

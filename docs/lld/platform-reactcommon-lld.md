@@ -684,6 +684,7 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 | `@bcbp-solutions-fzc-llc/frontend-sdk:workspaces` | local | `/auth` (workspace cache) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:signed-out` | local | `/auth` |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-activity` | local | `/auth` |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-user` | local | `/auth` (SHA-256 of realm + `sub`) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:pending:<state>` | session | `/auth` |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:restore-attempt` | session | `/auth` (loop guard) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:chunk-reload` | session | `/mfe` |
@@ -726,7 +727,7 @@ The SDK subpaths and share range come from `src/generated/sdk.ts`, which `pnpm e
 The packages are released together with one version (changesets `fixed`):
 1. A release PR runs `pnpm run version-packages` (`changeset version`, the bump, then `exports:sync`, the generated SDK version) and turns `[Unreleased]` in the root `CHANGELOG.md` into the version's section.
 2. The merge commit is tagged `vX.Y.Z`.
-3. `release.yml` verifies the tag (on `main`, versions equal to the tag, the `CHANGELOG.md` section present) and reruns every CI gate at the tag.
+3. `release.yml` verifies the tag (on `main`, versions equal to the tag, the `CHANGELOG.md` section present) and reruns the CI gates at the tag (all but `browser` and `collector`).
 4. `npm-publish` publishes the three tarballs to **GitHub Packages** (`@bcbp-solutions-fzc-llc/*`, dist-tag from `publish:check`: `alpha`, `rc` or `latest`), with a build-provenance attestation each. It runs in the `npm` environment and refuses to publish unless publishing is gated (`.github/scripts/check-npm-environment.sh`): required reviewers, or (this private repository on GitHub Team) the environment accepts only release tags and an active tag ruleset limits creating, moving and deleting `v*` tags to admins and named teams. A version already published with the same integrity is skipped; a different one is refused.
 5. It publishes a GitHub Release with the three tarballs, a CycloneDX SBOM, and `checksums.txt` with a Cosign keyless signature bundle. Pre-release tags (`v1.0.0-alpha.N`) are marked as pre-releases.
 

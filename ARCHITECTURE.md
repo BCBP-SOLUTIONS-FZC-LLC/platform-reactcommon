@@ -624,7 +624,7 @@ graph LR
 
     subgraph rel["release.yml  —  tag vX.Y.Z (one version, changesets fixed)"]
         vf["verify: tag on main · versions = tag · CHANGELOG.md section"]
-        gates["same gates as ci.yml, at the tag"]
+        gates["ci.yml gates at the tag<br/>(not browser, collector)"]
         np["npm-publish: GitHub Packages (dist-tag alpha/rc/latest)<br/>publish gate: env limited to release tags + tag ruleset<br/>provenance attestation per tarball"]
         pub["publish: GitHub Release<br/>tarballs · SBOM · checksums.txt + Cosign bundle"]
         vf --> gates --> np --> pub
@@ -689,7 +689,7 @@ The browser is single-threaded; concurrency here means overlapping promises and 
 All three packages share one version (`fixed`). The release flow:
 1. A release PR runs `pnpm changeset version`.
 2. The merge commit is tagged `vX.Y.Z`.
-3. `release.yml` verifies the tag and versions and reruns every gate at the tag.
+3. `release.yml` verifies the tag and versions and reruns the `ci.yml` gates at the tag (all but `browser` and `collector`).
 4. `npm-publish` publishes the three packages to **GitHub Packages** (`@bcbp-solutions-fzc-llc/*`), with a build-provenance attestation each, only if publishing is gated: required reviewers, or (this private repository on GitHub Team) an `npm` environment limited to release tags plus a tag ruleset over who may push them (`check-npm-environment.sh`).
 5. A **GitHub Release** carries the tarballs, a CycloneDX SBOM and Cosign-signed checksums.
 
