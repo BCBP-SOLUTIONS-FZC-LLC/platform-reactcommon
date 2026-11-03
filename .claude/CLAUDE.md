@@ -14,7 +14,7 @@ A **pnpm monorepo** of three npm packages released together under one version (c
 
 Node ≥ 22 (`.nvmrc` 22), pnpm 12 (corepack), TypeScript 6, ESM only, **React 19 only** (`^19.0.0`, floor tested in CI). Published to **GitHub Packages** (`@bcbp-solutions-fzc-llc` scope, `read:packages` to install). The repository is **private** on GitHub Team. Nothing here is deployed: `examples/` holds a reference shell, a remote, CloudFront snippets and the reference OTel Collector configuration.
 
-**Status:** **`1.0.0-alpha.1` released 2026-11-03** (tag `v1.0.0-alpha.1`, GitHub pre-release, packages under dist-tag `alpha`). The repo is in changesets pre mode (`alpha`) until the first end-to-end environment, when `1.0.0` is cut. New work goes under `[Unreleased]` in `CHANGELOG.md` with a `.changeset/*.md`. Open items: [LLD §15](../docs/lld/platform-reactcommon-lld.md#15-open-items) (Tier 1 `platform_web_*` metrics await governance ratification; gateway Issues 3, 9, 14 are with Platform).
+**Status:** **`1.0.0-alpha.1` released 2026-11-03** (tag `v1.0.0-alpha.1`, GitHub pre-release, packages under dist-tag `alpha`). The repo is in changesets pre mode (`alpha`) until the first end-to-end environment, when `1.0.0` is cut. Unreleased since alpha.1: the preset's `/rspack` and `/rsbuild` entry points. New work goes under `[Unreleased]` in `CHANGELOG.md` with a `.changeset/*.md`. Open items: [LLD §15](../docs/lld/platform-reactcommon-lld.md#15-open-items) (Tier 1 `platform_web_*` metrics await governance ratification; gateway Issues 3, 9, 14 are with Platform).
 
 **Key responsibilities (the SDK is the sole browser implementation of):**
 - **Page identity and correlation:** `initializeCore` (domain / service / environment from the registry), session id, request id, W3C trace context to the page origin and an exact allowlist only.
@@ -31,7 +31,7 @@ Node ≥ 22 (`.nvmrc` 22), pnpm 12 (corepack), TypeScript 6, ESM only, **React 1
 pnpm run setup        # install + git hooks (once per clone)
 pnpm verify           # exports, docs, lint, typecheck, tests, build, examples, API reports, depcruise
 pnpm test             # Vitest: unit, integration, e2e (+ examples', scripts' tests)
-pnpm test:coverage    # with coverage of packages/*/src (gate 98% statements; 98.8% today, 1295 tests)
+pnpm test:coverage    # with coverage of packages/*/src (gate 98% statements; 98.7% today, 1340 tests)
 pnpm lint / typecheck / build
 pnpm api / api:check  # api-extractor reports (packages/frontend-sdk/api/*.api.md)
 pnpm exports:sync / docs:sync / contracts:sync    # generated files; *:check in CI

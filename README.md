@@ -516,7 +516,7 @@ test/
 
 ### Coverage
 
-`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.8% today (1295 tests). Don't lower the threshold.
+`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.7% today (1340 tests). Don't lower the threshold.
 
 ---
 
@@ -539,7 +539,7 @@ The SDK reads no environment variables in the browser. Its configuration is one 
 | `i18n.defaultLocale` · `supportedLocales` | — (**required**) | Canonical BCP 47 tags |
 | `appUpdate.pollIntervalMs` | — (**required**) | `/version.json` polling (≥ 10 s) |
 
-Build-time constants (shell): `__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack `DefinePlugin`), passed to `initializeCore`.
+Build-time constants (shell): `__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`), passed to `initializeCore`.
 
 ---
 
@@ -607,7 +607,7 @@ SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as publi
 
 | Version | Status | Notes |
 |---|---|---|
-| `1.0.0-alpha.N` | Current line; **`1.0.0-alpha.1`** released 2026-11-03 | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`) |
+| `1.0.0-alpha.N` | Current line; **`1.0.0-alpha.1`** released 2026-11-03 | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`). Unreleased: the preset's Rspack and Rsbuild entry points (`[Unreleased]` in the CHANGELOG) |
 | `1.0.0` | Cut with the first end-to-end environment | Strict SemVer from then on |
 
 ### Cutting a release

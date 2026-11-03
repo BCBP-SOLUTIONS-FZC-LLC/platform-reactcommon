@@ -7,7 +7,7 @@
 | Packages | `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin` (one version, changesets `fixed`) |
 | Version | `1.0.0-alpha.1`, the first release (tag `v1.0.0-alpha.1`, 2026-11-03, GitHub Packages, dist-tag `alpha`); `1.0.0-alpha.N` until the first end-to-end environment |
 | Runtime | Evergreen browsers (ES2022, Trusted Types where supported); build tooling on Node ≥ 22 |
-| Peers | `react` / `react-dom` `^19.0.0` (one major; floor tested in CI), `@opentelemetry/api` `~1.10.0`, `webpack` `^5.100.0`, `eslint` `^9 \|\| ^10` |
+| Peers | `react` / `react-dom` `^19.0.0` (one major; floor tested in CI), `@opentelemetry/api` `~1.10.0`, `webpack` `^5.100.0`, `@rspack/core` `^2.2.0`, `@rsbuild/core` `^2.2.0` (the preset's bundler peers, each optional: an app installs the one it builds with), `eslint` `^9 \|\| ^10` |
 | Design record | [`docs/design/frontend-sdk-design.md`](../design/frontend-sdk-design.md) (decisions, public API per subpath, contracts, backend changes) |
 | Architecture | [`ARCHITECTURE.md`](../../ARCHITECTURE.md) (diagrams, invariants, threat model) |
 
@@ -17,6 +17,7 @@
 |---|---|---|
 | 1.0 | 2026-10-31 | First LLD, written from the implementation of design-doc steps 0–14 plus the `portal` domain and the CI pipeline (all on `main`). Step 15 (Tier 1 metric binding) is open; see §15 |
 | 1.1 | 2026-11-03 | Aligned with the first release `1.0.0-alpha.1`: GitHub Packages distribution and its publish gate (§14.1), React 19 only, sign-out global by default (§8.7), one keepalive budget for all three signals on hide and `pagehide` (§7.5), metrics sent on page hide (§7.3), the reference two-tier Collector (§7.6), the test layers and nightly integrated run (§14.3), open items (§15) |
+| 1.2 | 2026-11-03 | `@bcbp-solutions-fzc-llc/webpack-preset` supports Rspack 2 (`/rspack`) and Rsbuild 2 (`/rsbuild`) besides webpack 5, interoperable over the v1 Module Federation protocol (§13.1, unreleased: `[Unreleased]` in the CHANGELOG) |
 
 ### Table of Contents
 
@@ -674,7 +675,7 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 | `appUpdate.pollIntervalMs` | — (required) | 10 s – 24 h |
 
 ### 12.2 Build-time constants (shell)
-`__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack `DefinePlugin`) feed `initializeCore`. The SDK's own `__SDK_VERSION__` is defined when the SDK is built.
+`__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`) feed `initializeCore`. The SDK's own `__SDK_VERSION__` is defined when the SDK is built.
 
 ### 12.3 Reserved browser storage keys
 

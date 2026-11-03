@@ -703,7 +703,7 @@ During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `
 |---|---|
 | Unit | Vitest per subpath (`test/unit/<subpath>`). Node by default; `happy-dom` for React; `jsdom` for DOMPurify. Coverage gate ≥ 98 % statements of `packages/*/src` |
 | Integration / E2E | `test/integration`: subpaths wired together; `test/e2e`: the reference shell and remote booted end to end (both in-process, jsdom) |
-| Browser | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP: the keepalive budget on hide and tab close, page-lifecycle event order, SRI on lazy chunks, `AbortSignal.any` native and absent, Trusted Types (CI job `browser`); engine limits in `engine-notes.ts` |
+| Browser | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP: the keepalive budget on hide and tab close, page-lifecycle event order, SRI on lazy chunks (webpack and Rspack remotes), `AbortSignal.any` native and absent, Trusted Types (CI job `browser`); engine limits in `engine-notes.ts` |
 | Collector | `test/collector`: the reference two-tier Collector (`examples/collector`) in the Collector image, two gateways and two aggregators: per-stream routing, totals across device clocks, allowlists (`pnpm test-collector`, CI job `collector`); `examples/collector/test` keeps the allowlists equal to the registry |
 | Integrated | `test/stack`: the example shell in three engines against Keycloak, Envoy with the real IAM services, the distribution on floci and the two-tier Collector (`docker-compose.yml`); nightly in CI (`stack-nightly.yml`); findings in `docs/e2e/integrated-deployment-report.md` |
 | React floor | The typecheck, unit suite, build and example checks on React 19.0.0 (CI job `react-floor`) |
@@ -712,7 +712,7 @@ During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `
 | Fake backends | A Keycloak fake at the HTTP level (PKCE, rotation, reuse revokes the session); `mockApi` / `mockProblem` |
 | Parity | `metrics:parity`: SDK registration checks vs gincommon `metricslint`, inventory passes `-strict` |
 | Cross-language | interop-tests pair 4: the SDK's `/http` + `/problem` against the live Go and Python servers |
-| Build output | `examples:check` (CSP, container global, no SDK in remotes); real webpack builds in the preset's tests |
+| Build output | `examples:check` (CSP, container global, no SDK in remotes); real webpack, Rspack and Rsbuild builds in the preset's tests, including webpack and Rspack shells and remotes mixed; the browser SRI suite runs on a webpack-built and an Rspack-built remote |
 | Package | Smoke tests of the packed tarballs in an empty consumer project |
 
 ## Consumer conformance checklist
