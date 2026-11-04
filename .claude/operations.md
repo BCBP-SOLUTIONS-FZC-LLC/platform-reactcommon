@@ -39,6 +39,8 @@ Commands, CI, releases and the Docker suites. The README's *Local development*, 
 
 **Secrets** (org secrets, no per-repo setup): `CI_REPO_READ_TOKEN` (private checkouts; `PLATFORM_REPOS_TOKEN` overrides), `GO_PRIVATE_TOKEN` (interop; the nightly's IAM image builds). Check `gh api repos/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/actions/organization-secrets` before calling a secret missing.
 
+**Dependabot** (`.github/dependabot.yml`): security updates only, for npm (the pnpm workspace) and GitHub Actions; version updates are off (`open-pull-requests-limit: 0`). Security updates also need the repository setting *Dependabot security updates*. `@opentelemetry/api` is held to `~1.10` and React to `^19`.
+
 ## Releasing
 
 1. All changes merged to `main`, each with a changeset and an `[Unreleased]` entry.

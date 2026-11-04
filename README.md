@@ -641,7 +641,7 @@ sha256sum --check --ignore-missing checksums.txt   # macOS: shasum -a 256 -c --i
 
 ## CI
 
-Seven workflow files and one shared setup action. Shell logic lives in `.github/scripts/` (shellcheck-clean), and every third-party action is pinned to a full commit SHA (checked in CI). Dependabot version updates are **disabled** (`.github/dependabot.yml.disabled`; re-enable with `git mv .github/dependabot.yml.disabled .github/dependabot.yml`).
+Seven workflow files and one shared setup action. Shell logic lives in `.github/scripts/` (shellcheck-clean), and every third-party action is pinned to a full commit SHA (checked in CI). Dependabot opens **security updates only** (`.github/dependabot.yml`: npm for the pnpm workspace, and GitHub Actions). Version updates stay **disabled**: `open-pull-requests-limit: 0` stops them and leaves security updates on (raise it to re-enable version updates). Security updates also need *Dependabot security updates* turned on in the repository settings. `@opentelemetry/api` stays within `~1.10` and React within `^19` (ignore rules), so an advisory fixed only outside those ranges is handled by hand.
 
 - **`ci.yml`:** the orchestrator, on every PR (any base) and pushes to `main`, skipping Markdown-only commits.
   1. In parallel: `validate-test`, `validate-quality`, `validate-contracts` and `package` (build + `pnpm pack` ×3).

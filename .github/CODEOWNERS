@@ -6,7 +6,7 @@
 .github/workflows/ @BCBP-SOLUTIONS-FZC-LLC/platform-team
 .github/actions/ @BCBP-SOLUTIONS-FZC-LLC/platform-team
 .github/scripts/ @BCBP-SOLUTIONS-FZC-LLC/platform-team
-.github/dependabot.yml.disabled @BCBP-SOLUTIONS-FZC-LLC/platform-team
+.github/dependabot.yml @BCBP-SOLUTIONS-FZC-LLC/platform-team
 
 # Public API surface — extra scrutiny (api-extractor reports, subpath rules, contracts pins).
 packages/frontend-sdk/api/ @BCBP-SOLUTIONS-FZC-LLC/platform-team
