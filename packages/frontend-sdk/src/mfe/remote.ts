@@ -101,8 +101,23 @@ async function shareScope(): Promise<unknown> {
   return typeof __webpack_share_scopes__ !== 'undefined' ? (__webpack_share_scopes__?.default ?? {}) : {};
 }
 
-/** One container per remote per page: loaded and initialised once, shared by every loadRemote. */
-const containers = new Map<string, Promise<Container>>();
+/**
+ * One container per remote per page: loaded and initialised once, shared by every loadRemote, and by every
+ * SDK copy of the major on the page (on the runtime: a second copy would otherwise init the container again).
+ */
+function containers(): Map<string, Promise<Container>> {
+  return ((getRuntime() as { remoteContainers?: Map<string, Promise<Container>> }).remoteContainers ??= new Map());
+}
+
+/** Rejects with a timeout after `ms`; `clear()` stops it. One per attempt: the entry, init and get together. */
+function attemptDeadline(ms: number): { promise: Promise<never>; clear(): void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const promise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new AttemptError('timeout', `remote did not load within ${ms} ms`)), ms);
+  });
+  promise.catch(() => {}); // raced, never awaited alone
+  return { promise, clear: () => clearTimeout(timer) };
+}
 
 async function loadContainer(name: string, timeoutMs: number): Promise<Container> {
   const manifest = currentManifest();
@@ -183,20 +198,25 @@ export async function loadRemote<T = unknown>(
     const timeoutMs = o?.timeoutMs ?? cfg?.loadTimeoutMs ?? 10_000;
     const retries = Math.max(0, o?.retries ?? cfg?.retries ?? 2);
     let lastError: AttemptError | undefined;
+    let deadline: ReturnType<typeof attemptDeadline> | undefined;
     for (let n = 0; n <= retries; n++) {
       try {
         // Checked before loadContainer, so an aborted caller never injects the entry script.
         if (o?.signal?.aborted) throw new AttemptError('aborted', 'aborted');
-        let pending = containers.get(name);
+        let pending = containers().get(name);
         if (!pending) {
-          pending = loadContainer(name, timeoutMs);
-          containers.set(name, pending);
-          pending.catch(() => containers.delete(name)); // a failed load may be retried
+          const loading = loadContainer(name, timeoutMs);
+          pending = loading;
+          containers().set(name, loading);
+          loading.catch(() => containers().delete(name)); // a failed load may be retried
         }
-        const container = await abortable(pending, o?.signal);
+        // The timeout covers the whole attempt: the entry, the share-scope init and the module's chunks
+        // (a hung chunk would otherwise hold the Suspense fallback for the bundler's own 120 s).
+        deadline = attemptDeadline(timeoutMs);
+        const container = await abortable(Promise.race([pending, deadline.promise]), o?.signal);
         let factory: () => unknown;
         try {
-          factory = await abortable(Promise.resolve(container.get(module)), o?.signal);
+          factory = await abortable(Promise.race([Promise.resolve(container.get(module)), deadline.promise]), o?.signal);
         } catch (e) {
           if (e instanceof AttemptError) throw e;
           throw new AttemptError('incompatible', `module ${module} is not exposed or failed to load`, { cause: e });
@@ -207,14 +227,18 @@ export async function loadRemote<T = unknown>(
         } catch (e) {
           throw new AttemptError('incompatible', `module ${module} failed to evaluate`, { cause: e });
         }
+        deadline.clear();
         record('success');
         return value;
       } catch (e) {
+        deadline?.clear();
         lastError = e instanceof AttemptError ? e : new AttemptError('network', String(e), { cause: e });
+        if (lastError.reason === 'timeout') containers().delete(name); // a hung load is not reused by the next attempt
         if (lastError.reason === 'aborted' || lastError.reason === 'incompatible' || n === retries) break;
         await sleep(Math.min(5_000, 250 * 2 ** n) * Math.random());
       }
     }
+    deadline?.clear();
     record('error', lastError!.reason);
     const err = new RemoteLoadError(name, lastError!.message, lastError!.cause ?? lastError);
     span.recordError(err);
@@ -227,5 +251,5 @@ export async function loadRemote<T = unknown>(
 
 /** Test only: forget loaded containers. */
 export function resetContainersForTests(): void {
-  containers.clear();
+  containers().clear();
 }

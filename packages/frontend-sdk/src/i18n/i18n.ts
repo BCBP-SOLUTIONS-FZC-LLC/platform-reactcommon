@@ -84,17 +84,43 @@ function notify(): void {
   emitRuntime('i18n');
 }
 
+/** A catalog that has not loaded by then counts as failed: one hung remote must not hold setLocale. */
+const CATALOG_TIMEOUT_MS = 10_000;
+/** A failed catalog is tried again this many times, 2 s, 4 s, 8 s later, while its locale is in use. */
+const CATALOG_RETRIES = 3;
+const catalogFailures = new Map<string, number>();
+
+function retryLater(ns: string, locale: string): void {
+  const key = `${ns}|${locale}`;
+  const n = (catalogFailures.get(key) ?? 0) + 1;
+  catalogFailures.set(key, n);
+  if (n > CATALOG_RETRIES) return;
+  setTimeout(() => {
+    const s = state();
+    if (locale !== s.locale && locale !== s.defaultLocale) return; // no longer shown
+    void ensureLoaded([ns], locale).then(notify);
+  }, 1_000 * 2 ** n);
+}
+
 async function loadCatalog(ns: string, locale: string): Promise<void> {
   const s = state();
   const loader = s.loaders.get(ns);
   if (!loader) return;
   let raw: unknown;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    raw = await loader(locale);
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no answer within ${CATALOG_TIMEOUT_MS} ms`)), CATALOG_TIMEOUT_MS);
+    });
+    raw = await Promise.race([loader(locale), timeout]);
   } catch (e) {
     warn(`namespace "${ns}" failed to load for ${locale}: ${e instanceof Error ? e.message : String(e)}`);
+    retryLater(ns, locale); // a transient failure would otherwise show raw keys until the page reloads
     return;
+  } finally {
+    clearTimeout(timer);
   }
+  catalogFailures.delete(`${ns}|${locale}`);
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     warn(`namespace "${ns}" for ${locale} is not an object of messages`);
     return;
@@ -195,27 +221,29 @@ export function registerNamespace(mfe: string, loader: Loader): void {
   void ensureLoaded([mfe], s.locale).then(notify);
 }
 
+/** The Intl caches hold at most this many entries each: options vary with the caller, so keys are unbounded. */
+const FORMAT_CACHE_MAX = 200;
+
+function remember<V>(cache: Map<string, V>, key: string, make: () => V): V {
+  let v = cache.get(key);
+  if (v === undefined) {
+    if (cache.size >= FORMAT_CACHE_MAX) cache.clear();
+    v = make();
+    cache.set(key, v);
+  }
+  return v;
+}
+
 const numberFormats = new Map<string, Intl.NumberFormat>();
 const dateFormats = new Map<string, Intl.DateTimeFormat>();
 const pluralRules = new Map<string, Intl.PluralRules>();
 
 function numberFormat(locale: string, o?: Intl.NumberFormatOptions): Intl.NumberFormat {
-  const key = `${locale}|${JSON.stringify(o ?? {})}`;
-  let f = numberFormats.get(key);
-  if (!f) {
-    f = new Intl.NumberFormat(locale, o);
-    numberFormats.set(key, f);
-  }
-  return f;
+  return remember(numberFormats, `${locale}|${JSON.stringify(o ?? {})}`, () => new Intl.NumberFormat(locale, o));
 }
 
 function context(locale: string): FormatContext {
-  let rules = pluralRules.get(locale);
-  if (!rules) {
-    rules = new Intl.PluralRules(locale);
-    pluralRules.set(locale, rules);
-  }
-  const r = rules;
+  const r = remember(pluralRules, locale, () => new Intl.PluralRules(locale));
   return { locale, number: (n) => numberFormat(locale).format(n), plural: (n) => r.select(n) };
 }
 
@@ -252,13 +280,7 @@ export function formatDate(d: Date | number, o?: Intl.DateTimeFormatOptions): st
   const date = d instanceof Date ? d : new Date(d);
   if (Number.isNaN(date.getTime())) return '';
   const locale = state().locale;
-  const key = `${locale}|${JSON.stringify(o ?? {})}`;
-  let f = dateFormats.get(key);
-  if (!f) {
-    f = new Intl.DateTimeFormat(locale, o);
-    dateFormats.set(key, f);
-  }
-  return f.format(date);
+  return remember(dateFormats, `${locale}|${JSON.stringify(o ?? {})}`, () => new Intl.DateTimeFormat(locale, o)).format(date);
 }
 
 /** `n` in the current locale. */

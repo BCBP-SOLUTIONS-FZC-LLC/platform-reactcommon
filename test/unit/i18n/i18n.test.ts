@@ -232,6 +232,41 @@ describe('edge cases', () => {
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('failed to load for en: timeout'));
   });
 
+  it('a hung catalog does not hold setLocale: it counts as failed after 10 s (review: i18n timeouts)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      registerNamespace('hung', () => new Promise(() => {}));
+      registerNamespace('fine', async () => ({ hello: 'Hello' }));
+      const ready = initializeI18n({ defaultLocale: 'en', supported: ['en'], detect: () => 'en' });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await ready).toBe('en');
+      expect(t('fine', 'hello')).toBe('Hello');
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('"hung" failed to load for en: no answer within 10000 ms'));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a catalog that failed is tried again, so a transient failure does not show raw keys until a reload', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let calls = 0;
+      registerNamespace('flaky', async () => {
+        if (++calls === 1) throw new Error('503');
+        return { title: 'Tenders' };
+      });
+      await initializeI18n({ defaultLocale: 'en', supported: ['en'], detect: () => 'en' });
+      expect(t('flaky', 'title')).toBe('title');
+      const changed = vi.fn();
+      subscribeI18n(changed);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.waitFor(() => expect(t('flaky', 'title')).toBe('Tenders'));
+      expect(changed).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('warns only in local and dev environments', async () => {
     initializeCore({ serviceName: 'web-app', domain: 'tender_management', environment: 'prod' });
     registerNamespace('broken', async () => { throw new Error('404'); });

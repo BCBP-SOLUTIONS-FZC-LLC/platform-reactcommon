@@ -591,6 +591,19 @@ describe('MFEErrorBoundary', () => {
     expect(r.container.textContent).toBe('ok');
   });
 
+  it('moves focus to the fallback, so keyboard users are not left on <body> (review 2)', async () => {
+    function Child(): never {
+      throw new Error('boom');
+    }
+    const r = await render(
+      <MFEErrorBoundary mfe="tenders">
+        <Child />
+      </MFEErrorBoundary>,
+    );
+    await settle();
+    expect(document.activeElement).toBe(r.container.querySelector('[role=alert]'));
+  });
+
   it('a chunk-load error reloads the page once', async () => {
     const reload = vi.fn();
     vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
@@ -688,6 +701,30 @@ describe('installGlobalErrorHandlers', () => {
       { source: 'unhandled_error', mfe: 'shell' },
       { source: 'unhandled_rejection', mfe: 'shell' },
     ]);
+  });
+
+  it('rate-limits a storm of the same error, counts what it dropped, and still counts every one in the metric (review 2)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const off = installGlobalErrorHandlers();
+      const boom = () => {
+        const e = new Error('raf loop broke');
+        e.stack = 'Error: raf loop broke\n    at tick (https://app.example/assets/main.js:1:2)';
+        window.dispatchEvent(new ErrorEvent('error', { error: e, message: e.message }));
+      };
+      for (let i = 0; i < 500; i++) boom();
+      window.dispatchEvent(new ErrorEvent('error', { error: new Error('another bug'), message: 'another bug' }));
+      vi.setSystemTime(Date.now() + 60_000);
+      boom();
+      off();
+      await settle();
+      const uncaught = platform.logs.filter((l) => l.body === 'uncaught error');
+      expect(uncaught).toHaveLength(12); // 10 of the storm, the other bug, then one more a minute later
+      expect(uncaught.at(-1)!.attributes.suppressed).toBe(490);
+      expect(webErrors).toHaveLength(502);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

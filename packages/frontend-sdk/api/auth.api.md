@@ -29,6 +29,7 @@ export interface IdentityProvider {
     beforeRedirect(l: (r: {
         reason: 'step-up' | 'restore' | 'login' | 'switch';
     }) => void): () => void;
+    dispose?(): void;
     // (undocumented)
     getAccessToken(): Promise<string | undefined>;
     // (undocumented)

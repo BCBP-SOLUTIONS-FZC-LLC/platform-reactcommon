@@ -81,7 +81,7 @@ async function check(url: string): Promise<void> {
   if (globalThis.document?.visibilityState === 'hidden') return;
   let version: unknown;
   try {
-    const res = await fetch(url, { cache: 'no-cache', credentials: 'same-origin', headers: { accept: 'application/json' } });
+    const res = await fetch(url, { cache: 'no-cache', credentials: 'same-origin', headers: { accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
     if (!res.ok) return;
     version = ((await res.json()) as { version?: unknown })?.version;
   } catch {
@@ -113,6 +113,8 @@ async function check(url: string): Promise<void> {
 export function startVersionPolling(o?: { url?: string; intervalMs?: number }): () => void {
   const url = o?.url ?? '/version.json';
   const interval = o?.intervalMs ?? tryGetConfig()?.appUpdate.pollIntervalMs ?? 300_000;
+  // 0 or a typo would poll /version.json in a tight loop from every open tab.
+  if (!Number.isInteger(interval) || interval < 1_000) throw new RangeError(`intervalMs must be an integer of at least 1000, got ${String(interval)}`);
   void check(url);
   const timer = setInterval(() => void check(url), interval);
   const onVisible = () => {

@@ -104,6 +104,15 @@ export function useStepUp(): { needed: boolean; reauthenticate(): Promise<void> 
   useSession(); // re-evaluate after a new login
   const window = ctx?.mfaFreshnessSeconds;
   const needed = window !== undefined && identityProvider()?.needsStepUp(window) === true;
+  // The MFA window lapses while the page stays open: look again every 15 s until it has.
+  const [, recheck] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    if (window === undefined || needed) return undefined;
+    const timer = setInterval(() => {
+      if (identityProvider()?.needsStepUp(window) === true) recheck();
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [window, needed]);
   const reauthenticate = useCallback(async () => {
     const idp = identityProvider();
     if (!idp) throw new Error('useStepUp: no identity provider (initializeAuth has not run)');
