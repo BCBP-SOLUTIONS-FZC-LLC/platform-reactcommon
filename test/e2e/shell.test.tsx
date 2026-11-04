@@ -160,7 +160,7 @@ beforeEach(async () => {
   setMfeInternalsForTests({
     injectScript: async (url) => {
       injected.push(url);
-      (globalThis as Record<string, unknown>).tenders = { init: () => {}, get: (m: string) => exposeModule(m) };
+      (globalThis as Record<string, unknown>).__platform_mfe_tenders = { init: () => {}, get: (m: string) => exposeModule(m) };
     },
   });
   net
@@ -181,7 +181,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await unload();
   bootError = undefined;
-  delete (globalThis as Record<string, unknown>).tenders;
+  delete (globalThis as Record<string, unknown>).__platform_mfe_tenders;
   await endWorld();
 });
 
@@ -291,7 +291,7 @@ describe('the reference shell', () => {
     await approveLogin();
     await until(() => $('h1')?.textContent === 'acme');
     storage('tenders').set('filter', 'open');
-    expect(page.local.getItem('tenant-acme:tenders:filter')).not.toBeNull();
+    expect(page.local.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:filter')).not.toBeNull();
     const otherTab: unknown[] = [];
     new FakeBroadcastChannel('platform-auth').addEventListener('message', (e) => otherTab.push((e as MessageEvent).data));
 
@@ -302,7 +302,7 @@ describe('the reference shell', () => {
 
     expect(getSession()).toMatchObject({ status: 'anonymous', reason: 'signed-out' });
     expect(document.getElementById('root')!.childElementCount).toBe(0); // the app is unmounted, not hidden
-    expect(page.local.getItem('tenant-acme:tenders:filter')).toBeNull();
+    expect(page.local.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:filter')).toBeNull();
     expect(otherTab).toEqual([{ type: 'logout' }]);
     expect(JSON.stringify(FakeBroadcastChannel.sent)).not.toMatch(/at-|eyJ|refresh/);
     expect(page.storedValues()).not.toMatch(/at-|eyJ|refresh/);

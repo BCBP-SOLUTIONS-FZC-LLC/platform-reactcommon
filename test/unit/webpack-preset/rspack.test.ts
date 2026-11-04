@@ -48,9 +48,9 @@ function fakeSdk(root: string): void {
 }
 
 type Container = { init(scope: unknown): Promise<void> | void; get(m: string): Promise<() => { default: () => unknown }> };
-/** Runs a node-target remoteEntry.js and returns its container global. */
+/** Runs a node-target remoteEntry.js and returns the container global of the remote named `global`. */
 const loadContainer = (out: string, global: string): Container =>
-  new Function('require', '__dirname', `${readFileSync(join(out, 'remoteEntry.js'), 'utf8')}\nreturn ${global};`)(createRequire(join(out, 'remoteEntry.js')), out) as Container;
+  new Function('require', '__dirname', `${readFileSync(join(out, 'remoteEntry.js'), 'utf8')}\nreturn __platform_mfe_${global};`)(createRequire(join(out, 'remoteEntry.js')), out) as Container;
 
 type Scope = Record<string, Record<string, { get(): Promise<() => unknown>; from: string }>>;
 const g = globalThis as { __shellScope?: Promise<Scope>; __sdkEvaluated?: string[] };
@@ -70,8 +70,8 @@ describe('platformRspackConfig', () => {
 
   it('wires v1 Module Federation, the SDK provider (shell), the globalThis runtime and, in production, chunk integrity', () => {
     const names = (o: Parameters<typeof platformRspackConfig>[0]) => (platformRspackConfig(o).plugins ?? []).map((p) => (p as object).constructor.name);
-    expect(names({ role: 'shell', mode: 'production' })).toEqual(['ModuleFederationPluginV1', 'ProvideSdkRspackPlugin', 'GlobalThisOnlyPlugin', 'ChunkIntegrityPlugin']);
-    expect(names({ role: 'remote', name: 'tenders', mode: 'development' })).toEqual(['ModuleFederationPluginV1', 'GlobalThisOnlyPlugin']);
+    expect(names({ role: 'shell', mode: 'production' })).toEqual(['ModuleFederationPluginV1', 'ProvideSdkRspackPlugin', 'SdkVersionPlugin', 'GlobalThisOnlyPlugin', 'ChunkIntegrityPlugin']);
+    expect(names({ role: 'remote', name: 'tenders', mode: 'development' })).toEqual(['ModuleFederationPluginV1', 'SdkVersionPlugin', 'GlobalThisOnlyPlugin']);
   });
 
   it('refuses an unknown role, an unknown mode, and a remote without a valid name', () => {
@@ -82,6 +82,18 @@ describe('platformRspackConfig', () => {
 });
 
 describe('a real Rspack build', () => {
+  it('fails when the installed SDK is not the preset\'s version (review: preset/SDK version check)', async () => {
+    const root = mkdtempSync(join(dir, 'version-'));
+    const pkgDir = join(root, 'node_modules', '@bcbp-solutions-fzc-llc', 'frontend-sdk');
+    mkdirSync(pkgDir, { recursive: true });
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@bcbp-solutions-fzc-llc/frontend-sdk', version: '1.0.0-alpha.0' }));
+    writeFileSync(join(root, 'remote.js'), '// remote entry\n');
+    const preset = platformRspackConfig({ role: 'remote', name: 'skewed', exposes: { './X': './remote.js' }, mode: 'development' });
+    await expect(compile({ ...preset, context: root, entry: {}, output: { ...preset.output, path: join(root, 'dist') } })).rejects.toThrow(
+      `PlatformSdkVersionPlugin: @bcbp-solutions-fzc-llc/webpack-preset ${SDK_VERSION} needs @bcbp-solutions-fzc-llc/frontend-sdk ${SDK_VERSION}, but ${root} has 1.0.0-alpha.0`,
+    );
+  });
+
   it('a production remote: window.<containerName>, the platform-webpack policy, no eval or Function, no SDK, hidden maps', async () => {
     const root = mkdtempSync(join(dir, 'remote-'));
     writeFileSync(join(root, 'Edit.js'), "import { getLogger } from '@bcbp-solutions-fzc-llc/frontend-sdk/logging';\nexport default function Edit() { getLogger().info('edit'); return 'edit'; }\n");
@@ -89,7 +101,7 @@ describe('a real Rspack build', () => {
     const preset = platformRspackConfig({ role: 'remote', name: 'iam-admin', exposes: { './Edit': './Edit.js' }, mode: 'production' });
     await compile({ ...preset, context: root, entry: {}, output: { ...preset.output, path: out } });
     const entry = readFileSync(join(out, 'remoteEntry.js'), 'utf8');
-    expect(entry).toMatch(/\biam_admin\b/);
+    expect(entry).toMatch(/\b__platform_mfe_iam_admin\b/);
     expect(entry).toContain('platform-webpack');
     const all = readdirSync(out).filter((f) => f.endsWith('.js')).map((f) => readFileSync(join(out, f), 'utf8')).join('\n');
     expect(all).not.toMatch(/\beval\(|\bFunction\(/); // Rspack's own globalThis fallback is rewritten away
@@ -271,7 +283,7 @@ describe('Rsbuild: pluginPlatform', () => {
     writeFileSync(join(root, 'index.js'), '// standalone entry\n');
     const out = await build(root, pluginPlatform({ role: 'remote', name: 'rsb-remote', exposes: { './Edit': './Edit.js' } }), { index: './index.js' });
     const entry = readFileSync(join(out, 'remoteEntry.js'), 'utf8');
-    expect(entry).toMatch(/\brsb_remote\b/);
+    expect(entry).toMatch(/\b__platform_mfe_rsb_remote\b/);
     expect(entry).toContain('platform-webpack');
     expect(entry).toMatch(/sriHashes\s*=\s*\{"/);
     const js = readdirSync(out, { recursive: true }).map(String).filter((f) => f.endsWith('.js'));
@@ -302,7 +314,7 @@ describe('Rsbuild: pluginPlatform', () => {
     writeFileSync(join(root, 'index.js'), '// standalone entry\n');
     const out = await build(root, pluginPlatform({ role: 'remote', name: 'rsb-dev', exposes: { './Edit': './Edit.js' } }), { index: './index.js' }, { mode: 'development' });
     const entry = readFileSync(join(out, 'remoteEntry.js'), 'utf8');
-    expect(entry).toMatch(/\brsb_dev\b/);
+    expect(entry).toMatch(/\b__platform_mfe_rsb_dev\b/);
     expect(entry).not.toContain('sriHashes');
     expect(entry).not.toMatch(/\beval\(|\bFunction\(/);
   });

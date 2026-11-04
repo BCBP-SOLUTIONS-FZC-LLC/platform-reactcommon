@@ -38,7 +38,7 @@ Every API error is an RFC 9457 problem decoded as gincommon's client does (`cont
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:pending:<state>` | session | `/auth` (PKCE record, 10 min) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:restore-attempt` | session | `/auth` (loop guard) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:chunk-reload` | session | `/mfe` |
-| `<namespace>:<appId>:<key>` | both | `/storage` (cleared on sign-out) |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:storage:<namespace>:<appId>:<key>` | both | `/storage` (cleared on sign-out) |
 
 `BroadcastChannel('platform-auth')` carries only `{ type: 'logout' | 'workspace-switched' }`, never a token. Credential-like storage keys are refused (`ForbiddenStorageKeyError`).
 

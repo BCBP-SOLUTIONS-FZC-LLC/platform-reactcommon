@@ -65,6 +65,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const name of ['tenders', 'iam-admin']) delete (globalThis as Record<string, unknown>)[containerGlobal(name)];
   for (const name of ['tenders', 'iam_admin']) delete (globalThis as Record<string, unknown>)[name];
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -176,6 +177,23 @@ describe('loadRemote', () => {
     ]);
   });
 
+  it('loads the entry when an element id or browser global has the remote name (review: container global collisions)', async () => {
+    // <div id="tenders"> makes window.tenders an element; the container lives under its own prefix.
+    (globalThis as Record<string, unknown>).tenders = { nodeName: 'DIV' };
+    const c = install('tenders', { './X': 'x' });
+    expect(containerGlobal('tenders')).toBe('__platform_mfe_tenders');
+    expect(await loadRemote('tenders', './X')).toBe('x');
+    expect(injected).toEqual(['/remotes/tenders/1.4.0/remoteEntry.js']);
+    expect(c.init).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads the entry when something other than a container holds the container global', async () => {
+    (globalThis as Record<string, unknown>)[containerGlobal('tenders')] = { stale: true };
+    install('tenders', { './X': 'x' });
+    expect(await loadRemote('tenders', './X')).toBe('x');
+    expect(injected).toHaveLength(1);
+  });
+
   it('refuses a killed remote without loading it', async () => {
     resetRuntimeForTests();
     initializeCore({ serviceName: 'web-app', domain: 'tender_management', environment: 'dev' });
@@ -220,7 +238,7 @@ describe('loadRemote', () => {
     setMfeInternalsForTests({
       injectScript: async () => {
         if (n++ < 2) throw Object.assign(new Error('entry failed'), {});
-        (globalThis as Record<string, unknown>).tenders = c;
+        (globalThis as Record<string, unknown>).__platform_mfe_tenders = c;
       },
     });
     expect(await loadRemote('tenders', './Tender')).toBe('ok');
@@ -250,7 +268,7 @@ describe('loadRemote', () => {
     await expect(loadRemote('tenders', './Ok')).rejects.toThrow('failed to evaluate');
 
     resetContainersForTests();
-    delete (globalThis as Record<string, unknown>).tenders;
+    delete (globalThis as Record<string, unknown>).__platform_mfe_tenders;
     const clash = install('tenders', {});
     clash.init.mockRejectedValueOnce(new Error('Unsatisfied version 18.2.0 of shared singleton module react'));
     await expect(loadRemote('tenders', './X')).rejects.toThrow('share scope negotiation failed');
@@ -307,7 +325,7 @@ describe('the entry <script>', () => {
     expect(s.src).toEqual({ trusted: '/remotes/iam-admin/2.0.0/remoteEntry.js' });
     expect(s.integrity).toBe('sha384-abc+/=');
     expect(s.crossOrigin).toBe('anonymous');
-    (globalThis as Record<string, unknown>).iam_admin = fakeContainer({ './X': 'x' });
+    (globalThis as Record<string, unknown>).__platform_mfe_iam_admin = fakeContainer({ './X': 'x' });
     s.onload!();
     expect(await p).toBe('x');
   });
@@ -438,7 +456,7 @@ describe('loadRemote with a caller signal', () => {
 
   it('resolves normally when the signal never aborts', async () => {
     const c = fakeContainer({ './X': 'x' });
-    setMfeInternalsForTests({ injectScript: async () => void ((globalThis as Record<string, unknown>).tenders = c) });
+    setMfeInternalsForTests({ injectScript: async () => void ((globalThis as Record<string, unknown>).__platform_mfe_tenders = c) });
     expect(await loadRemote('tenders', './X', { signal: new AbortController().signal })).toBe('x');
     expect(metrics).toEqual([{ mfe: 'tenders', outcome: 'success' }]);
   });
@@ -453,7 +471,7 @@ describe('loadRemote with a caller signal', () => {
 
   it('rejects at once for an already-aborted signal, without retrying or logging', async () => {
     const c = fakeContainer({ './X': 'x' });
-    const injectScript = vi.fn(async () => void ((globalThis as Record<string, unknown>).tenders = c));
+    const injectScript = vi.fn(async () => void ((globalThis as Record<string, unknown>).__platform_mfe_tenders = c));
     setMfeInternalsForTests({ injectScript });
     const controller = new AbortController();
     controller.abort();
@@ -467,7 +485,7 @@ describe('loadRemote with a caller signal', () => {
   it('stops when the caller aborts while the module itself is loading', async () => {
     const c = fakeContainer({});
     c.get.mockImplementation(() => new Promise(() => {}));
-    setMfeInternalsForTests({ injectScript: async () => void ((globalThis as Record<string, unknown>).tenders = c) });
+    setMfeInternalsForTests({ injectScript: async () => void ((globalThis as Record<string, unknown>).__platform_mfe_tenders = c) });
     const controller = new AbortController();
     const p = loadRemote('tenders', './Slow', { signal: controller.signal });
     await vi.waitFor(() => expect(c.get).toHaveBeenCalled());

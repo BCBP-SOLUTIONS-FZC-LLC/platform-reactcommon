@@ -444,7 +444,7 @@ sequenceDiagram
         loop attempt ≤ 1 + retries (default 2), timeout per attempt (default 10 s)
             L->>L: entry still allowed? (checked again before the script)
             L->>DOM: {script src} via Trusted Types createScriptURL · integrity + crossorigin when SRI is set
-            DOM-->>C: remoteEntry.js defines window[name with '-' → '_']
+            DOM-->>C: remoteEntry.js defines window.__platform_mfe_<name, '-' → '_'>
             L->>C: init(share scope) — strictVersion clash → incompatible (no retry)
             L->>C: get('./Module') → factory()
         end

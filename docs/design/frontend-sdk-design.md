@@ -1029,7 +1029,7 @@ and the session context (IAM item A) may be missing:
 - No session yet, or a trial token without a valid `tenant_id`: `anon`. `set` on an `anon` store is a
   no-op that logs a dev warning, so nothing is written that a later tenant could read.
 
-`clearAllAppStorage()` removes every SDK-namespaced key (`<ns>:*`) in both areas. It does not remove the
+`clearAllAppStorage()` removes every /storage key (`@bcbp-solutions-fzc-llc/frontend-sdk:storage:*`) in both areas. It does not remove the
 SDK-reserved workspace cache (`cachedWorkspace`), which holds only slug, realm and the trial flag, and
 which the next login needs.
 

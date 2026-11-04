@@ -28,8 +28,11 @@ const ANON = 'anon';
 const APP_ID = /^[a-z][a-z0-9_-]{0,62}$/;
 const REALM = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** Keys this module writes: `<ns>:<appId>:<key>`, ns being anon, a realm or trial:<uuid>. */
-const SDK_KEY = /^(?:anon|[a-z0-9][a-z0-9-]{0,62}|trial:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):[a-z][a-z0-9_-]{0,62}:/;
+/**
+ * Keys this module writes: `@bcbp-solutions-fzc-llc/frontend-sdk:storage:<ns>:<appId>:<key>`, ns being a realm or
+ * trial:<uuid>. The prefix is the SDK's own, so clearAllAppStorage never removes a key other code wrote.
+ */
+const STORAGE_KEY_PREFIX = '@bcbp-solutions-fzc-llc/frontend-sdk:storage:';
 
 type Area = 'local' | 'session';
 // Used when the browser's storage is unavailable or full: keeps values for this page only.
@@ -72,7 +75,7 @@ export function storage(appId: string, o?: { area?: Area }): AppStorage {
   if (typeof appId !== 'string' || !APP_ID.test(appId)) throw new TypeError(`appId must match ${APP_ID.source}, got ${JSON.stringify(appId)}`);
   const area: Area = o?.area === 'session' ? 'session' : 'local';
   const ns = () => getRuntime().storageNamespace;
-  const fullKey = (key: string) => `${ns()}:${appId}:${key}`;
+  const fullKey = (key: string) => `${STORAGE_KEY_PREFIX}${ns()}:${appId}:${key}`;
 
   // The in-page copy first: it only exists while a write to browser storage failed, and it is
   // newer than whatever browser storage still holds (which a reload then falls back to).
@@ -139,7 +142,7 @@ export function storage(appId: string, o?: { area?: Area }): AppStorage {
       remove(fullKey(key));
     },
     clear(): void {
-      const prefix = `${ns()}:${appId}:`;
+      const prefix = `${STORAGE_KEY_PREFIX}${ns()}:${appId}:`;
       for (const k of [...memory[area].keys()]) if (k.startsWith(prefix)) memory[area].delete(k);
       const s = browserStorage(area);
       try {
@@ -168,7 +171,7 @@ export function clearAllAppStorage(): void {
       if (!s) continue;
       for (let i = s.length - 1; i >= 0; i--) {
         const k = s.key(i);
-        if (k !== null && SDK_KEY.test(k)) s.removeItem(k);
+        if (k?.startsWith(STORAGE_KEY_PREFIX)) s.removeItem(k);
       }
     } catch {
       // nothing to clear
