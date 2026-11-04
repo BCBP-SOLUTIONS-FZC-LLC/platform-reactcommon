@@ -289,6 +289,7 @@ describe('metrics: delta → cumulative, one series for every tab', () => {
       ['portal_web_app_clicks', LABELS], // no unit suffix
       ['Portal-Bad-Name', LABELS], // not a metric name
       ['platform_other_clicks_total', LABELS], // platform_* outside the browser's platform_web_*
+      ['platform_web_bomb_total', LABELS], // platform_web_* outside the Tier 1 proposal (review 2)
     ];
     for (const [name, labels] of minted) await post('metrics', delta(name, tab('x'), 1, -1, 0, labels));
     await post('metrics', delta('tender_management_web_app_saves_total', tab('x'), 1, -1, 0, { ...LABELS, domain: 'tender_management' }));
@@ -296,13 +297,29 @@ describe('metrics: delta → cumulative, one series for every tab', () => {
     for (const [name] of minted) expect(metricPoints(name), name).toEqual([]);
   });
 
-  it('keeps only the registry label keys: a made-up key is removed, the point kept (review 2)', async () => {
-    const name = 'portal_web_app_opens_total';
-    await post('metrics', delta(name, tab('x'), 1, -1, 0, { ...LABELS, operation: 'open', user_id: 'u-1', bomb_1: 'x' }));
-    await post('metrics', delta(name, tab('y'), 2, -1, 0, { ...LABELS, operation: 'open', user_id: 'u-2', bomb_2: 'y' }));
-    const points = await settled(name, 2);
-    expect(points.map((p) => p.labels)).toEqual([{ ...LABELS, operation: 'open' }, { ...LABELS, operation: 'open' }]);
+  it('a registered metric keeps only the registry and proposal label keys (review 2)', async () => {
+    const name = 'platform_web_vital_ratings_total';
+    const ok = { ...LABELS, vital: 'inp', rating: 'needs_improvement', page_route: '/t/:tenant', mfe: 'shell' };
+    await post('metrics', delta(name, tab('x'), 1, -1, 0, { ...ok, bomb_1: 'x' }));
+    await post('metrics', delta(name, tab('y'), 2, -1, 0, { ...ok, bomb_2: 'y' }));
+    await eventually(() => (metricPoints(name).filter((p) => p.labels.vital === 'inp').length >= 2 ? true : undefined), 'two inp points');
+    const points = metricPoints(name).filter((p) => p.labels.vital === 'inp');
+    expect(points.map((p) => p.labels)).toEqual([ok, ok]);
     expect(points.at(-1)!.value).toBe(3); // one series
+  });
+
+  it('a Tier 3 metric keeps its own snake_case keys, never a prohibited one, and at most 8 besides the const labels (review 2)', async () => {
+    const name = 'portal_web_app_opens_total';
+    await post('metrics', delta(name, tab('x'), 1, -1, 0, { ...LABELS, kind: 'draft', user_id: 'u-1', order_uuid: 'x', 'Bad-Key': 'y' }));
+    const [p] = await settled(name, 1);
+    expect(p!.labels).toEqual({ ...LABELS, kind: 'draft' });
+
+    const wide = 'portal_web_app_wide_total';
+    const extra = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`k${String(i).padStart(2, '0')}`, 'v']));
+    await post('metrics', delta(wide, tab('x'), 1, -1, 0, { ...LABELS, ...extra }));
+    const [w] = await settled(wide, 1);
+    expect(Object.keys(w!.labels)).toHaveLength(3 + 8);
+    expect(w!.labels).toMatchObject(LABELS);
   });
 
   it('records a page_route longer than 64 characters as unknown (review 2)', async () => {
@@ -329,14 +346,14 @@ describe('metrics: delta → cumulative, one series for every tab', () => {
     initializeCore({ serviceName: 'web_app', domain: 'portal', environment: ENVIRONMENT, buildVersion: '1.0.0' });
     setConsentProvider({ has: () => true, subscribe: () => () => {} });
     initializeMetrics({ otlpBaseUrl: '/otel' });
-    getServiceMeter().counter('portal_web_app_saves_total', 'Saves.', ['operation']).add(2, { operation: 'draft' });
+    getServiceMeter().counter('portal_web_app_saves_total', 'Saves.', ['kind']).add(2, { kind: 'draft' });
     getServiceMeter().histogram('portal_web_app_render_seconds', 'Render.', []).record(0.25);
     await shutdownMetrics();
     for (const rm of exporter.getMetrics()) await post('metrics', new TextDecoder().decode(JsonMetricsSerializer.serializeRequest(rm)!));
     resetRuntimeForTests();
 
     const [saves] = await settled('portal_web_app_saves_total', 1);
-    expect(saves).toMatchObject({ value: 2, temporality: 2, labels: { ...LABELS, operation: 'draft' } });
+    expect(saves).toMatchObject({ value: 2, temporality: 2, labels: { ...LABELS, kind: 'draft' } });
     const histogram = await eventually(
       () => aggregators.flatMap((a) => (lines(a, 'metrics') as unknown as MetricsBody[]).flatMap((b) => b.resourceMetrics.flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics)))).find((m) => m.name === 'portal_web_app_render_seconds')?.histogram,
       'the histogram',

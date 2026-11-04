@@ -38,8 +38,9 @@ The Collector runs as two tiers. The reference configuration is `examples/collec
 real Collector image by `pnpm test-collector` (CI job `collector`) and used by the integrated stack:
 - **gateway** (`gateway.yaml`, behind `/otel/*`, any number of replicas):
   - keeps only the SDK's resource attributes (`service.name`, `service.version`, `service.namespace`, `deployment.environment.name`), because anyone can POST to `/otel`: per-browser or made-up ones (`service.instance.id`, `browser.*`, `user_agent.*`, …) are removed;
-  - allowlists metric names (`platform_web_*` or a registered `<domain>_*` matching the `domain` label, with a unit suffix);
-  - allowlists label keys (the registry's and the Tier 1 proposal's; any other key is removed, so a Tier 3 metric's own label must be registered first) and label values (the registry vocabulary, this deployment's environment), records a `page_route` over 64 characters as `unknown`, and cuts any value at 128 characters;
+  - allowlists metric names (a Tier 1 name of the proposal, or a `<domain>_*` name matching the `domain` label, with a unit suffix);
+  - allowlists label keys: on a Tier 1 or Tier 2 metric the registry's and the Tier 1 proposal's; on a Tier 3 metric snake_case keys that are not prohibited, at most 8 besides `domain`, `service`, `environment`;
+  - allowlists label values (the registry vocabulary, this deployment's environment), records a `page_route` over 64 characters as `unknown`, and cuts any value at 128 characters;
   - routes every point of one metric stream to the same aggregator (`loadbalancing`, `routing_key: streamID`).
 - **aggregator** (`aggregator.yaml`): stamps each delta with the time it arrived, then converts delta to
   cumulative (`delta_to_cumulative`) for Mimir. The conversion keeps each stream's running total in one

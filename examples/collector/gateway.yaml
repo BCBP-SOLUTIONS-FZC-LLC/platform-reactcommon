@@ -7,22 +7,24 @@
 #     deployment.environment.name): anyone can POST to /otel, and a per-browser attribute
 #     (service.instance.id, browser.*, user_agent.*, or one a forger makes up) would make each tab its
 #     own series (target_info in Mimir);
-#   - allowlists metric NAMES (platform_web_* or a registered <domain>_*, the name's domain equal to its
-#     domain label, a _total/_seconds/_bytes suffix), so nobody can mint series in Mimir by POSTing
-#     made-up names, label VALUES (the registry vocabulary for domain, environment, page_route, mfe,
-#     vital, rating; this deployment's environment; any value cut at 128 characters) and label KEYS
-#     (the registry's labels and the Tier 1 proposal's: any other key is removed from the point);
+#   - allowlists metric NAMES (a Tier 1 name of the proposal, or a <domain>_* name with the name's domain
+#     equal to its domain label and a _total/_seconds/_bytes suffix), so nobody can mint series in Mimir
+#     by POSTing made-up names, and label VALUES (the registry vocabulary for domain, environment,
+#     page_route, mfe, vital, rating; this deployment's environment; any value cut at 128 characters);
+#   - bounds label KEYS: a registered metric (Tier 1 proposal, Tier 2 registry) keeps only the registry's
+#     and the proposal's label keys; a Tier 3 metric (<domain>_<service>_*, labels its own) keeps
+#     domain, service, environment and at most 8 other snake_case keys, never a prohibited one;
 #   - caps page_route at 64 characters: a longer value is recorded as unknown, as the SDK does with a
-#     value past its bound.
-#
-# These bound what one POST can add; they do not bound the product of allowed values. Set Mimir's
-# per-tenant series limits too (max_global_series_per_user, max_global_series_per_metric; README.md).
+#     value past its bound;
 #   - sends traces and logs on, and routes every metric point of one stream to the same aggregator
 #     (loadbalancing, routing_key streamID). delta_to_cumulative keeps each stream's running total in
 #     the memory of one Collector: two Collectors adding up the same stream would write two different
 #     totals for one series. aggregator.yaml is tier 2.
 #
-# The domain list and the label keys come from the metric registry (contracts/metric-registry.json) and
+# These bound what one POST can add; they do not bound the product of allowed values. Set Mimir's
+# per-tenant series limits too (max_global_series_per_user, max_global_series_per_metric; README.md).
+#
+# The domain list, the registered metric names and the label keys come from the metric registry (contracts/metric-registry.json) and
 # monitoring/registry/platform-web.proposal.json; examples/collector/test checks they are the registry's,
 # and test/collector runs both tiers in the real Collector image.
 #
@@ -72,6 +74,7 @@ processors:
     metrics:
       metric:
         - not IsMatch(name, "^(platform_web|iam|workflow|billing|tender_management|notifications|documents|bff|portal)_[a-z0-9_]+_(total|seconds|bytes)$")
+        - IsMatch(name, "^platform_web_") and not IsMatch(name, "^(platform_web_vitals_seconds|platform_web_vital_ratings_total|platform_web_http_client_duration_seconds|platform_web_http_client_failures_total|platform_web_remote_load_seconds|platform_web_remote_load_failures_total|platform_web_errors_total)$")
       datapoint:
         - attributes["environment"] != "${env:PLATFORM_ENVIRONMENT}"
         - not IsMatch(attributes["domain"], "^(iam|workflow|billing|tender_management|notifications|documents|bff|portal)$")
@@ -82,14 +85,20 @@ processors:
         - attributes["mfe"] != nil and not IsMatch(attributes["mfe"], "^[a-z][a-z0-9_-]{0,62}$")
         - attributes["page_route"] != nil and not IsMatch(attributes["page_route"], "^(unknown|/[A-Za-z0-9_./:*~-]*)$")
 
-  # After the allowlist: only the registry's label keys reach Mimir (a Tier 3 metric's own label must be
-  # registered first), and page_route is at most 64 characters of a template.
+  # After the allowlist, the label KEYS. A registered metric (Tier 1 proposal or Tier 2 registry name)
+  # keeps only the registry's and the proposal's keys. A Tier 3 metric (a service's own; the SDK lets it
+  # declare any snake_case label that is not prohibited) keeps snake_case keys that are not prohibited,
+  # then domain, service, environment and at most 8 others (limit: 11 with those 3 first); its values are
+  # cut at 128 characters by transform/browser-truncate. page_route is at most 64 characters of a template.
   transform/browser-labels:
     error_mode: ignore
     metric_statements:
       - context: datapoint
         statements:
-          - keep_keys(attributes, ["dependency", "domain", "environment", "error_class", "event_type", "grpc_code", "grpc_method", "label", "library", "library_version", "method", "mfe", "operation", "outcome", "page_route", "pool", "queue", "rating", "reason", "route", "service", "source", "state", "status_class", "strategy", "topic", "transport", "version", "violation_type", "vital"])
+          - keep_keys(attributes, ["dependency", "domain", "environment", "error_class", "event_type", "grpc_code", "grpc_method", "label", "library", "library_version", "method", "mfe", "operation", "outcome", "page_route", "pool", "queue", "rating", "reason", "route", "service", "source", "state", "status_class", "strategy", "topic", "transport", "version", "violation_type", "vital"]) where IsMatch(metric.name, "^(platform_web_vitals_seconds|platform_web_vital_ratings_total|platform_web_http_client_duration_seconds|platform_web_http_client_failures_total|platform_web_remote_load_seconds|platform_web_remote_load_failures_total|platform_web_errors_total|iam_auth_events_total|iam_tenant_resolution_total|iam_identity_sync_total|iam_realm_operations_total|iam_rls_violations_total|iam_auth_session_revoke_failed_total|iam_lifecycle_event_skipped_total|iam_lifecycle_event_lag_seconds)$")
+          - keep_matching_keys(attributes, "^[a-z][a-z0-9_]{0,63}$") where not IsMatch(metric.name, "^(platform_web_vitals_seconds|platform_web_vital_ratings_total|platform_web_http_client_duration_seconds|platform_web_http_client_failures_total|platform_web_remote_load_seconds|platform_web_remote_load_failures_total|platform_web_errors_total|iam_auth_events_total|iam_tenant_resolution_total|iam_identity_sync_total|iam_realm_operations_total|iam_rls_violations_total|iam_auth_session_revoke_failed_total|iam_lifecycle_event_skipped_total|iam_lifecycle_event_lag_seconds)$")
+          - delete_matching_keys(attributes, "^(user_id|email|tenant_id|request_id|event_id|session_id|trace_id|span_id|correlation_id|user|username|ip|client_ip|url|path|query|message_id|subject|actor)$|(_id|_email|_ip|_uuid|_token)$") where not IsMatch(metric.name, "^(platform_web_vitals_seconds|platform_web_vital_ratings_total|platform_web_http_client_duration_seconds|platform_web_http_client_failures_total|platform_web_remote_load_seconds|platform_web_remote_load_failures_total|platform_web_errors_total|iam_auth_events_total|iam_tenant_resolution_total|iam_identity_sync_total|iam_realm_operations_total|iam_rls_violations_total|iam_auth_session_revoke_failed_total|iam_lifecycle_event_skipped_total|iam_lifecycle_event_lag_seconds)$")
+          - limit(attributes, 11, ["domain", "service", "environment"]) where not IsMatch(metric.name, "^(platform_web_vitals_seconds|platform_web_vital_ratings_total|platform_web_http_client_duration_seconds|platform_web_http_client_failures_total|platform_web_remote_load_seconds|platform_web_remote_load_failures_total|platform_web_errors_total|iam_auth_events_total|iam_tenant_resolution_total|iam_identity_sync_total|iam_realm_operations_total|iam_rls_violations_total|iam_auth_session_revoke_failed_total|iam_lifecycle_event_skipped_total|iam_lifecycle_event_lag_seconds)$")
           - set(attributes["page_route"], "unknown") where attributes["page_route"] != nil and not IsMatch(attributes["page_route"], "^(unknown|/[A-Za-z0-9_./:*~-]{0,63})$")
 
   transform/browser-truncate:

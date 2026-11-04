@@ -20,14 +20,18 @@ what the SDK can send and nothing else:
 | What | Kept | Otherwise |
 |---|---|---|
 | Resource attributes (every signal) | `service.name`, `service.version`, `service.namespace`, `deployment.environment.name` | removed |
-| Metric names | `platform_web_*` or a registered `<domain>_*` matching the `domain` label, with a `_total` / `_seconds` / `_bytes` suffix | point dropped |
-| Label keys | the registry's labels (`contracts/metric-registry.json`) and the Tier 1 proposal's (`page_route`, `mfe`, `vital`, `rating`) | key removed |
+| Metric names | a Tier 1 name of the proposal (`platform_web_vitals_seconds`, …), or a `<domain>_*` name matching the `domain` label with a `_total` / `_seconds` / `_bytes` suffix | point dropped |
+| Label keys, Tier 1 and Tier 2 (the proposal's and the registry's metric names) | the registry's labels (`contracts/metric-registry.json`) and the Tier 1 proposal's (`page_route`, `mfe`, `vital`, `rating`) | key removed |
+| Label keys, Tier 3 (any other `<domain>_<service>_*`) | snake_case keys (≤ 64 characters) that are not prohibited (`user_id`, `email`, `*_id`, `*_token`, …: the registry's list); `domain`, `service`, `environment` and at most 8 others | key removed |
 | Label values | the registry vocabulary for `domain`, `vital`, `rating`; the patterns for `service`, `mfe`, `page_route`; this deployment's `environment` | point dropped |
 | `page_route` length | at most 64 characters | recorded as `unknown` |
 | Any label value | the first 128 characters | cut |
 
-A Tier 3 (service-owned) metric's own label keys reach Mimir only once they are in the registry: an
-unregistered key is removed at the gateway, and the points that differ only by it add up into one series.
+A Tier 3 (service-owned) metric declares its own labels, so the gateway keeps them, but bounds them: the
+SDK sets no limit on a Tier 3 metric's label count, so the gateway keeps at most 8 besides the const
+labels (with more, which 8 survive is arbitrary, so declare no more), and each value is cut at 128
+characters.
+The SDK itself bounds each Tier 3 label at 100 distinct values per page.
 
 ## Set Mimir's series limits too
 
