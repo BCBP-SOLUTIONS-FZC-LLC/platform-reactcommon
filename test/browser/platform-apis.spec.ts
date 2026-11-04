@@ -60,7 +60,7 @@ test('per-workspace storage written in one tab is read, and announced, in anothe
     browserName === 'webkit',
     "Playwright's WebKit dispatches no storage event between pages of one context (a plain localStorage.setItem in one page fires none in the other); Safari does",
   );
-  await expect.poll(() => b.evaluate(() => window.harness.storageEvents())).toContainEqual({ key: 'tenant-acme:harness:filters', newValue: '{"status":"open"}' });
+  await expect.poll(() => b.evaluate(() => window.harness.storageEvents())).toContainEqual({ key: '@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:harness:filters', newValue: '{"status":"open"}' });
 });
 
 test('crypto.subtle SHA-256 is available in the secure context (PKCE S256)', async ({ openHarness }) => {

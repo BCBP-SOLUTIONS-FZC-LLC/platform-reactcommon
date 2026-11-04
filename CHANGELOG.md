@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** a remote's container global is `__platform_mfe_<name>` (`-` as `_`), not the bare name. Browsers expose every element `id` as a `window` property, and `loadRemote` skipped the entry script whenever the global existed, so a remote named like an element on the page (`<div id="dashboard">`, the example shell's `root`) or a browser global (`history`, `status`, `name`) failed as `incompatible`. The SDK's `loadRemote` and the preset's `containerName` change together, and `loadRemote` now also loads the entry when the global holds something other than a container. **Upgrade:** rebuild every remote with the new preset and deploy the shell with the new SDK at the same time (a remote built with an older preset defines the old global, which the new SDK does not read). There is no opt-out.
+- **Breaking:** `/storage` keys are `@bcbp-solutions-fzc-llc/frontend-sdk:storage:<namespace>:<appId>:<key>`, the prefix the SDK's other keys use. `clearAllAppStorage()` (sign-out, workspace switch) removed every key shaped `<word>:<word>:…`, including keys other libraries wrote; it now removes only keys with this prefix. **Upgrade:** values saved under the old keys are not read; nothing is in production, so they are not migrated (a user sets the value again). There is no opt-out.
+
+### Added
+
+- `@bcbp-solutions-fzc-llc/webpack-preset`: `SdkVersionPlugin`, in every preset (webpack, `/rspack`, `/rsbuild`). A build fails when the SDK installed for the app is not the preset's own version: the preset's shared map and a remote's required range (`^<version>`) come from that SDK, so a mismatch declared one SDK and called another's exports. An app without the SDK installed is not checked.
+
 ## [1.0.0-alpha.3] - 2026-11-04
 
 ### Fixed

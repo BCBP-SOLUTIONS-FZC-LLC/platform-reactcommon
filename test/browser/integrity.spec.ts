@@ -29,7 +29,7 @@ async function loadTenders(page: Page, base: string): Promise<Loaded> {
       }).observe(document.documentElement, { childList: true, subtree: true });
       const w = window as unknown as {
         trustedTypes?: { createPolicy(n: string, r: { createScriptURL(u: string): string }): { createScriptURL(u: string): string } };
-        tenders?: { init(scope: unknown): Promise<void>; get(m: string): Promise<() => { default?: unknown }> };
+        __platform_mfe_tenders?: { init(scope: unknown): Promise<void>; get(m: string): Promise<() => { default?: unknown }> };
         __tampered?: boolean;
       };
       // The shell's script URL goes through a Trusted Types policy (require-trusted-types-for 'script').
@@ -45,9 +45,9 @@ async function loadTenders(page: Page, base: string): Promise<Loaded> {
       });
       // The shell's share scope: the SDK (the remote has no copy of it); React comes from the remote's fallback.
       const stub = () => Promise.resolve(() => ({}));
-      await w.tenders!.init(Object.fromEntries(shared.map((k) => [k, { [version]: { get: stub, loaded: 1, from: 'shell' } }])));
+      await w.__platform_mfe_tenders!.init(Object.fromEntries(shared.map((k) => [k, { [version]: { get: stub, loaded: 1, from: 'shell' } }])));
       try {
-        const factory = await w.tenders!.get('./EditTender');
+        const factory = await w.__platform_mfe_tenders!.get('./EditTender');
         return { ok: typeof factory().default === 'function', scripts, tampered: w.__tampered === true };
       } catch (e) {
         return { ok: false, error: String((e as Error).message ?? e), scripts, tampered: w.__tampered === true };

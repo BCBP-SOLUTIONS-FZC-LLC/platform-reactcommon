@@ -45,9 +45,17 @@ class AttemptError extends Error {
   }
 }
 
-/** The global a remote's container is exposed as: its name with '-' as '_' (webpack-preset uses the same rule). */
+/**
+ * The global a remote's container is exposed as: `__platform_mfe_` + its name with '-' as '_' (webpack-preset
+ * uses the same rule). The prefix keeps it clear of named-element globals (`<div id="dashboard">` is
+ * window.dashboard) and of browser globals such as `history` or `status`.
+ */
 export function containerGlobal(name: string): string {
-  return name.replace(/-/g, '_');
+  return `__platform_mfe_${name.replace(/-/g, '_')}`;
+}
+
+function isContainer(v: unknown): v is Container {
+  return typeof v === 'object' && v !== null && typeof (v as Container).get === 'function' && typeof (v as Container).init === 'function';
 }
 
 /** Adds the entry <script> and resolves when it has run. Test seam: replaced in unit tests. */
@@ -104,12 +112,13 @@ async function loadContainer(name: string, timeoutMs: number): Promise<Container
   // Checked again right before the <script> is created, whatever the manifest said.
   if (!isAllowedEntry(entry.entry)) throw new AttemptError('network', `entry ${entry.entry} is not an allowed origin`);
   const global = containerGlobal(name);
-  let container = (globalThis as Record<string, unknown>)[global] as Container | undefined;
-  if (!container) {
+  // Reused only when it is a container: anything else under that name does not stop the entry loading.
+  let container: unknown = (globalThis as Record<string, unknown>)[global];
+  if (!isContainer(container)) {
     await injectScript(entry.entry, entry.integrity, timeoutMs);
-    container = (globalThis as Record<string, unknown>)[global] as Container | undefined;
+    container = (globalThis as Record<string, unknown>)[global];
   }
-  if (!container || typeof container.get !== 'function' || typeof container.init !== 'function') {
+  if (!isContainer(container)) {
     throw new AttemptError('incompatible', `entry did not define the container global "${global}"`);
   }
   try {

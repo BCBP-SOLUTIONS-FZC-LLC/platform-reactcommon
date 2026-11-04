@@ -79,14 +79,14 @@ export const SHARED_SDK_SUBPATHS: readonly string[] = SDK_SUBPATHS.filter((s) =>
 const NAME = /^[a-z][a-z0-9_-]{0,62}$/;
 
 /**
- * The global a remote's container is exposed as: its name with '-' as '_' (a valid identifier). The SDK's
- * loadRemote looks it up with the same rule.
+ * The global a remote's container is exposed as: `__platform_mfe_` + its name with '-' as '_' (a valid
+ * identifier that no element id or browser global shadows). The SDK's loadRemote looks it up with the same rule.
  */
 export function containerName(remote: string): string {
   if (typeof remote !== 'string' || !NAME.test(remote) || remote === 'shell') {
     throw new TypeError(`remote name must match ${NAME.source} and not be 'shell', got ${JSON.stringify(remote)}`);
   }
-  return remote.replace(/-/g, '_');
+  return `__platform_mfe_${remote.replace(/-/g, '_')}`;
 }
 
 export interface PresetOptions {

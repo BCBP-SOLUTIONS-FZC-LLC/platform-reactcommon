@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import webpack from 'webpack';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { containerGlobal } from '../../../packages/frontend-sdk/src/mfe/remote.ts';
-import { ChunkIntegrityPlugin, containerName, integrityOf, MISSING_INTEGRITY, platformShared, platformWebpackConfig, ProvideSdkPlugin, sharedFor } from '../../../packages/webpack-preset/src/index.ts';
+import { ChunkIntegrityPlugin, containerName, integrityOf, MISSING_INTEGRITY, platformShared, platformWebpackConfig, ProvideSdkPlugin, SdkVersionPlugin, sharedFor } from '../../../packages/webpack-preset/src/index.ts';
+import { installedSdkVersion } from '../../../packages/webpack-preset/src/sdk-version.ts';
 import { SDK_SHARE_RANGE, SDK_SUBPATHS, SDK_VERSION } from '../../../packages/webpack-preset/src/generated/sdk.ts';
 
 const require = createRequire(import.meta.url);
@@ -104,7 +105,7 @@ describe('sharedFor', () => {
 describe('containerName', () => {
   it.each(['tenders', 'iam-admin', 'a-b-c', 'x_y'])('%s matches the SDK loadRemote rule', (name) => {
     expect(containerName(name)).toBe(containerGlobal(name));
-    expect(containerName(name)).toMatch(/^[a-z][a-z0-9_]*$/);
+    expect(containerName(name)).toMatch(/^__platform_mfe_[a-z][a-z0-9_]*$/);
   });
 
   it.each(['shell', 'Tenders', '9lives', '', 'a/b'])('refuses %j', (name) => {
@@ -152,20 +153,22 @@ describe('platformWebpackConfig', () => {
     expect(shell.plugins![0]).toBeInstanceOf(webpack.container.ModuleFederationPlugin);
     expect(mfOptions(shell)).toEqual({ name: 'shell', shared: sharedFor('shell') });
     expect(shell.plugins![1]).toBeInstanceOf(ProvideSdkPlugin);
-    expect(shell.plugins![2]).toBeInstanceOf(ChunkIntegrityPlugin); // production: integrity on lazy chunks
-    expect(shell.plugins).toHaveLength(3);
+    expect(shell.plugins![2]).toBeInstanceOf(SdkVersionPlugin);
+    expect(shell.plugins![3]).toBeInstanceOf(ChunkIntegrityPlugin); // production: integrity on lazy chunks
+    expect(shell.plugins).toHaveLength(4);
     const remote = platformWebpackConfig({ role: 'remote', name: 'iam-admin', mode: 'development' });
     expect(mfOptions(remote)).toEqual({
-      name: 'iam_admin',
-      library: { type: 'var', name: 'iam_admin' },
+      name: '__platform_mfe_iam_admin',
+      library: { type: 'var', name: '__platform_mfe_iam_admin' },
       filename: 'remoteEntry.js',
       exposes: {},
       shared: sharedFor('remote'),
     });
-    expect(remote.output?.uniqueName).toBe('iam_admin');
-    expect(remote.plugins).toHaveLength(1); // a remote provides no SDK; development: no integrity
+    expect(remote.output?.uniqueName).toBe('__platform_mfe_iam_admin');
+    expect(remote.plugins!.map((p) => p?.constructor)).toEqual([webpack.container.ModuleFederationPlugin, SdkVersionPlugin]); // a remote provides no SDK; development: no integrity
     expect(platformWebpackConfig({ role: 'remote', name: 'iam-admin', mode: 'production' }).plugins!.map((p) => p?.constructor)).toEqual([
       webpack.container.ModuleFederationPlugin,
+      SdkVersionPlugin,
       ChunkIntegrityPlugin,
     ]);
   });
@@ -210,7 +213,7 @@ describe('a real build', () => {
     const preset = platformWebpackConfig({ role: 'remote', name: 'iam-admin', exposes: { './Edit': './Edit.js' }, mode: 'production' });
     await compile({ ...preset, context: dir, entry: { main: './remote.js' }, output: { ...preset.output, path: out } });
     const entry = readFileSync(join(out, 'remoteEntry.js'), 'utf8');
-    expect(entry).toMatch(/\biam_admin\b/);
+    expect(entry).toMatch(/\b__platform_mfe_iam_admin\b/);
     expect(entry).toContain('platform-webpack');
     const all = readdirSync(out)
       .filter((f) => f.endsWith('.js'))
@@ -232,7 +235,7 @@ describe('a real build', () => {
     await compile({ ...preset, target: 'node', devtool: false, context: dir, entry: { main: './negotiate.js' }, output: { ...preset.output, path: out } });
     const nodeRequire = createRequire(join(out, 'remoteEntry.js'));
     const load = () =>
-      new Function('require', '__dirname', `${readFileSync(join(out, 'remoteEntry.js'), 'utf8')}\nreturn negotiate;`)(nodeRequire, out) as {
+      new Function('require', '__dirname', `${readFileSync(join(out, 'remoteEntry.js'), 'utf8')}\nreturn __platform_mfe_negotiate;`)(nodeRequire, out) as {
         init(scope: unknown): Promise<void> | void;
         get(m: string): Promise<() => { default: () => unknown }>;
       };
@@ -258,12 +261,12 @@ describe('a real build', () => {
   });
 
   /** A stand-in @bcbp-solutions-fzc-llc/frontend-sdk under `root`: each subpath records in globalThis.__sdkEvaluated that it ran. */
-  function fakeSdk(root: string): void {
+  function fakeSdk(root: string, version = SDK_VERSION): void {
     const pkgDir = join(root, 'node_modules', '@bcbp-solutions-fzc-llc', 'frontend-sdk');
     mkdirSync(pkgDir, { recursive: true });
     const subpaths = SDK_SUBPATHS.filter((s) => s !== 'testing');
     const exports = Object.fromEntries(subpaths.map((s) => [`./${s}`, { import: `./${s}.js` }]));
-    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@bcbp-solutions-fzc-llc/frontend-sdk', version: SDK_VERSION, type: 'module', sideEffects: true, exports }));
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@bcbp-solutions-fzc-llc/frontend-sdk', version, type: 'module', sideEffects: true, exports }));
     for (const s of subpaths) writeFileSync(join(pkgDir, `${s}.js`), `(globalThis.__sdkEvaluated ??= []).push('${s}');\nexport const subpath = '${s}';\n`);
   }
 
@@ -285,7 +288,7 @@ describe('a real build', () => {
       resolve: { modules: [join(import.meta.dirname, '../../../node_modules'), 'node_modules'] },
     });
     const load = () =>
-      new Function('require', '__dirname', `${readFileSync(join(out, 'remoteEntry.js'), 'utf8')}\nreturn react_remote;`)(createRequire(join(out, 'remoteEntry.js')), out) as {
+      new Function('require', '__dirname', `${readFileSync(join(out, 'remoteEntry.js'), 'utf8')}\nreturn __platform_mfe_react_remote;`)(createRequire(join(out, 'remoteEntry.js')), out) as {
         init(scope: unknown): Promise<void> | void;
         get(m: string): Promise<() => { default: () => string }>;
       };
@@ -318,6 +321,24 @@ describe('a real build', () => {
     expect(readFileSync(join(out, 'assets', 'main.js'), 'utf8')).not.toMatch(/\beval\(/);
   });
 
+  it('fails a build whose installed SDK is not the preset\'s version (review: preset/SDK version check)', async () => {
+    const root = mkdtempSync(join(dir, 'version-'));
+    fakeSdk(root, '1.0.0-alpha.0');
+    writeFileSync(join(root, 'remote.js'), '// remote entry\n');
+    const preset = platformWebpackConfig({ role: 'remote', name: 'skewed', exposes: { './X': './remote.js' }, mode: 'development' });
+    await expect(compile({ ...preset, target: 'node', devtool: false, context: root, entry: { main: './remote.js' }, output: { ...preset.output, path: join(root, 'dist') } })).rejects.toThrow(
+      `PlatformSdkVersionPlugin: @bcbp-solutions-fzc-llc/webpack-preset ${SDK_VERSION} needs @bcbp-solutions-fzc-llc/frontend-sdk ${SDK_VERSION}, but ${root} has 1.0.0-alpha.0`,
+    );
+  });
+
+  it('finds the installed SDK as Node does, from a nested context, and nothing where none is installed', () => {
+    const root = mkdtempSync(join(dir, 'lookup-'));
+    fakeSdk(root);
+    mkdirSync(join(root, 'src', 'app'), { recursive: true });
+    expect(installedSdkVersion(join(root, 'src', 'app'))).toBe(SDK_VERSION);
+    expect(installedSdkVersion(mkdtempSync(join(tmpdir(), 'no-sdk-')))).toBeUndefined();
+  });
+
   it('the shell provides every SDK subpath, imported or not, and a remote consumes one the shell never imports', async () => {
     // docs/e2e report, Issue 2: webpack provides a shared request only when the bundle imports it, and a
     // remote's SDK has no fallback (import: false). This shell imports only /logging; the remote uses /problem.
@@ -347,7 +368,7 @@ describe('a real build', () => {
     const remoteOut = join(root, 'remote-dist');
     const remotePreset = platformWebpackConfig({ role: 'remote', name: 'uses-problem', exposes: { './Uses': './Uses.js' }, mode: 'development' });
     await compile({ ...remotePreset, target: 'node', devtool: false, context: root, entry: { main: './remote.js' }, output: { ...remotePreset.output, path: remoteOut } });
-    const container = new Function('require', '__dirname', `${readFileSync(join(remoteOut, 'remoteEntry.js'), 'utf8')}\nreturn uses_problem;`)(
+    const container = new Function('require', '__dirname', `${readFileSync(join(remoteOut, 'remoteEntry.js'), 'utf8')}\nreturn __platform_mfe_uses_problem;`)(
       createRequire(join(remoteOut, 'remoteEntry.js')),
       remoteOut,
     ) as { init(scope: unknown): Promise<void> | void; get(m: string): Promise<() => { default: () => unknown }> };

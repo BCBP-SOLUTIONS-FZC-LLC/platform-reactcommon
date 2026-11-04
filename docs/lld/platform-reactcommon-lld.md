@@ -207,12 +207,12 @@ SessionState  = loading
 
 ### 4.4 Storage namespaces (`/storage`)
 
-Keys are `<namespace>:<appId>:<key>`. The namespace (set by `/auth` at login, on the runtime) is:
+Keys are `@bcbp-solutions-fzc-llc/frontend-sdk:storage:<namespace>:<appId>:<key>` (the prefix the SDK's other keys use). The namespace (set by `/auth` at login, on the runtime) is:
 - the realm, for a paid workspace;
 - `trial:<tenant_id>`, for the shared trial realm;
 - `anon`, when there is no session, or for a trial token without a valid `tenant_id`.
 
-`set` in `anon` is a no-op with a dev warning. Keys that look like credentials (`isSensitiveKey`: the redaction contract's key list, substrings and `*_key`) throw `ForbiddenStorageKeyError`. Storage that is unavailable or full falls back to an in-page map. `clearAllAppStorage()` removes every SDK-namespaced key in both areas, and keeps the SDK-reserved keys (session id, workspace cache, auth marks).
+`set` in `anon` is a no-op with a dev warning. Keys that look like credentials (`isSensitiveKey`: the redaction contract's key list, substrings and `*_key`) throw `ForbiddenStorageKeyError`. Storage that is unavailable or full falls back to an in-page map. `clearAllAppStorage()` removes every key with that prefix in both areas (never another library's keys), and keeps the SDK-reserved keys (session id, workspace cache, auth marks).
 
 ### 4.5 Problem model (`/problem`)
 
@@ -689,7 +689,7 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:pending:<state>` | session | `/auth` |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:restore-attempt` | session | `/auth` (loop guard) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:chunk-reload` | session | `/mfe` |
-| `<namespace>:<appId>:<key>` | both | `/storage` (cleared by `clearAllAppStorage`) |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:storage:<namespace>:<appId>:<key>` | both | `/storage` (cleared by `clearAllAppStorage`) |
 
 ---
 
@@ -701,7 +701,8 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 |---|---|
 | `platformShared` | `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, `react-dom`, `react-dom/client` (pins from the preset's `package.json`, equal to the SDK's peer ranges), `@opentelemetry/api` `~1.10.0`, `@bcbp-solutions-fzc-llc/frontend-sdk` and every subpath except `/testing` under `^<major>.0.0-0`: all `singleton`, `strictVersion` |
 | `sharedFor('shell' \| 'remote')` | shell: `eager: false`; remote: the SDK with `import: false` and `requiredVersion: ^<the SDK version it was built against>` |
-| `containerName(remote)` | name with `-` → `_`; refuses `shell` and invalid names (the same rule as `loadRemote`) |
+| `containerName(remote)` | `__platform_mfe_` + the name with `-` → `_` (no element id or browser global shadows it); refuses `shell` and invalid names (the same rule as `loadRemote`) |
+| `SdkVersionPlugin` | in every preset (webpack, `/rspack`, `/rsbuild`): fails the build when the SDK installed for the app (found as Node finds it, from the build context) is not the preset's version; no SDK installed, no check |
 | `platformWebpackConfig({ role, name?, exposes?, mode })` | Module Federation plugin (remote: `var` library named `containerName`, `remoteEntry.js`); shell: `publicPath: '/'` and bundles under `assets/` (index.html is served for every deep link, so its scripts load from the root; `/assets/*` is the immutable behavior), remote: `publicPath: 'auto'` (chunks relative to its `remoteEntry.js`); content hashes in production; `trustedTypes: { policyName: 'platform-webpack' }`; `crossOriginLoading: 'anonymous'`; `environment.globalThis: true`; in production `ChunkIntegrityPlugin` (sha384 for every lazy chunk, fail-closed; the HTML's scripts pinned); devtool `hidden-source-map` (production) / `cheap-module-source-map`, never eval |
 | `/rspack`: `platformRspackConfig(options)` | The same mode, devtool, output and ids as `platformWebpackConfig` (tested equal), with Rspack's `ModuleFederationPluginV1` (the webpack-compatible container and share-scope protocol; Rspack's default plugin is the v2 runtime, which webpack builds and `loadRemote` don't speak), `ProvideSdkRspackPlugin` (shell; resolves each subpath with Rspack's resolver when applied, as its sharing plugins are native), `GlobalThisOnlyPlugin` (rewrites Rspack's global-object runtime to `globalThis`; Rspack keeps a `Function('return this')` fallback whatever `environment.globalThis` says), and the same `ChunkIntegrityPlugin` in production (its script hook comes from Rspack's `RuntimePlugin`) |
 | `/rsbuild`: `pluginPlatform({ role, name?, exposes? })`, `PlatformPluginOptions`, `PLUGIN_PLATFORM_NAME` (`'platform-preset'`) | An Rsbuild plugin: the Rspack preset, built with the Rspack `@rsbuild/core` bundles, merged into Rsbuild's Rspack config with Rsbuild's mode; `output.environment` keeps Rsbuild's flags plus `globalThis`; `output.assetPrefix` `/` (shell) or `auto` (remote); the preset's file names and devtool win over Rsbuild's defaults. It refuses Rsbuild's own `moduleFederation` option (the v2 protocol) |
