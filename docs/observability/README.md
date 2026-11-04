@@ -37,9 +37,10 @@ from the last interval it sent (1–8 KiB), because metrics are collected asynch
 The Collector runs as two tiers. The reference configuration is `examples/collector`, tested in the
 real Collector image by `pnpm test-collector` (CI job `collector`) and used by the integrated stack:
 - **gateway** (`gateway.yaml`, behind `/otel/*`, any number of replicas):
-  - drops per-browser resource attributes (`service.instance.id`, `browser.*`, `user_agent.*`), because anyone can POST to `/otel`;
-  - allowlists metric names (`platform_web_*` or a registered `<domain>_*` matching the `domain` label, with a unit suffix);
-  - allowlists label values (the registry vocabulary, this deployment's environment) and cuts any value at 128 characters;
+  - keeps only the SDK's resource attributes (`service.name`, `service.version`, `service.namespace`, `deployment.environment.name`), because anyone can POST to `/otel`: per-browser or made-up ones (`service.instance.id`, `browser.*`, `user_agent.*`, …) are removed;
+  - allowlists metric names (a Tier 1 name of the proposal, or a `<domain>_*` name matching the `domain` label, with a unit suffix);
+  - allowlists label keys: on a Tier 1 or Tier 2 metric the registry's and the Tier 1 proposal's; on a Tier 3 metric snake_case keys that are not prohibited, at most 8 besides `domain`, `service`, `environment`;
+  - allowlists label values (the registry vocabulary, this deployment's environment), records a `page_route` over 64 characters as `unknown`, and cuts any value at 128 characters;
   - routes every point of one metric stream to the same aggregator (`loadbalancing`, `routing_key: streamID`).
 - **aggregator** (`aggregator.yaml`): stamps each delta with the time it arrived, then converts delta to
   cumulative (`delta_to_cumulative`) for Mimir. The conversion keeps each stream's running total in one
@@ -48,6 +49,8 @@ real Collector image by `pnpm test-collector` (CI job `collector`) and used by t
   or a late beacon had its points dropped silently.
 - `examples/collector/test` keeps the gateway's allowlists equal to the metric registry: a domain added
   there must reach the gateway too.
+- The allowlists bound what one request adds, not the product of allowed values: set Mimir's per-tenant
+  series limits as well (`examples/collector/README.md`).
 
 ## Identity
 

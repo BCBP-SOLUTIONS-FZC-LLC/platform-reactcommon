@@ -23,7 +23,7 @@ Every API error is an RFC 9457 problem decoded as gincommon's client does (`cont
 ## Identity Provider (Keycloak)
 
 - Issuer per realm: `<authOrigin>/realms/<realm>`; client `tender-web` (public, PKCE S256); the SDK asks for `auth.scopes` from `runtime.json` (default `['openid']`; must include `openid`). Name and email come from the **ID token** (realm-provisioner #49: access tokens carry no name or email; they keep `sub`, `aud`, `tenant_id`, `auth_time`).
-- End-session: `/protocol/openid-connect/logout?id_token_hint&client_id&post_logout_redirect_uri=<origin>/` (registered as `<origin>/*`).
+- End-session: form POST to `/protocol/openid-connect/logout` with `id_token_hint`, `client_id`, `post_logout_redirect_uri=<origin>/` (registered as `<origin>/*`); CSP `form-action` lists the IdP origin.
 - IAM ports used by the shell: PUB-1 `GET /api/v1/public/tenants/resolve?identifier=` (no auth), P-35 `GET /api/v1/me/session-context` (cases in `contracts/tenant-resolve-cases.json`, `session-context-cases.json`).
 
 ## Browser Storage and Channel
@@ -31,6 +31,7 @@ Every API error is an RFC 9457 problem decoded as gincommon's client does (`cont
 | Key | Area | Owner |
 |---|---|---|
 | `@bcbp-solutions-fzc-llc/frontend-sdk:session-id` | local | `/core` |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:session-started` | local | `/core` (the session id's start; a new id after 24 h) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:workspaces` | local | `/auth` (workspace cache) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:signed-out` | local | `/auth` (no silent sign-in; next login `prompt=login`) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-activity` | local | `/auth` (cross-tab idle) |
@@ -53,7 +54,7 @@ Every API error is an RFC 9457 problem decoded as gincommon's client does (`cont
 - Log envelope: `trace_id`, `span_id`, `request_id`, `session_id`, `mfe`, `page_route`; redaction as gincommon (sensitive keys, JWT/Bearer, URL query). Event catalogue: LLD §11.1.
 - Metrics: **delta** temporality; const labels `domain`, `service`, `environment`; names `<domain>_*` (Tier 2, registry), `<domain>_<service>_*` (Tier 3), `platform_web_*` (Tier 1, proposed, not emitted yet). Registry: `contracts/metric-registry.json`; Tier 1 proposal: `monitoring/registry/platform-web.proposal.json`.
 - On hide/close: `sendBeacon` / fetch `keepalive` within one 60 KiB page budget (LLD §7.5).
-- The reference Collector (`examples/collector`) accepts only `platform_web_*` or a registered `<domain>_*` name matching the `domain` label with a `_total`/`_seconds`/`_bytes` suffix, and label values from the registry and the proposal; `examples/collector/test` keeps those lists equal to the registry.
+- The reference Collector (`examples/collector`) accepts only the proposal's `platform_web_*` names or a `<domain>_*` name matching the `domain` label with a `_total`/`_seconds`/`_bytes` suffix; label keys from the registry and the proposal on Tier 1 and Tier 2 metrics, and on Tier 3 metrics snake_case keys that are not prohibited, at most 8 besides the const labels; label values from the registry and the proposal, and `page_route` up to 64 characters (longer → `unknown`); it keeps only the four resource attributes above. `examples/collector/test` keeps those lists equal to the registry. Mimir's per-tenant series limits are the backstop (`examples/collector/README.md`).
 
 ## CSP
 

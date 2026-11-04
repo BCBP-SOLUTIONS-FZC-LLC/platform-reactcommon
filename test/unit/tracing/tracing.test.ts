@@ -661,6 +661,13 @@ describe('spans', () => {
     expect(span.events[0]!.attributes).toMatchObject({ 'exception.message': 'token [REDACTED] rejected' });
   });
 
+  it('clean span names as attribute values are (review 2)', async () => {
+    start();
+    getTracer('t').startSpan('GET https://api.example/x?token=abc\u0000').end();
+    await shutdownTracing();
+    expect(spans()[0]!.name).toBe('GET https://api.example/x');
+  });
+
   it('remove URL query strings and fragments from attribute values and error messages, as logs do (review: redaction)', async () => {
     start();
     const s = getTracer('t').startSpan('op', { link: 'https://s3.example/o?X-Amz-Signature=zz' });

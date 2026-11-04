@@ -9,7 +9,7 @@ The flows a change most often touches, in order. Authoritative detail: [LLD §8]
 3. `initializeTracing`, `initializeLogging`, `initializeMetrics` (all to `cfg.telemetry.otlpBaseUrl`, same origin), `installGlobalErrorHandlers()`, `startWebVitals()`, `setFlagProvider(runtimeConfigFlagProvider())`.
 4. `createOidcProvider(cfg.auth, workspaceResolver)` → `setTokenSource(initializeAuth(idp))` → `await idp.init()`. `init()` may redirect once (`prompt=none`) and never settle.
 5. Anonymous: choose a workspace and `idp.login(...)`, unless the reason is `signed-out` (show "You are signed out") or `device-clock` (show "Check your device's clock"): never an automatic login there.
-6. Authenticated: P-35 session context → `setAuthorizer`, `setAuthzSubject`, session flags; `rememberWorkspace`; `initializeI18n`; `loadManifest`; `startVersionPolling`; render `<PlatformProvider shell={{ …, signOut: (o) => idp.logout(o) }}>`.
+6. Authenticated: P-35 session context → `setAuthorizer`, `setAuthzSubject`, session flags; `rememberWorkspace`; `initializeI18n`; `loadManifest`; `startVersionPolling`; render `<ShellRoot>` (a `PlatformProvider` whose `locale` follows `setLocale` and whose `context` follows the session-context store; `signOut: (o) => idp.logout(o)`). If P-35 failed, the page renders deny-all and retries a transient failure (network, timeout, 429, 5xx) 3 times after 1 s, 2 s, 4 s; on success it sets the subject, flags and workspace and re-renders. A sign-out stops the retries.
 7. On `anonymous / signed-out` later (here or another tab): unmount the app, show the signed-out screen.
 
 ## Sign-in (Authorization Code + PKCE S256)
@@ -24,7 +24,7 @@ The flows a change most often touches, in order. Authoritative detail: [LLD §8]
 
 ## Sign-out (global by default)
 
-`logout(o?)` / the shell's `signOut` / `useSignOut()`: drop tokens, `clearAllAppStorage()`, rotate the session id, set the signed-out mark, broadcast `{ type: 'logout' }`, move to `anonymous { signed-out }`; then, **unless `{ global: false }`**, assign the realm's end-session URL (`id_token_hint`, `client_id`, `post_logout_redirect_uri=<origin>/`). Other tabs follow the broadcast. `switchWorkspace(w)` is a local sign-out of the realm, then `login(w)`.
+`logout(o?)` / the shell's `signOut` / `useSignOut()`: drop tokens, `clearAllAppStorage()`, rotate the session id, set the signed-out mark, broadcast `{ type: 'logout' }`, move to `anonymous { signed-out }`; then, **unless `{ global: false }`**, a form POST to the realm's end-session endpoint (`id_token_hint`, `client_id`, `post_logout_redirect_uri=<origin>/` in the body, never the URL). Other tabs follow the broadcast, expired and loading ones included. `switchWorkspace(w)` is a local sign-out of the realm, then `login(w)`.
 
 ## API Call (`createApiClient`)
 

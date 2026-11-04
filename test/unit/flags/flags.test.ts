@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeConfigSchema, setRuntimeConfig } from '../../../packages/frontend-sdk/src/config/index.ts';
 import {
   getFlag,
@@ -100,5 +100,20 @@ describe('isRemoteKilled', () => {
 
   it('is false without a config', () => {
     expect(isRemoteKilled('tenders')).toBe(false);
+  });
+});
+
+describe('setFlagProvider', () => {
+  it('stops the previous provider\'s subscription, even one a second SDK copy set (review: module state)', async () => {
+    const stopped: string[] = [];
+    const watched = (name: string) => ({ get: () => undefined, subscribe: () => () => void stopped.push(name) });
+    setFlagProvider(watched('first'));
+    // A second SDK copy has its own module state; what it shares is the runtime.
+    vi.resetModules();
+    const copy = await import('../../../packages/frontend-sdk/src/flags/index.ts');
+    copy.setFlagProvider(watched('second'));
+    expect(stopped).toEqual(['first']);
+    setFlagProvider(watched('third'));
+    expect(stopped).toEqual(['first', 'second']);
   });
 });

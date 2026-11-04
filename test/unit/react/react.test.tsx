@@ -35,6 +35,7 @@ import {
   type ShellContextValue,
 } from '../../../packages/frontend-sdk/src/react/index.ts';
 import { createTestPlatform, mockApi, mockProblem } from '../../../packages/frontend-sdk/src/testing/index.ts';
+import { reloadOnceForChunkError } from '../../../packages/frontend-sdk/src/mfe/index.ts';
 import { cleanup, render, settle } from '../../fixtures/render.tsx';
 
 let platform: ReturnType<typeof createTestPlatform>;
@@ -541,6 +542,59 @@ describe('MFEErrorBoundary', () => {
     expect(r.container.textContent).toBe('tender 2');
   });
 
+  it('a reset key change whose new content throws is caught and logged once, not reset into a second catch (review 2)', async () => {
+    let renders = 0;
+    function Tender({ id }: { id: string }) {
+      if (id === '9') {
+        renders++;
+        throw new Error('tender 9 is broken');
+      }
+      return <p>{`tender ${id}`}</p>;
+    }
+    const view = (id: string) => (
+      <MFEErrorBoundary mfe="tenders" resetKeys={[id]}>
+        <Tender id={id} />
+      </MFEErrorBoundary>
+    );
+    const r = await render(view('1'));
+    await settle();
+    await r.rerender(view('9'));
+    await settle();
+    expect(r.container.querySelector('[role=alert]')).not.toBeNull();
+    expect(platform.logs.filter((l) => l.body === 'remote failed to render')).toHaveLength(1);
+    const once = renders;
+    await r.rerender(view('8'));
+    await settle();
+    expect(r.container.textContent).toBe('tender 8');
+    expect(renders).toBe(once);
+  });
+
+  it('treats added, removed or changed reset keys as a change', async () => {
+    let fail = true;
+    function Child() {
+      if (fail) throw new Error('boom');
+      return <p>ok</p>;
+    }
+    const view = (keys?: unknown[]) => (
+      <MFEErrorBoundary mfe="tenders" {...(keys ? { resetKeys: keys } : {})}>
+        <Child />
+      </MFEErrorBoundary>
+    );
+    const r = await render(view());
+    await settle();
+    fail = false;
+    await r.rerender(view(['a'])); // none → some
+    await settle();
+    expect(r.container.textContent).toBe('ok');
+    fail = true;
+    await r.rerender(view(['a', 'b']));
+    await settle();
+    fail = false;
+    await r.rerender(view(['a', 'c'])); // same length, another value
+    await settle();
+    expect(r.container.textContent).toBe('ok');
+  });
+
   it('keeps the error while the reset keys stay the same, and clears it for another mfe', async () => {
     let fail = true;
     function Child() {
@@ -561,6 +615,19 @@ describe('MFEErrorBoundary', () => {
     await r.rerender(view('bids'));
     await settle();
     expect(r.container.textContent).toBe('ok');
+  });
+
+  it('moves focus to the fallback, so keyboard users are not left on <body> (review 2)', async () => {
+    function Child(): never {
+      throw new Error('boom');
+    }
+    const r = await render(
+      <MFEErrorBoundary mfe="tenders">
+        <Child />
+      </MFEErrorBoundary>,
+    );
+    await settle();
+    expect(document.activeElement).toBe(r.container.querySelector('[role=alert]'));
   });
 
   it('a chunk-load error reloads the page once', async () => {
@@ -660,6 +727,73 @@ describe('installGlobalErrorHandlers', () => {
       { source: 'unhandled_error', mfe: 'shell' },
       { source: 'unhandled_rejection', mfe: 'shell' },
     ]);
+  });
+
+  it('rate-limits repeated CSP violations too', async () => {
+    const off = installGlobalErrorHandlers();
+    for (let i = 0; i < 30; i++) {
+      const csp = new Event('securitypolicyviolation') as Event & Record<string, unknown>;
+      Object.assign(csp, { violatedDirective: 'img-src', blockedURI: 'https://tracker.example/p.gif', disposition: 'enforce' });
+      window.dispatchEvent(csp);
+    }
+    off();
+    await settle();
+    expect(platform.logs.filter((l) => l.body === 'content security policy violation')).toHaveLength(10);
+  });
+
+  it('useStepUp().needed turns true when the MFA window lapses while the page stays open (review 2)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      let lapsed = false;
+      const c = controllableIdp({ status: 'authenticated', user: { sub: 'u' }, workspace: ACME, expiresAt: 0 });
+      c.idp.needsStepUp.mockImplementation(() => lapsed);
+      initializeAuth(c.idp);
+      const shell: ShellContextValue = {
+        context: { tenantId: 't', slug: 'acme', roles: [], departments: [], featureFlags: [], readOnly: false, mfaFreshnessSeconds: 300 },
+        locale: 'en',
+        switchWorkspace: async () => {},
+      };
+      let needed: boolean | undefined;
+      function View() {
+        needed = useStepUp().needed;
+        return null;
+      }
+      await render(
+        <PlatformProvider shell={shell}>
+          <View />
+        </PlatformProvider>,
+      );
+      expect(needed).toBe(false);
+      lapsed = true;
+      await settle(() => vi.advanceTimersByTime(15_000));
+      expect(needed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rate-limits a storm of the same error, counts what it dropped, and still counts every one in the metric (review 2)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const off = installGlobalErrorHandlers();
+      const boom = () => {
+        const e = new Error('raf loop broke');
+        e.stack = 'Error: raf loop broke\n    at tick (https://app.example/assets/main.js:1:2)';
+        window.dispatchEvent(new ErrorEvent('error', { error: e, message: e.message }));
+      };
+      for (let i = 0; i < 500; i++) boom();
+      window.dispatchEvent(new ErrorEvent('error', { error: new Error('another bug'), message: 'another bug' }));
+      vi.setSystemTime(Date.now() + 60_000);
+      boom();
+      off();
+      await settle();
+      const uncaught = platform.logs.filter((l) => l.body === 'uncaught error');
+      expect(uncaught).toHaveLength(12); // 10 of the storm, the other bug, then one more a minute later
+      expect(uncaught.at(-1)!.attributes.suppressed).toBe(490);
+      expect(webErrors).toHaveLength(502);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -806,6 +940,26 @@ describe('hooks: edge cases', () => {
     expect(r.container.textContent).toBe('second');
   });
 
+  it('useApi never shows the previous deps\' data or error for new deps, not even for one render (review 2)', async () => {
+    const seen: string[] = [];
+    const pending: Record<string, (v: string) => void> = {};
+    function View({ id }: { id: string }) {
+      const r = useApi(() => new Promise<string>((resolve) => (pending[id] = resolve)), [id]);
+      seen.push(`${id}:${r.loading}:${r.data ?? '-'}`);
+      return <p>{r.loading ? 'loading' : r.data}</p>;
+    }
+    const r = await render(<View id="42" />);
+    await settle(() => pending['42']!('tender 42'));
+    expect(r.container.textContent).toBe('tender 42');
+    seen.length = 0;
+    await r.rerender(<View id="43" />);
+    await settle();
+    expect(seen.filter((x) => x.startsWith('43:')).every((x) => x === '43:true:-')).toBe(true);
+    expect(r.container.textContent).toBe('loading');
+    await settle(() => pending['43']!('tender 43'));
+    expect(r.container.textContent).toBe('tender 43');
+  });
+
   it('useApi keeps the previous data while reloading', async () => {
     let n = 0;
     let resolveNext: ((v: number) => void) | undefined;
@@ -835,6 +989,28 @@ describe('hooks: edge cases', () => {
     await render(<View />);
     update!.reload();
     expect(reloadPage).toHaveBeenCalledOnce();
+  });
+
+  it('useBeforeAuthRedirect saves before an SDK reload too: app update and chunk error (review 2)', async () => {
+    const order: string[] = [];
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload: () => order.push('reload') } as Location);
+    let update: ReturnType<typeof useAppUpdate> | undefined;
+    function Editor() {
+      useBeforeAuthRedirect(() => order.push('save'));
+      update = useAppUpdate();
+      return null;
+    }
+    const r = await render(<Editor />);
+    update!.reload();
+    expect(order).toEqual(['save', 'reload']);
+    order.length = 0;
+    sessionStorage.clear(); // the once-per-version guard an earlier test set
+    expect(reloadOnceForChunkError(Object.assign(new Error('Loading chunk 7 failed'), { name: 'ChunkLoadError' }))).toBe(true);
+    expect(order).toEqual(['save', 'reload']);
+    order.length = 0;
+    await r.unmount();
+    update!.reload();
+    expect(order).toEqual(['reload']); // unsubscribed on unmount
   });
 });
 

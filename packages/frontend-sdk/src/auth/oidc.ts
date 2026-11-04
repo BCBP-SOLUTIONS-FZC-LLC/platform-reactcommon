@@ -56,9 +56,13 @@ function refusedUnprocessed(res: Response): boolean {
   return res.status === 429 || (res.status === 503 && res.headers.has('retry-after'));
 }
 const REFRESH_RETRY_MS = 2_000;
+/** getAccessToken refreshes a token this close to expiry rather than hand it out. */
+const ACCESS_TOKEN_LEAD_MS = 5_000;
 const REFRESH_RETRY_MAX_MS = 30_000;
 const ACTIVITY_WRITE_MS = 5_000;
 const IDLE_CHECK_MS = 15_000;
+/** Allowed between a step-up's max_age and the answer's auth_time (clock skew, the user's own time at the IdP). */
+const STEP_UP_SKEW_S = 120;
 const SILENT_ERRORS = new Set(['login_required', 'interaction_required', 'consent_required']);
 const REALM = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'scroll'] as const;
@@ -71,6 +75,8 @@ interface PendingLogin {
   returnUrl: string;
   reason: Reason;
   createdAt: number;
+  /** Step-up: the max_age asked for, checked against the answer's auth_time (OIDC Core §3.1.2.1). */
+  maxAge?: number;
 }
 
 interface Tokens {
@@ -97,11 +103,42 @@ interface TokenResponse {
   error?: unknown;
 }
 
+/**
+ * A top-level form POST to `url`: the fields travel in the body, never in the URL, so nothing lands in the
+ * browser's history or an access log. CSP form-action must allow the IdP origin (examples/cloudfront/csp.mjs).
+ */
+export function postNavigate(url: string, fields: Record<string, string>): void {
+  const doc = globalThis.document;
+  const form = doc.createElement('form');
+  form.method = 'post';
+  form.action = url;
+  form.style.display = 'none';
+  for (const [name, value] of Object.entries(fields)) {
+    const input = doc.createElement('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = value;
+    form.appendChild(input);
+  }
+  doc.body.appendChild(form);
+  form.submit();
+  // The ID token must not stay in the DOM: not if the POST is blocked, not on a page restored from the
+  // back/forward cache. Removed once the page is leaving, or after 10 s if it never does.
+  const remove = () => {
+    clearTimeout(timer);
+    globalThis.removeEventListener?.('pagehide', remove);
+    form.remove();
+  };
+  const timer = setTimeout(remove, 10_000);
+  globalThis.addEventListener?.('pagehide', remove);
+}
+
 /** Test seams: the clock, randomness and the page navigation. */
 const internals = {
   now: () => Date.now(),
   random: () => Math.random(),
   assign: (url: string) => globalThis.location.assign(url),
+  post: postNavigate,
 };
 
 export function setAuthInternalsForTests(o: Partial<typeof internals>): void {
@@ -281,10 +318,10 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   let stopActivity: (() => void) | undefined;
   let stopOnline: (() => void) | undefined;
   let lastActivityWrite = 0;
+  /** Another tab signed out while this one was not signed in (loading): its sign-in in progress is dropped. */
+  let signedOutElsewhere = false;
   /** Refreshes retried in a row after the token endpoint refused one (refusedUnprocessed). */
   let unavailableRetries = 0;
-  /** No refresh request before this time (the retry's backoff or Retry-After): getAccessToken and a 401 wait too. */
-  let retryNotBefore = 0;
   const listeners = new Set<(s: SessionState) => void>();
   const redirectListeners = new Set<(r: { reason: Reason }) => void>();
 
@@ -315,7 +352,18 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   };
   channel?.addEventListener('message', (ev: MessageEvent) => {
     const type = (ev.data as { type?: unknown } | null)?.type;
-    if (state.status !== 'authenticated') return;
+    if (state.status !== 'authenticated') {
+      // Expired (idle, a lapsed session) or still loading: no tokens to drop, but the storage namespace is
+      // the tenant's, which the sending tab just cleared; a write here would outlive the sign-out.
+      if ((type === 'logout' || type === 'workspace-switched') && state.status !== 'anonymous') {
+        restoring = false;
+        dropTokens();
+        getRuntime().storageNamespace = 'anon';
+        if (type === 'logout') signedOutElsewhere = true; // a sign-in this tab is finishing must not undo it
+        if (type === 'logout' && state.status === 'expired') setState({ status: 'anonymous', ...(workspace ? { workspace } : {}), reason: 'signed-out' });
+      }
+      return;
+    }
     if (type === 'logout') {
       // The sending tab cleared storage, rotated the session id and set the signed-out mark.
       restoring = false;
@@ -342,7 +390,6 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   function dropTokens(): void {
     tokens = undefined;
     unavailableRetries = 0;
-    retryNotBefore = 0;
     stopTimers();
   }
 
@@ -517,6 +564,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       returnUrl: safeReturnUrl(o.returnUrl ?? currentUrl()),
       reason: o.reason,
       createdAt: now,
+      ...(o.maxAge !== undefined ? { maxAge: o.maxAge } : {}),
     };
     const challenge = await s256(record.codeVerifier);
     purgePending(now);
@@ -620,7 +668,6 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       expire({ serverEnded: false, idle: false });
       return false;
     }
-    if (internals.now() < retryNotBefore) return false; // backing off: the scheduled retry sends it
     if (!isOnline()) {
       // Failed before sending: the token was never used, so keep it and try again once online.
       stopOnline?.();
@@ -664,7 +711,6 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
         return false;
       }
       unavailableRetries = 0;
-      retryNotBefore = 0;
       scheduleRefresh();
       setState({ status: 'authenticated', user: user!, workspace: w, expiresAt: tokens.expiresAt });
       return true;
@@ -682,13 +728,15 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       // Every tab of every user would otherwise drop its tokens and redirect to an IdP that is down.
       const backoff = Math.min(REFRESH_RETRY_MAX_MS, REFRESH_RETRY_MS * 2 ** unavailableRetries) * (0.5 + internals.random() / 2);
       const wait = Math.max(backoff, retryAfterMs(res, REFRESH_RETRY_MAX_MS) ?? 0);
-      if (internals.now() + wait < t.expiresAt) {
+      // The retry must answer before getAccessToken stops handing the token out.
+      if (internals.now() + wait < t.expiresAt - ACCESS_TOKEN_LEAD_MS) {
         unavailableRetries++;
-        retryNotBefore = internals.now() + wait;
         log().warn('token endpoint unavailable: retrying the refresh', { status: res.status, retry_in_ms: Math.round(wait), essential: true });
-        clearTimeout(refreshTimer);
-        refreshTimer = setTimeout(() => void refresh(), wait);
-        return false;
+        // Waited inside this refresh, so getAccessToken and a 401 meanwhile join it (single-flight) and get
+        // the retry's answer, instead of sending more requests or failing at once.
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        if (tokens !== t) return false; // logged out or switched meanwhile
+        return doRefresh();
       }
     }
     log().warn('token refresh failed: restoring the session', { status: res.status, error_code: typeof body?.error === 'string' ? body.error : undefined, essential: true });
@@ -706,6 +754,12 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
         inflight = undefined;
       });
     return inflight;
+  }
+
+  /** Seconds since the signed-in user authenticated, on the provider's clock; Infinity without auth_time. */
+  function authAgeS(): number {
+    const authTime = state.status === 'authenticated' ? state.user.authTime : undefined;
+    return authTime === undefined ? Number.POSITIVE_INFINITY : internals.now() / 1000 - clockOffsetS - authTime;
   }
 
   // --- init ----------------------------------------------------------------------------------
@@ -748,10 +802,20 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       const body = (await res.json().catch(() => ({}))) as TokenResponse;
       if (!res.ok) throw new Error(`token endpoint answered ${res.status} ${typeof body?.error === 'string' ? body.error : ''}`.trim());
       const t = accept(body, w, record.nonce);
+      if (signedOutElsewhere) {
+        log().info('sign-in dropped: another tab signed out meanwhile');
+        return anonymous('none');
+      }
       await forgetPreviousUser(w.realm, t.sub);
       flag('session', RESTORE_MARK_KEY, false);
       flag('local', SIGNED_OUT_KEY, false);
-      return becomeAuthenticated(t, w);
+      const settled = becomeAuthenticated(t, w);
+      // An IdP that ignored prompt=login / max_age (a misconfiguration, a proxy) returns the old session:
+      // signed in, but not re-authenticated. Reported, so a step-up loop has a cause in the logs.
+      if (typeof record.maxAge === 'number' && authAgeS() > record.maxAge + STEP_UP_SKEW_S) {
+        log().warn('step-up not performed by the identity provider: auth_time is older than max_age', { max_age: record.maxAge, essential: true });
+      }
+      return settled;
     } catch (e) {
       tokens = undefined;
       user = undefined;
@@ -818,17 +882,18 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       // Global by default (report Issue 10): a local logout leaves the provider's SSO session alive, and on a
       // shared device the next person's sign-in then shows the previous user. { global: false } opts out.
       if (o?.global === false || !w) return;
-      const params = new URLSearchParams();
-      if (idToken) params.set('id_token_hint', idToken);
-      params.set('client_id', cfg.clientId);
-      params.set('post_logout_redirect_uri', `${globalThis.location?.origin ?? ''}/`);
-      internals.assign(`${endpoint(w.realm, 'logout')}?${params.toString()}`);
+      // POSTed (OIDC RP-Initiated Logout §2): the ID token, with the user's name and email, never goes in a URL.
+      internals.post(endpoint(w.realm, 'logout'), {
+        ...(idToken ? { id_token_hint: idToken } : {}),
+        client_id: cfg.clientId,
+        post_logout_redirect_uri: `${globalThis.location?.origin ?? ''}/`,
+      });
     },
 
     async getAccessToken() {
       if (!tokens || restoring) return undefined;
       // Expired (or about to): join the tab's single refresh rather than send a dead token.
-      if (internals.now() >= tokens.expiresAt - 5_000) await refresh();
+      if (internals.now() >= tokens.expiresAt - ACCESS_TOKEN_LEAD_MS) await refresh();
       return restoring ? undefined : tokens?.access;
     },
 
@@ -867,5 +932,19 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     },
 
     getState: () => state,
+
+    dispose() {
+      restoring = false;
+      dropTokens();
+      inflight = undefined;
+      listeners.clear();
+      redirectListeners.clear();
+      try {
+        channel?.close();
+      } catch {
+        // already closed
+      }
+      channel = undefined;
+    },
   };
 }

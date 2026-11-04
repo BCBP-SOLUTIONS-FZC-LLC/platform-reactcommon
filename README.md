@@ -425,7 +425,7 @@ pnpm exec vitest run -t "single-flight"
 
 ### Building the examples
 
-`pnpm build` builds the packages and then `examples/shell` and `examples/remote-tenders` (webpack production builds into their `dist/`). `pnpm examples:check` then verifies the bundles:
+`pnpm build` builds the packages and then `examples/shell` and `examples/remote-tenders` (webpack production builds into their `dist/`). The shell's environment comes from `PLATFORM_ENVIRONMENT` (`pnpm build` passes `dev` when it is unset); building the shell on its own in production mode (`node build.mjs` in `examples/shell`) without it fails, so a deploy never ships a `dev` shell by accident. `pnpm examples:check` then verifies the bundles:
 - the remote defines `window.tenders` and contains no SDK code;
 - nothing needs `eval`;
 - source maps are emitted but hidden;
@@ -456,7 +456,7 @@ shell / remotes
                                                                                          (delta → cumulative)
 ```
 
-The reference Collector configuration is [`examples/collector`](examples/collector/gateway.yaml) (LLD §7.6). When the page is hidden or closing, the three signals share the browser's keepalive budget in one order: the metrics interval's share, then logs, then the newest spans; requests that must outlive the tab start inside the listener (LLD §7.5).
+The reference Collector configuration is [`examples/collector`](examples/collector/README.md) (LLD §7.6). When the page is hidden or closing, the three signals share the browser's keepalive budget in one order: the metrics interval's share, then logs, then the newest spans; requests that must outlive the tab start inside the listener (LLD §7.5).
 
 ### In tests (no infrastructure)
 
@@ -541,7 +541,7 @@ The SDK reads no environment variables in the browser. Its configuration is one 
 | `i18n.defaultLocale` · `supportedLocales` | — (**required**) | Canonical BCP 47 tags |
 | `appUpdate.pollIntervalMs` | — (**required**) | `/version.json` polling (≥ 10 s) |
 
-Build-time constants (shell): `__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`), passed to `initializeCore`.
+Build-time constants (shell): `__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`), passed to `initializeCore`. Fail a production build that has no environment rather than defaulting it (the example shell's `environment.mjs`).
 
 ---
 
@@ -705,7 +705,7 @@ None is deployed yet; [`examples/shell`](examples/shell) and [`examples/remote-t
 | **Keycloak** (`auth.bcbpsolutions.com`) | Sign-in, refresh, logout | Refresh outcome unknown → the lineage is dropped and restored silently once reachable; no sign-out |
 | **API gateway** | Validates tokens, injects identity, denies with problem bodies | Calls fail with typed errors; deny codes drive the UI (step-up, read-only, workspace set-up) |
 | **OTel Collector** (`/otel`) | Receives all three signals | Bounded queues drop the oldest items; nothing else is affected |
-| **IAM PUB-1 / P-35** | Workspace resolve; session context | Cached workspaces still work; without the context: deny-all permissions, platform flags only |
+| **IAM PUB-1 / P-35** | Workspace resolve; session context | Cached workspaces still work; without the context: deny-all permissions, platform flags only, while the example shell retries a transient failure 3 times (1 s, 2 s, 4 s) |
 
 ---
 

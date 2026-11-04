@@ -52,15 +52,20 @@ export function sessionContextFlagProvider(ctx: { featureFlags: readonly string[
   });
 }
 
-let stopWatching: (() => void) | undefined;
+/**
+ * The unsubscribe of the provider in use, on the runtime: a second SDK copy of the major on the page must
+ * stop the first copy's subscription when it replaces the provider, or both would emit (and leak).
+ */
+type FlagWatch = { stopFlagWatching?: (() => void) | undefined };
 
 /** Shell only: the provider every getFlag call uses (e.g. sessionContextFlagProvider once the context loads). */
 export function setFlagProvider(p: FlagProvider): void {
-  stopWatching?.();
-  stopWatching = undefined;
-  getRuntime().flagProvider = p ?? undefined;
+  const rt = getRuntime() as ReturnType<typeof getRuntime> & FlagWatch;
+  rt.stopFlagWatching?.();
+  rt.stopFlagWatching = undefined;
+  rt.flagProvider = p ?? undefined;
   // /react re-renders flag readers on the runtime 'flags' topic: the provider changed, or its values did.
-  if (p && typeof p.subscribe === 'function') stopWatching = p.subscribe(() => emitRuntime('flags'));
+  if (p && typeof p.subscribe === 'function') rt.stopFlagWatching = p.subscribe(() => emitRuntime('flags'));
   emitRuntime('flags');
 }
 

@@ -3,6 +3,7 @@
 // per lineage: sending a replaced refresh token revokes the whole SSO session).
 import { createHash, randomBytes } from 'node:crypto';
 import { vi } from 'vitest';
+import { setAuthInternalsForTests } from '../../packages/frontend-sdk/src/auth/oidc.ts';
 import { FakeStorage } from './core.ts';
 
 export const ORIGIN = 'https://app.example.com';
@@ -21,6 +22,8 @@ export class FakePage {
   readonly session = new FakeStorage();
   readonly events = new EventTarget();
   readonly assigned: string[] = [];
+  /** Form POST navigations (the sign-out): also in `assigned`, by URL alone. */
+  readonly posted: { url: string; fields: Record<string, string> }[] = [];
   online = true;
 
   constructor(
@@ -55,6 +58,12 @@ export class FakePage {
       reload: () => {},
     };
     vi.stubGlobal('location', location);
+    setAuthInternalsForTests({
+      post: (u: string, fields: Record<string, string>) => {
+        this.posted.push({ url: u, fields });
+        this.assigned.push(u);
+      },
+    });
     vi.stubGlobal('history', {
       state: null,
       replaceState: (_s: unknown, _t: string, u: string) => {

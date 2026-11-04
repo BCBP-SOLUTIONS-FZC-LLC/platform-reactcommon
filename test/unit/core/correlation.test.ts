@@ -3,7 +3,7 @@ import { getSessionId, newRequestId } from '../../../packages/frontend-sdk/src/c
 import { HEADERS } from '../../../packages/frontend-sdk/src/internal/generated/headers.ts';
 import { UUID_V4_PATTERN } from '../../../packages/frontend-sdk/src/internal/ids.ts';
 import { getRuntime, resetRuntimeForTests } from '../../../packages/frontend-sdk/src/internal/runtime.ts';
-import { SESSION_ID_STORAGE_KEY, rotateSessionId } from '../../../packages/frontend-sdk/src/internal/session.ts';
+import { SESSION_ID_STORAGE_KEY, SESSION_MAX_AGE_MS, SESSION_STARTED_STORAGE_KEY, rotateSessionId } from '../../../packages/frontend-sdk/src/internal/session.ts';
 import { FakeStorage } from '../../fixtures/core.ts';
 
 let storage: FakeStorage;
@@ -107,5 +107,33 @@ describe('rotateSessionId (internal, for /auth logout and idle timeout)', () => 
     const after = rotateSessionId();
     expect(after).not.toBe(before);
     expect(getSessionId()).toBe(after);
+  });
+});
+
+describe('session id lifetime (review 2)', () => {
+  it('starts a new session id after SESSION_MAX_AGE_MS, however often the page restores the session', () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-01T08:00:00Z') });
+    try {
+      const storage = new FakeStorage();
+      vi.stubGlobal('localStorage', storage);
+      const first = getSessionId();
+      vi.setSystemTime(Date.now() + SESSION_MAX_AGE_MS - 1);
+      expect(getSessionId()).toBe(first);
+      vi.setSystemTime(Date.now() + 1);
+      const second = getSessionId();
+      expect(second).not.toBe(first);
+      expect(getSessionId()).toBe(second);
+      expect(storage.getItem(SESSION_STARTED_STORAGE_KEY)).toBe(String(Date.now()));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps an id stored before the start time was, and starts its clock now', () => {
+    const storage = new FakeStorage();
+    vi.stubGlobal('localStorage', storage);
+    storage.setItem(SESSION_ID_STORAGE_KEY, '6f1c2a4e-1b2c-4d3e-8f40-0123456789ab');
+    expect(getSessionId()).toBe('6f1c2a4e-1b2c-4d3e-8f40-0123456789ab');
+    expect(Number(storage.getItem(SESSION_STARTED_STORAGE_KEY))).toBeGreaterThan(0);
   });
 });

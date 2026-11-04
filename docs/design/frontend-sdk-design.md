@@ -1220,7 +1220,7 @@ rolled back only to an SDK version at or above the newest one any deployed remot
 | `/remotes/manifest.json` | S3 | same as above | — | Written after all remotes upload |
 | `/remotes/*` | S3 | CachingOptimized, `max-age=31536000, immutable` | — | Versioned paths `/remotes/<name>/<version>/…`, never overwritten |
 | `/assets/*` | S3 | CachingOptimized, immutable | — | Content-hashed |
-| `Default (*)` | S3 | `no-cache` | — | A **CloudFront Function** rewrites extension-less paths to `/index.html`. Do **not** use custom 403/404→index.html error responses, because they turn `/api/*` 404s into HTML |
+| `Default (*)` | S3 | `no-cache` | — | A **CloudFront Function** rewrites every path to `/index.html` unless its last segment ends in a static-asset extension (a dot alone, as in `/users/john.doe`, is a route). Do **not** use custom 403/404→index.html error responses, because they turn `/api/*` 404s into HTML |
 
 Response headers policy (all behaviors except `/api/*`, which the gateway owns):
 
@@ -1228,7 +1228,7 @@ Response headers policy (all behaviors except `/api/*`, which the gateway owns):
 Content-Security-Policy:
   default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self';
   connect-src 'self' https://auth.bcbpsolutions.com;
-  manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self';
+  manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self' https://auth.bcbpsolutions.com;
   frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests;
   require-trusted-types-for 'script'; trusted-types platform-sdk platform-webpack dompurify 'allow-duplicates';
   report-uri /csp-report; report-to csp

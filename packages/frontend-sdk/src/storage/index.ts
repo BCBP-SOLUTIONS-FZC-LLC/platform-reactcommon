@@ -34,6 +34,19 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  */
 const STORAGE_KEY_PREFIX = '@bcbp-solutions-fzc-llc/frontend-sdk:storage:';
 
+/**
+ * Keys 1.0.0-alpha.3 and earlier wrote, unprefixed: `<paid realm>:<appId>:` or `trial:<uuid>:<appId>:`. Still
+ * removed by clearAllAppStorage, so a value from before the upgrade never outlives a sign-out on a shared
+ * device. Only realm-shaped namespaces (the paid-realm prefix, default `tenant-`), never another library's
+ * `<word>:<word>:` keys.
+ */
+function isLegacyKey(k: string): boolean {
+  const prefix = (getRuntime().config as { auth?: { paidRealmPrefix?: unknown } } | undefined)?.auth?.paidRealmPrefix;
+  const paid = typeof prefix === 'string' && /^[a-z][a-z0-9-]*-$/.test(prefix) ? prefix : 'tenant-';
+  if (k.startsWith(paid)) return /^[a-z0-9-]{1,62}:[a-z][a-z0-9_-]{0,62}:/.test(k.slice(paid.length));
+  return /^trial:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[a-z][a-z0-9_-]{0,62}:/.test(k);
+}
+
 type Area = 'local' | 'session';
 // Used when the browser's storage is unavailable or full: keeps values for this page only.
 const memory: Record<Area, Map<string, string>> = { local: new Map(), session: new Map() };
@@ -171,7 +184,7 @@ export function clearAllAppStorage(): void {
       if (!s) continue;
       for (let i = s.length - 1; i >= 0; i--) {
         const k = s.key(i);
-        if (k?.startsWith(STORAGE_KEY_PREFIX)) s.removeItem(k);
+        if (k != null && (k.startsWith(STORAGE_KEY_PREFIX) || isLegacyKey(k))) s.removeItem(k);
       }
     } catch {
       // nothing to clear

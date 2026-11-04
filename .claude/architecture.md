@@ -24,8 +24,8 @@ platform-reactcommon/
 ├── examples/
 │   ├── shell/                        reference shell: bootstrap.tsx (the design doc's order), IAM ports, session screens
 │   ├── remote-tenders/               reference remote (exposes ./EditTender)
-│   ├── cloudfront/                   behaviors, response-headers policy (csp.mjs), SPA rewrite, /csp-report Lambda
-│   └── collector/                    reference OTel Collector: gateway.yaml + aggregator.yaml (+ test/: allowlists = registry)
+│   ├── cloudfront/                   behaviors, response-headers policy (csp.mjs), SPA rewrite (static extensions only), /csp-report Lambda
+│   └── collector/                    reference OTel Collector: gateway.yaml + aggregator.yaml, README (Mimir series limits) (+ test/: allowlists = registry)
 ├── test/
 │   ├── unit/<subpath>/ · unit/sdk · unit/webpack-preset · unit/eslint-plugin · unit/internal
 │   ├── integration/                  subpaths wired together in-process
@@ -78,4 +78,4 @@ One `PlatformRuntime` per page on `globalThis[Symbol.for('@bcbp-solutions-fzc-ll
 
 ## Examples
 
-`examples/shell` is the reference integration: bootstrap order (Trusted Types → core → runtime config → consent → tracing, logging, metrics → error handlers → flags → auth → session context → i18n → manifest → render), the IAM ports (PUB-1 workspace resolve, P-35 session context), and the session screens (signed out, device clock, session ended, wrong workspace). `examples:check` asserts CSP and sharing on its build.
+`examples/shell` is the reference integration: bootstrap order (Trusted Types → core → runtime config → consent → tracing, logging, metrics → error handlers → flags → auth → session context → i18n → manifest → render), the IAM ports (PUB-1 workspace resolve, P-35 session context, retried in the background after a transient failure), `ShellRoot` (the provider with the live locale and context), `environment.mjs` (a production build needs `PLATFORM_ENVIRONMENT`), and the session screens (signed out, device clock, session ended, wrong workspace). `examples:check` asserts CSP and sharing on its build.

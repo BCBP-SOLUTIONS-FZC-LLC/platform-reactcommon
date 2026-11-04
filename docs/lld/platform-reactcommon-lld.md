@@ -181,7 +181,7 @@ Generated from `subpaths.json` into the exports map, the ESLint config (`eslint-
 
 Strings are sanitized like gincommon (Go's whitespace trim, control characters removed; the SDK also strips U+2028/2029, a deliberate stricter difference recorded in the identity fixture as `expectedSdk`). A second call with the same normalised identity is a no-op; a different one throws `IdentityMismatchError` naming the field. A remote never calls it: it reads the shell's identity from the runtime.
 
-The **RUM session id** is a random v4 UUID kept in localStorage under `@bcbp-solutions-fzc-llc/frontend-sdk:session-id`, so it is shared by tabs and survives reloads. It is rotated on logout and idle timeout, and falls back to a per-page id when storage is blocked. It is sent as `x-session-id` and logged as `session_id`. It is never the IdP session.
+The **RUM session id** is a random v4 UUID kept in localStorage under `@bcbp-solutions-fzc-llc/frontend-sdk:session-id`, so it is shared by tabs and survives reloads. It is rotated on logout and idle timeout and after 24 hours (`@bcbp-solutions-fzc-llc/frontend-sdk:session-started`), and falls back to a per-page id when storage is blocked. It is sent as `x-session-id` and logged as `session_id`. It is never the IdP session.
 
 ### 4.2 Runtime configuration (`/config`)
 
@@ -296,7 +296,8 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 | Body | `string`, `FormData`, `Blob`, `URLSearchParams`, `ArrayBuffer` as is; anything else JSON with `content-type: application/json` |
 | Accept | `application/json, application/problem+json` |
 | Deadline | `timeoutMs` (default `api.timeoutMs`, 35 000 ms; above gincommon's 30 s server timeout), per attempt, combined with the caller's signal |
-| Retries | `GET`, `PUT`, `DELETE` (or `retry: { unsafe: true }`): up to `attempts` (default 2) more, on timeout, network error (online), 429, 502, 503, 504; wait `Retry-After` (≤ 30 s) else full-jitter `min(5 s, 250 ms · 2ⁿ)`; `retry: false` disables |
+| Retries | `GET`, `PUT`, `DELETE` (or `retry: { unsafe: true }`): up to `attempts` (default 2, at most 5) more, on timeout, network error (online), 429, 502, 503, 504; wait `Retry-After` (≤ 30 s) else full-jitter `min(5 s, 250 ms · 2ⁿ)`; `retry: false` disables |
+| Unusable answers | A 2xx body that is not the JSON it claims, or a redirect on a call carrying a token or correlation headers (`redirect: 'manual'`), is a synthetic 502 `ProblemError`. Typed arrays and DataViews are sent as bytes; a `ReadableStream` body is refused (not replayable) |
 | 401 | Once per call: if a newer token exists use it, else join the tab's `refresh()`; a new token retries (not counted as a retry); otherwise `onUnauthorized()` |
 | De-duplication | `GET` (unless `dedupe: false`): identical URL + token + headers share one call; the shared fetch is aborted only when every subscriber aborted |
 | Result | `{ data, status, headers, requestId, traceId? }`; `data` is JSON when the content type says so, text otherwise, `undefined` for 204/205/empty |
@@ -320,7 +321,7 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 
 The steps:
 1. Kill switch → `RemoteDisabledError`.
-2. Otherwise, up to `1 + retries` attempts (default `remotes.retries`), each with `timeoutMs` (default `remotes.loadTimeoutMs`) to inject the entry script.
+2. Otherwise, up to `1 + retries` attempts (default `remotes.retries`), each with `timeoutMs` (default `remotes.loadTimeoutMs`) for the whole attempt: the entry script, the share-scope `init` and the module's `get`. `loadManifest` uses the same timeout; the container cache is on the runtime.
 3. Initialize the share scope (an already-initialized scope is fine; any other failure is `incompatible` and not retried).
 4. `container.get(module)`, then the factory.
 
@@ -463,10 +464,10 @@ The platform's Collector is deployed elsewhere; this repository ships its **refe
 
 | Tier | Does |
 |---|---|
-| Gateway (`gateway.yaml`, behind `/otel/*`, any number of replicas) | OTLP/HTTP on `/otel/v1/*`; drops `service.instance.id`, `browser.*`, `user_agent.*`; allowlists metric names (`platform_web_*` or a registered `<domain>_*` matching the `domain` label, with a unit suffix) and label values (registry vocabulary, this deployment's environment), cuts values at 128 characters; routes each metric stream to one aggregator (`loadbalancing`, `routing_key: streamID`) |
+| Gateway (`gateway.yaml`, behind `/otel/*`, any number of replicas) | OTLP/HTTP on `/otel/v1/*`; keeps only the SDK's resource attributes (`service.name`, `service.version`, `service.namespace`, `deployment.environment.name`); allowlists metric names (a Tier 1 name of the proposal, or a `<domain>_*` matching the `domain` label, with a unit suffix), label keys (Tier 1 and Tier 2: the registry's and the proposal's; Tier 3: snake_case, not prohibited, at most 8 besides the const labels) and label values (registry vocabulary, this deployment's environment); `page_route` over 64 characters becomes `unknown`; cuts values at 128 characters; routes each metric stream to one aggregator (`loadbalancing`, `routing_key: streamID`) |
 | Aggregator (`aggregator.yaml`) | Re-stamps each delta with its arrival time (device clocks are not trusted), then `delta_to_cumulative` for Mimir. One converter per stream: two Collectors converting the same stream would write conflicting totals |
 
-`examples/collector/test` keeps the allowlists equal to the metric registry; `pnpm test-collector` (CI job `collector`) runs two gateways and two aggregators in the Collector image; the integrated stack routes `/otel` through both tiers.
+The allowlists bound what one request adds, not the product of allowed values: set Mimir's per-tenant series limits too (`examples/collector/README.md`). `examples/collector/test` keeps the allowlists equal to the metric registry; `pnpm test-collector` (CI job `collector`) runs two gateways and two aggregators in the Collector image; the integrated stack routes `/otel` through both tiers.
 
 ---
 
@@ -521,7 +522,7 @@ Activity events (`pointerdown`, `keydown`, `wheel`, `touchstart`, `scroll`, capt
   1. Drop the tokens and stop the timers.
   2. `clearAllAppStorage()`, rotate the session id, and set the signed-out mark.
   3. Broadcast `logout`, set the storage namespace to `anon`, and move to `anonymous { signed-out }`.
-  4. Unless `{ global: false }` (the default is global, report Issue 10): redirect to the realm's `/logout` with `id_token_hint` (when held), `client_id` and `post_logout_redirect_uri=<origin>/`, ending the SSO session. `{ global: false }` is a local-only sign-out: the SSO session stays alive, and the next sign-in on this device is a re-authentication of the previous user (`prompt=login`).
+  4. Unless `{ global: false }` (the default is global, report Issue 10): a form POST to the realm's `/logout` with `id_token_hint` (when held), `client_id` and `post_logout_redirect_uri=<origin>/` in the body (never the URL), ending the SSO session; CSP `form-action` allows the IdP origin. `{ global: false }` is a local-only sign-out: the SSO session stays alive, and the next sign-in on this device is a re-authentication of the previous user (`prompt=login`).
 - **Other tabs on `logout`:** become `anonymous { signed-out }`.
 - **Other tabs on `workspace-switched`:** become `expired { serverEnded: false, idle: false }`, so the shell's dialog offers sign-in again.
 - **The channel** (`BroadcastChannel('platform-auth')`) carries only `{ type }`, never a token.
@@ -536,7 +537,7 @@ See §5.4.3 and ARCHITECTURE.md § Remote loading.
 
 ### 8.10 i18n
 - **Setup:** `initializeI18n({ defaultLocale, supported, detect? })` negotiates the locale: the exact tag, then the same language, then the default. It sets `<html lang dir>`.
-- **Catalogs:** `registerNamespace(ns, loader)` registers a loader and loads that namespace for the current locale. `initializeI18n` and `setLocale` load every registered namespace for the chosen locale. Concurrent loads of one namespace and locale share one promise, and `subscribeI18n` listeners (`/react`'s `useT`) are notified when they finish. `t(ns, key, vars)` never loads: it looks the key up in the current locale, then the default one, and returns the key itself while no catalog has it.
+- **Catalogs:** `registerNamespace(ns, loader)` registers a loader and loads that namespace for the current locale. `initializeI18n` and `setLocale` load every registered namespace for the chosen locale. Concurrent loads of one namespace and locale share one promise, and `subscribeI18n` listeners (`/react`'s `useT`) are notified when they finish. `t(ns, key, vars)` never loads: it looks the key up in the current locale, then the default one, and returns the key itself while no catalog has it. A loader that does not answer within 10 s counts as failed; a failed catalog is retried 2 s, 4 s and 8 s later while its locale is shown.
 - **Formatting:** messages use ICU-lite (`{name}`, `{n, plural, …}`, `{x, select, …}`). An invalid message is shown as is, with a dev warning.
 - **Lookup:** own properties only, so `constructor` and other prototype keys never resolve.
 - **Direction:** `dir` is `rtl` for Arabic, Hebrew, Persian, Urdu and the other right-to-left languages.
@@ -677,13 +678,14 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 | `appUpdate.pollIntervalMs` | — (required) | 10 s – 24 h |
 
 ### 12.2 Build-time constants (shell)
-`__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`) feed `initializeCore`. The SDK's own `__SDK_VERSION__` is defined when the SDK is built.
+`__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`) feed `initializeCore`. The example shell takes the environment from `PLATFORM_ENVIRONMENT`: a production build without it fails (a development build defaults to `dev`); the repository's `pnpm build` passes `dev` when it is unset. The SDK's own `__SDK_VERSION__` is defined when the SDK is built.
 
 ### 12.3 Reserved browser storage keys
 
 | Key | Area | Owner |
 |---|---|---|
 | `@bcbp-solutions-fzc-llc/frontend-sdk:session-id` | local | `/core` |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:session-started` | local | `/core` (a new session id after 24 h) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:workspaces` | local | `/auth` (workspace cache) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:signed-out` | local | `/auth` |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-activity` | local | `/auth` |
