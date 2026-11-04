@@ -110,8 +110,39 @@ describe('spa-rewrite CloudFront Function', () => {
     ['/otel/v1/logs', '/otel/v1/logs'],
     ['/csp-report', '/csp-report'],
     ['/remotes/tenders/1.0.0/remoteEntry.js', '/remotes/tenders/1.0.0/remoteEntry.js'],
+    ['/remotes/manifest.json', '/remotes/manifest.json'],
+    ['/otel', '/otel'],
+    ['/version.json', '/version.json'],
+    ['/config/runtime.json', '/config/runtime.json'],
+    ['/assets/main.3f2a.css', '/assets/main.3f2a.css'],
+    // Review 2: a dot in the last segment does not make a file; only a static-asset extension does.
+    ['/users/john.doe', '/index.html'],
+    ['/t/acme/tenders/RFQ-2026.01', '/index.html'],
+    ['/t/acme/tenders/RFQ-2026.01/edit', '/index.html'],
+    ['/t/acme/people/ada.lovelace@example.com', '/index.html'],
+    ['/t/acme/files/v1.2.3', '/index.html'],
+    ['/robots.txt', '/robots.txt'],
+    ['/site.webmanifest', '/site.webmanifest'],
+    ['/fonts/inter.woff2', '/fonts/inter.woff2'],
+    ['/logo.SVG', '/logo.SVG'],
+    ['/index.html', '/index.html'],
   ])('%s → %s', (uri, want) => {
     expect(run(uri)).toBe(want);
+  });
+});
+
+describe('README: a remote on another origin (review 2)', () => {
+  const readme = read('../README.md');
+  const section = readme.slice(readme.indexOf('### A remote on another origin'), readme.indexOf('**`Cache-Control` is set on every object at upload.**'));
+
+  it('asks for CORS and CORP cross-origin on all of the remote\'s assets, not only .js', () => {
+    expect(section).toMatch(/\*\*all\*\* of its assets \(`\.js`, `\.css`, fonts, images/);
+    expect(section).toContain('| `Access-Control-Allow-Origin` |');
+    expect(section).toContain('| `Cross-Origin-Resource-Policy` | `cross-origin` |');
+  });
+
+  it('is linked from the deploy step that uploads the remote', () => {
+    expect(readme).toContain('needs the headers in [*A remote on another origin*](#a-remote-on-another-origin)');
   });
 });
 

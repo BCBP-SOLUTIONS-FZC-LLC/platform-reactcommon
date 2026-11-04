@@ -77,7 +77,7 @@ beforeAll(async () => {
   // The gateways' DNS resolver has found both aggregators once points reach each.
   for (let i = 0; !aggregators.every((a) => lines(a, 'metrics').length > 0); i++) {
     if (i > 100) throw new Error(`the gateways never reached both aggregators:\n${docker('logs', gateways[0]!.container)}`);
-    await post('metrics', delta('portal_web_app_warmup_total', tab('w'), 1, -1, 0, { ...LABELS, kind: `w${i}` }), i);
+    await post('metrics', delta('portal_web_app_warmup_total', tab('w'), 1, -1, 0, { ...LABELS, operation: `w${i}` }), i);
     await new Promise((r) => setTimeout(r, 200));
   }
 }, 180_000);
@@ -109,6 +109,7 @@ function tab(id: string): Attrs {
     'service.instance.id': id,
     'browser.brands': 'Chromium 156',
     'user_agent.original': 'Mozilla/5.0',
+    'x.forged': `series-bomb-${id}`, // any other key: a forger's (review 2)
   };
 }
 const LABELS: Attrs = { domain: 'portal', service: 'web_app', environment: ENVIRONMENT };
@@ -243,11 +244,11 @@ describe('metrics: delta → cumulative, one series for every tab', () => {
     const name = 'portal_web_app_routed_total';
     const STREAMS = 24;
     for (let round = 1; round <= 3; round++) {
-      for (let s = 0; s < STREAMS; s++) await post('metrics', delta(name, tab(`t${round}`), round, -1, 0, { ...LABELS, kind: `k${s}` }), s + round);
+      for (let s = 0; s < STREAMS; s++) await post('metrics', delta(name, tab(`t${round}`), round, -1, 0, { ...LABELS, operation: `k${s}` }), s + round);
     }
     const points = await settled(name, STREAMS * 3);
     const byStream = new Map<string, OutPoint[]>();
-    for (const p of points) byStream.set(p.labels.kind!, [...(byStream.get(p.labels.kind!) ?? []), p]);
+    for (const p of points) byStream.set(p.labels.operation!, [...(byStream.get(p.labels.operation!) ?? []), p]);
     expect(byStream.size).toBe(STREAMS);
     for (const [kind, ps] of byStream) {
       expect(new Set(ps.map((p) => p.aggregator)).size, kind).toBe(1);
@@ -256,7 +257,7 @@ describe('metrics: delta → cumulative, one series for every tab', () => {
     expect(new Set(points.map((p) => p.aggregator))).toEqual(new Set([0, 1])); // both aggregators share the load
   });
 
-  it('drops per-browser resource attributes, keeps the service identity', async () => {
+  it('keeps only the SDK\'s resource attributes (per-browser and made-up ones removed)', async () => {
     const [p] = await settled('portal_web_app_clicks_total', 6);
     expect(p!.resource).toEqual({ 'service.name': 'web-app', 'service.namespace': 'portal', 'deployment.environment.name': ENVIRONMENT });
   });
@@ -288,11 +289,47 @@ describe('metrics: delta → cumulative, one series for every tab', () => {
       ['portal_web_app_clicks', LABELS], // no unit suffix
       ['Portal-Bad-Name', LABELS], // not a metric name
       ['platform_other_clicks_total', LABELS], // platform_* outside the browser's platform_web_*
+      ['platform_web_bomb_total', LABELS], // platform_web_* outside the Tier 1 proposal (review 2)
     ];
     for (const [name, labels] of minted) await post('metrics', delta(name, tab('x'), 1, -1, 0, labels));
     await post('metrics', delta('tender_management_web_app_saves_total', tab('x'), 1, -1, 0, { ...LABELS, domain: 'tender_management' }));
     await settled('tender_management_web_app_saves_total', 1);
     for (const [name] of minted) expect(metricPoints(name), name).toEqual([]);
+  });
+
+  it('a registered metric keeps only the registry and proposal label keys (review 2)', async () => {
+    const name = 'platform_web_vital_ratings_total';
+    const ok = { ...LABELS, vital: 'inp', rating: 'needs_improvement', page_route: '/t/:tenant', mfe: 'shell' };
+    await post('metrics', delta(name, tab('x'), 1, -1, 0, { ...ok, bomb_1: 'x' }));
+    await post('metrics', delta(name, tab('y'), 2, -1, 0, { ...ok, bomb_2: 'y' }));
+    await eventually(() => (metricPoints(name).filter((p) => p.labels.vital === 'inp').length >= 2 ? true : undefined), 'two inp points');
+    const points = metricPoints(name).filter((p) => p.labels.vital === 'inp');
+    expect(points.map((p) => p.labels)).toEqual([ok, ok]);
+    expect(points.at(-1)!.value).toBe(3); // one series
+  });
+
+  it('a Tier 3 metric keeps its own snake_case keys, never a prohibited one, and at most 8 besides the const labels (review 2)', async () => {
+    const name = 'portal_web_app_opens_total';
+    await post('metrics', delta(name, tab('x'), 1, -1, 0, { ...LABELS, kind: 'draft', user_id: 'u-1', order_uuid: 'x', 'Bad-Key': 'y' }));
+    const [p] = await settled(name, 1);
+    expect(p!.labels).toEqual({ ...LABELS, kind: 'draft' });
+
+    const wide = 'portal_web_app_wide_total';
+    const extra = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`k${String(i).padStart(2, '0')}`, 'v']));
+    await post('metrics', delta(wide, tab('x'), 1, -1, 0, { ...LABELS, ...extra }));
+    const [w] = await settled(wide, 1);
+    expect(Object.keys(w!.labels)).toHaveLength(3 + 8);
+    expect(w!.labels).toMatchObject(LABELS);
+  });
+
+  it('records a page_route longer than 64 characters as unknown (review 2)', async () => {
+    const name = 'platform_web_vital_ratings_total';
+    const base = { ...LABELS, vital: 'cls', rating: 'poor', mfe: 'shell' };
+    await post('metrics', delta(name, tab('x'), 1, -1, 0, { ...base, page_route: `/${'a'.repeat(100)}` }));
+    await post('metrics', delta(name, tab('x'), 1, -1, 0, { ...base, page_route: `/${'b'.repeat(63)}` }));
+    await eventually(() => (metricPoints(name).filter((p) => p.labels.vital === 'cls').length >= 2 ? true : undefined), 'two cls points');
+    const routes = metricPoints(name).filter((p) => p.labels.vital === 'cls').map((p) => p.labels.page_route);
+    expect(new Set(routes)).toEqual(new Set(['unknown', `/${'b'.repeat(63)}`]));
   });
 
   it('cuts any label value at 128 characters (a Tier 3 label with a runaway value)', async () => {

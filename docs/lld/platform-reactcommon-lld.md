@@ -464,10 +464,10 @@ The platform's Collector is deployed elsewhere; this repository ships its **refe
 
 | Tier | Does |
 |---|---|
-| Gateway (`gateway.yaml`, behind `/otel/*`, any number of replicas) | OTLP/HTTP on `/otel/v1/*`; drops `service.instance.id`, `browser.*`, `user_agent.*`; allowlists metric names (`platform_web_*` or a registered `<domain>_*` matching the `domain` label, with a unit suffix) and label values (registry vocabulary, this deployment's environment), cuts values at 128 characters; routes each metric stream to one aggregator (`loadbalancing`, `routing_key: streamID`) |
+| Gateway (`gateway.yaml`, behind `/otel/*`, any number of replicas) | OTLP/HTTP on `/otel/v1/*`; keeps only the SDK's resource attributes (`service.name`, `service.version`, `service.namespace`, `deployment.environment.name`); allowlists metric names (a Tier 1 name of the proposal, or a `<domain>_*` matching the `domain` label, with a unit suffix), label keys (Tier 1 and Tier 2: the registry's and the proposal's; Tier 3: snake_case, not prohibited, at most 8 besides the const labels) and label values (registry vocabulary, this deployment's environment); `page_route` over 64 characters becomes `unknown`; cuts values at 128 characters; routes each metric stream to one aggregator (`loadbalancing`, `routing_key: streamID`) |
 | Aggregator (`aggregator.yaml`) | Re-stamps each delta with its arrival time (device clocks are not trusted), then `delta_to_cumulative` for Mimir. One converter per stream: two Collectors converting the same stream would write conflicting totals |
 
-`examples/collector/test` keeps the allowlists equal to the metric registry; `pnpm test-collector` (CI job `collector`) runs two gateways and two aggregators in the Collector image; the integrated stack routes `/otel` through both tiers.
+The allowlists bound what one request adds, not the product of allowed values: set Mimir's per-tenant series limits too (`examples/collector/README.md`). `examples/collector/test` keeps the allowlists equal to the metric registry; `pnpm test-collector` (CI job `collector`) runs two gateways and two aggregators in the Collector image; the integrated stack routes `/otel` through both tiers.
 
 ---
 
@@ -678,7 +678,7 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 | `appUpdate.pollIntervalMs` | — (required) | 10 s – 24 h |
 
 ### 12.2 Build-time constants (shell)
-`__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`) feed `initializeCore`. The SDK's own `__SDK_VERSION__` is defined when the SDK is built.
+`__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`) feed `initializeCore`. The example shell takes the environment from `PLATFORM_ENVIRONMENT`: a production build without it fails (a development build defaults to `dev`); the repository's `pnpm build` passes `dev` when it is unset. The SDK's own `__SDK_VERSION__` is defined when the SDK is built.
 
 ### 12.3 Reserved browser storage keys
 
