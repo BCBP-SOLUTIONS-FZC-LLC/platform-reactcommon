@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `@bcbp-solutions-fzc-llc/webpack-preset`: `SdkVersionPlugin`, in every preset (webpack, `/rspack`, `/rsbuild`). A build fails when the SDK installed for the app is not the preset's own version: the preset's shared map and a remote's required range (`^<version>`) come from that SDK, so a mismatch declared one SDK and called another's exports. An app without the SDK installed is not checked.
 - `/react`: `MFEErrorBoundary` takes `resetKeys`. The boundary clears its error when `mfe` or any reset key changes (say the route's id), as retry does; `RemoteBoundary` does so when `remote` or `module` changes. Before, a boundary that stayed mounted kept showing the previous tender's error after navigating to another.
+- All three packages: `engines.node` `>=22` (the Node the build and the preset need), and a `README.md` in each tarball pointing to the repository's documentation. `publish:check` and `pack-packages.sh` refuse a tarball without either.
 
 ### Fixed
 

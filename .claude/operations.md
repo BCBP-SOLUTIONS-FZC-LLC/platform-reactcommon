@@ -23,7 +23,7 @@ Commands, CI, releases and the Docker suites. The README's *Local development*, 
 | `pnpm contracts:sync [--update-pins]` / `contracts:check` | Generated contracts from the pinned commits |
 | `pnpm metrics:parity` · `metrics:proposal` | SDK rules vs gincommon `metricslint`; the Tier 1 proposal judged by it |
 | `pnpm api` · `exports:sync` · `docs:sync` | Regenerate API reports, exports + SDK facts, generated docs + diagram blocks |
-| `pnpm publish:check` | After `.github/scripts/pack-packages.sh`: tarballs publishable, dist-tag |
+| `pnpm publish:check` | After `.github/scripts/pack-packages.sh`: tarballs publishable (scope, registry, repository, `engines.node >=22`, README in each), dist-tag |
 
 ## CI (`.github/workflows/`)
 

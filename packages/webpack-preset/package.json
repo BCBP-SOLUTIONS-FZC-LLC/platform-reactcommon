@@ -10,8 +10,12 @@
   "description": "Module Federation preset for the platform's shell and remotes, for webpack 5, Rspack and Rsbuild: shared singletons, the SDK provided by the shell, chunk integrity, CSP-safe output (design doc \u00a7C3).",
   "type": "module",
   "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "exports": {
     ".": {

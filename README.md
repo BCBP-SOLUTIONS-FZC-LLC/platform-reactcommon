@@ -368,7 +368,7 @@ pnpm verify
 | `pnpm contracts:sync` / `contracts:check` | Regenerate / check `contracts/` (`--update-pins` moves the pins to the checkouts' HEAD) |
 | `pnpm docs:sync` / `docs:check` | Generated docs and the diagram blocks in ARCHITECTURE.md |
 | `pnpm metrics:parity` | The SDK's metric checks vs gincommon's `metricslint` |
-| `pnpm publish:check` | The packed tarballs (`dist-packages/`) are publishable to GitHub Packages: scope, registry, repository link, one version, no `workspace:` specifiers; `--dist-tag` prints the tag a release uses |
+| `pnpm publish:check` | The packed tarballs (`dist-packages/`) are publishable to GitHub Packages: scope, registry, repository link, `engines.node` `>=22`, a `README.md` in each tarball, one version, no `workspace:` specifiers; `--dist-tag` prints the tag a release uses |
 | `pnpm metrics:proposal` | The Tier 1 registry proposal merged into gincommon's registry, judged by `metricslint` (`registry`, `check -strict`, `refs` on `monitoring/`); `--emit <file>` writes the candidate `registry.json` |
 | `pnpm run rules-check` / `dashboards-check` | `promtool` check and unit tests for `monitoring/prometheus`, and the dashboards' PromQL syntax (Docker) |
 | `pnpm examples:check` | CSP and sharing checks on the example builds (after `pnpm build`) |

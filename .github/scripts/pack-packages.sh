@@ -19,10 +19,10 @@ for dir in packages/frontend-sdk packages/webpack-preset packages/eslint-plugin;
   echo "${name}@${version}" >> "${OUT_ABS}/packages.txt"
 done
 
-# Every tarball must contain package.json and dist/ (an empty `files` list ships nothing).
+# Every tarball must contain package.json and dist/ (README.md too; an empty `files` list ships nothing).
 for tgz in "${OUT_ABS}"/*.tgz; do
   listing=$(tar -tzf "${tgz}")
-  for want in package/package.json package/dist/; do
+  for want in package/package.json package/README.md package/dist/; do
     grep -q "^${want}" <<<"${listing}" || { echo "::error title=Pack::$(basename "${tgz}") has no ${want}"; exit 1; }
   done
 done
