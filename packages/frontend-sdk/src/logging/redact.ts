@@ -7,9 +7,9 @@ export { scrubSecrets } from '../core/index.ts';
 
 const REDACTED = '[REDACTED]';
 
-/** URL queries and fragments removed, sanitizeString (controls, 256 bytes), then scrubSecrets: what every logged string goes through. */
+/** sanitizeString (controls, 256 bytes), URL queries and fragments removed, then scrubSecrets: what every logged string goes through. */
 export function cleanString(s: string): string {
-  return scrubSecrets(sanitizeString(stripUrlQueries(s)));
+  return scrubSecrets(stripUrlQueries(sanitizeString(s))); // cut to 256 bytes first: the strip is then cheap
 }
 
 /** A log attribute value: OTLP AnyValue (primitives, arrays, maps). */
@@ -38,6 +38,11 @@ interface Walk {
   left: number;
 }
 
+/** A key as logged: cut to 256 bytes like any string, so one long key cannot outgrow the record. */
+function attrKey(k: string): string {
+  return k.length > 64 ? sanitizeString(k) : k;
+}
+
 function toLogValue(v: unknown, walk: Walk): LogValue | undefined {
   if (walk.left <= 0) return TRUNCATED;
   const value = toLogValueOnce(v, walk);
@@ -54,7 +59,11 @@ function toLogValueOnce(v: unknown, walk: Walk): LogValue | undefined {
   if (typeof v === 'bigint') return v.toString();
   if (v === undefined || typeof v === 'function' || typeof v === 'symbol') return undefined;
   if (v instanceof Date) return Number.isNaN(v.getTime()) ? 'Invalid Date' : v.toISOString();
-  if (v instanceof Error) return serializeError(v) as unknown as LogValue;
+  if (v instanceof Error) {
+    const e = serializeError(v);
+    walk.left -= e.name.length + e.message.length + (e.stack?.length ?? 0) + (e.cause?.length ?? 0);
+    return e as unknown as LogValue;
+  }
   if (typeof v === 'object') {
     if (seen.has(v)) return '[Circular]';
     seen.add(v);
@@ -73,14 +82,15 @@ function toLogValueOnce(v: unknown, walk: Walk): LogValue | undefined {
       // A Map logs as an object of its entries; a non-string key is stringified (and cleaned).
       const entries = v instanceof Map ? Array.from(v as Map<unknown, unknown>, ([k, x]) => [mapKey(k), x] as const) : Object.entries(v);
       const o: Record<string, LogValue> = {};
-      for (const [k, x] of entries) {
+      for (const [rawKey, x] of entries) {
+        const k = attrKey(rawKey);
         if (walk.left <= 0) {
           o[k] = TRUNCATED;
           break;
         }
         walk.left -= k.length;
         // sanitizeFields (gincommon parity) passes class instances through; their keys are checked here.
-        if (isSensitiveKey(k)) {
+        if (isSensitiveKey(rawKey)) {
           o[k] = REDACTED;
           continue;
         }
@@ -100,7 +110,12 @@ export function redactAttributes(attrs: Record<string, unknown>): Record<string,
   const redacted = sanitizeFields(attrs);
   const out: Record<string, LogValue> = {};
   const walk: Walk = { seen: new WeakSet<object>(), left: ATTRIBUTES_MAX_BYTES };
-  for (const [k, v] of Object.entries(redacted)) {
+  for (const [rawKey, v] of Object.entries(redacted)) {
+    const k = attrKey(rawKey);
+    if (walk.left <= 0) {
+      out[k] = TRUNCATED; // one marker, then nothing: the rest of the keys would outgrow the record too
+      break;
+    }
     walk.left -= k.length;
     const lv = toLogValue(v, walk);
     if (lv !== undefined) out[k] = lv;

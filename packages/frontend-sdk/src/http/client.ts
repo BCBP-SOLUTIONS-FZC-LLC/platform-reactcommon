@@ -38,7 +38,7 @@ export interface RequestOptions<B = unknown> {
   signal?: AbortSignal;
   /** Client deadline per attempt; default the config's api.timeoutMs (35 s). */
   timeoutMs?: number;
-  /** Retries after the first attempt (default 2); POST retries only with unsafe: true. false disables. */
+  /** Retries after the first attempt (default 2, at most 5); POST retries only with unsafe: true. false disables. */
   retry?: false | { attempts?: number; unsafe?: boolean };
   /** POST only; default a new UUID per logical call, reused across its retries. */
   idempotencyKey?: string;
@@ -73,6 +73,8 @@ type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 const DEFAULT_TIMEOUT_MS = 35_000;
 const DEFAULT_RETRIES = 2;
+/** retry.attempts above this are capped: a misconfigured Infinity would otherwise retry for ever. */
+const MAX_RETRIES = 5;
 const BACKOFF_BASE_MS = 250;
 const BACKOFF_CAP_MS = 5_000;
 const RETRY_AFTER_CAP_MS = 30_000;
@@ -136,8 +138,11 @@ function buildUrl(baseUrl: string, template: string, params?: RequestOptions['pa
 
 function encodeBody(body: unknown, headers: Headers): BodyInit | undefined {
   if (body === undefined) return undefined;
-  if (typeof body === 'string' || body instanceof FormData || body instanceof Blob || body instanceof URLSearchParams || body instanceof ArrayBuffer) {
-    return body;
+  if (typeof ReadableStream !== 'undefined' && body instanceof ReadableStream) {
+    throw new TypeError('a ReadableStream body cannot be sent: a retry or a refresh would need it twice; pass a Blob or an ArrayBuffer');
+  }
+  if (typeof body === 'string' || body instanceof FormData || body instanceof Blob || body instanceof URLSearchParams || body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+    return body as BodyInit;
   }
   if (!headers.has('content-type')) headers.set('content-type', 'application/json');
   return JSON.stringify(body);
@@ -325,7 +330,11 @@ async function attempt(call: Call, token: string | undefined): Promise<Response>
   call.release = combined?.release;
   const signal = combined?.signal ?? timeout;
   try {
-    return await fetch(url, { method, headers, signal, ...(body === undefined ? {} : { body }) });
+    // A redirect is not followed when the call carries a token or correlation headers: an API that redirects
+    // elsewhere would take them along (fetch drops only Authorization, and only on newer browsers).
+    // execute() turns it into a synthetic 502. A plain call follows redirects as fetch does.
+    const carries = ['authorization', 'traceparent', 'tracestate', 'x-request-id', 'x-session-id'].some((h) => headers.has(h));
+    return await fetch(url, { method, headers, signal, redirect: carries ? 'manual' : 'follow', ...(body === undefined ? {} : { body }) });
   } catch (e) {
     throw transportError(call, e);
   }
@@ -343,7 +352,8 @@ async function currentToken(call: Call): Promise<string | undefined> {
 /** The whole logical call: attempts, the 401 path, retries, then data or an ApiError. */
 async function execute<T>(call: Call): Promise<ApiResponse<T>> {
   const started = performance.now();
-  const retries = call.o.retry === false ? 0 : Math.max(0, call.o.retry?.attempts ?? DEFAULT_RETRIES);
+  const attempts = call.o.retry === false ? 0 : Math.floor(Number(call.o.retry?.attempts ?? DEFAULT_RETRIES));
+  const retries = Number.isNaN(attempts) ? 0 : Math.min(MAX_RETRIES, Math.max(0, attempts));
   const retryable = IDEMPOTENT.has(call.method) || (call.o.retry !== false && call.o.retry?.unsafe === true);
   let token = await currentToken(call);
   let refreshed = false;
@@ -382,13 +392,21 @@ async function execute<T>(call: Call): Promise<ApiResponse<T>> {
         continue;
       }
 
+      // An unexpected redirect (not followed with a token, see attempt) or a 2xx body that is not the JSON
+      // it says it is (a proxy's HTML page, a truncated answer): a synthetic 502, one of the ApiErrors.
+      const unusable = () => parseProblemResponse(new Response(null, { status: 502, headers: res.headers }), { requestId: call.requestId });
+      if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400 && res.status !== 304)) {
+        await res.body?.cancel().catch(() => {});
+        throw await unusable();
+      }
       // The body is read under the same deadline and signal as the fetch: its failures get the same types.
       let data: T;
       try {
         if (!res.ok) throw await parseProblemResponse(res, { requestId: call.requestId });
         data = await readData<T>(res);
       } catch (e) {
-        if (e instanceof ProblemError || e instanceof SyntaxError) throw e;
+        if (e instanceof ProblemError) throw e;
+        if (e instanceof SyntaxError) throw await unusable();
         throw transportError(call, e);
       }
       record(call, started, res.status);

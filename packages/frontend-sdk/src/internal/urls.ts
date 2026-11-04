@@ -26,11 +26,17 @@ export function collectorUrl(otlpBaseUrl: string, signal: 'traces' | 'logs' | 'm
   return new URL(`${otlpBaseUrl.replace(/\/$/, '')}/v1/${signal}`, base).href;
 }
 
-// An absolute URL or a '/'-rooted path in free text, then its query string and/or fragment (an OIDC
-// callback's code and state, a pre-signed URL's signature): up to whitespace, a quote, '<', '>' or ')'.
-const URL_QUERY = /((?:\b(?:https?|wss?|blob|file):\/\/|(?<![\w.~-])\/)[^\s?#"'<>)]*)[?#][^\s"'<>)]*/gi;
+// A token of free text (up to whitespace, a quote, '<', '>' or ')'; '[', ']' and '(' stay inside: `?filter[owner]=…`), and one that is a URL or a path
+// (a '/' before its first '?' or '#') with a query string or fragment after it: an OIDC callback's code and
+// state, a pre-signed URL's signature (`bucket.s3.amazonaws.com/k?X-Amz-Signature=…`, `api/x?token=…`).
+// Both are linear: a long run of '/' or a large data URL costs one pass, never one per character.
+const TOKEN = /[^\s"'<>)]+/g;
+const WITH_QUERY = /^([^?#/]*\/[^?#]*)[?#]./;
 
-/** Removes the query string and fragment of every absolute URL and rooted path in `s` (logged text and span attributes). */
+/** Removes the query string and fragment of every URL and path in `s` (logged text and span attributes). */
 export function stripUrlQueries(s: string): string {
-  return s.replace(URL_QUERY, '$1');
+  return s.replace(TOKEN, (token) => {
+    const m = WITH_QUERY.exec(token);
+    return m ? m[1]! : token;
+  });
 }

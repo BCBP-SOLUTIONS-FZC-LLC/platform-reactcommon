@@ -58,6 +58,8 @@ export interface PlatformRuntime {
   i18n: unknown;
   /** Where /http gets access tokens (/auth provides it; /http owns the type). */
   tokenSource: unknown;
+  /** Run synchronously before the SDK reloads the page (internal/reload.ts): a chunk error, an app update. */
+  beforeReload: Set<() => void>;
   /** The shell's IdentityProvider once initializeAuth has run (/auth owns the type). */
   identityProvider: unknown;
   /** The validated remote manifest (/mfe owns its type). */
@@ -108,6 +110,7 @@ function createRuntime(): PlatformRuntime {
     trustedTypesPolicy: undefined,
     flagProvider: undefined,
     navigator: undefined,
+    beforeReload: new Set(),
     i18n: undefined,
     tokenSource: undefined,
     identityProvider: undefined,

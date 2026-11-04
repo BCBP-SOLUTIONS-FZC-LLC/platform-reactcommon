@@ -205,6 +205,21 @@ describe('rememberWorkspace and the cache', () => {
     expect(cachedWorkspace()).toBeUndefined(); // an object, not the list
   });
 
+  it('skips cached entries whose realm does not fit the slug, or is not a realm (review: workspace cache)', () => {
+    page.local.setItem(
+      WORKSPACE_CACHE_KEY,
+      JSON.stringify([
+        { slug: 'acme', realm: 'tenant-evil', trial: false }, // another tenant's realm under acme's slug
+        { slug: 'acme', realm: '../admin', trial: false }, // not a realm: would change the login URL's path
+        { slug: 'beta', realm: 'tenant-beta', trial: true }, // trial uses the trial realm
+        { slug: 'globex', realm: 'tenant-globex', trial: false },
+      ]),
+    );
+    expect(cachedWorkspace('acme')).toBeUndefined();
+    expect(cachedWorkspace('beta')).toBeUndefined();
+    expect(cachedWorkspace()).toEqual({ slug: 'globex', realm: 'tenant-globex', trial: false });
+  });
+
   it('localStorage denied: no cache, no throw, and the URL still gets its slug', () => {
     page.url = new URL('https://app.example.com/tenders');
     Object.defineProperty(globalThis, 'localStorage', {

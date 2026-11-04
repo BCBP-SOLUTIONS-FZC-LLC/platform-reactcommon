@@ -24,7 +24,7 @@ The flows a change most often touches, in order. Authoritative detail: [LLD §8]
 
 ## Sign-out (global by default)
 
-`logout(o?)` / the shell's `signOut` / `useSignOut()`: drop tokens, `clearAllAppStorage()`, rotate the session id, set the signed-out mark, broadcast `{ type: 'logout' }`, move to `anonymous { signed-out }`; then, **unless `{ global: false }`**, assign the realm's end-session URL (`id_token_hint`, `client_id`, `post_logout_redirect_uri=<origin>/`). Other tabs follow the broadcast. `switchWorkspace(w)` is a local sign-out of the realm, then `login(w)`.
+`logout(o?)` / the shell's `signOut` / `useSignOut()`: drop tokens, `clearAllAppStorage()`, rotate the session id, set the signed-out mark, broadcast `{ type: 'logout' }`, move to `anonymous { signed-out }`; then, **unless `{ global: false }`**, a form POST to the realm's end-session endpoint (`id_token_hint`, `client_id`, `post_logout_redirect_uri=<origin>/` in the body, never the URL). Other tabs follow the broadcast, expired and loading ones included. `switchWorkspace(w)` is a local sign-out of the realm, then `login(w)`.
 
 ## API Call (`createApiClient`)
 

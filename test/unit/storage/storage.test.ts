@@ -159,6 +159,9 @@ describe('clearAllAppStorage', () => {
     local.setItem('i18nextLng', 'ar');
     // Shaped like the old unprefixed `<ns>:<appId>:<key>`, which clearAllAppStorage used to remove (review: storage key prefix).
     local.setItem('react-query:cache:v1', '{}');
+    // Written by alpha.3 and earlier, unprefixed: still removed, so they never outlive a sign-out (review 2).
+    local.setItem('tenant-acme:tenders:filters', '{}');
+    session.setItem(`trial:${TENANT}:iam-admin:draft`, '{}');
     clearAllAppStorage();
     expect([...Array(local.length).keys()].map((i) => local.key(i)).sort()).toEqual(
       ['@bcbp-solutions-fzc-llc/frontend-sdk:workspaces', SESSION_ID_STORAGE_KEY, 'i18nextLng', 'other-lib:setting', 'react-query:cache:v1'].sort(),

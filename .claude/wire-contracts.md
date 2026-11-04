@@ -23,7 +23,7 @@ Every API error is an RFC 9457 problem decoded as gincommon's client does (`cont
 ## Identity Provider (Keycloak)
 
 - Issuer per realm: `<authOrigin>/realms/<realm>`; client `tender-web` (public, PKCE S256); the SDK asks for `auth.scopes` from `runtime.json` (default `['openid']`; must include `openid`). Name and email come from the **ID token** (realm-provisioner #49: access tokens carry no name or email; they keep `sub`, `aud`, `tenant_id`, `auth_time`).
-- End-session: `/protocol/openid-connect/logout?id_token_hint&client_id&post_logout_redirect_uri=<origin>/` (registered as `<origin>/*`).
+- End-session: form POST to `/protocol/openid-connect/logout` with `id_token_hint`, `client_id`, `post_logout_redirect_uri=<origin>/` (registered as `<origin>/*`); CSP `form-action` lists the IdP origin.
 - IAM ports used by the shell: PUB-1 `GET /api/v1/public/tenants/resolve?identifier=` (no auth), P-35 `GET /api/v1/me/session-context` (cases in `contracts/tenant-resolve-cases.json`, `session-context-cases.json`).
 
 ## Browser Storage and Channel
@@ -31,6 +31,7 @@ Every API error is an RFC 9457 problem decoded as gincommon's client does (`cont
 | Key | Area | Owner |
 |---|---|---|
 | `@bcbp-solutions-fzc-llc/frontend-sdk:session-id` | local | `/core` |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:session-started` | local | `/core` (the session id's start; a new id after 24 h) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:workspaces` | local | `/auth` (workspace cache) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:signed-out` | local | `/auth` (no silent sign-in; next login `prompt=login`) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-activity` | local | `/auth` (cross-tab idle) |

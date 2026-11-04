@@ -110,4 +110,9 @@ export interface IdentityProvider {
    */
   beforeRedirect(l: (r: { reason: 'step-up' | 'restore' | 'login' | 'switch' }) => void): () => void;
   getState(): SessionState;
+  /**
+   * Stops the provider without signing out: closes the cross-tab channel, clears its timers and listeners and
+   * forgets the tokens in this instance. For hot module replacement and tests; a page never needs it.
+   */
+  dispose?(): void;
 }
