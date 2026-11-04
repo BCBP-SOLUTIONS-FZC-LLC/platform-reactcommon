@@ -61,13 +61,15 @@ function problemWith(name: string, e: unknown): string | undefined {
 }
 
 /**
- * Shell only: fetches and validates /remotes/manifest.json (no HTTP cache). Each invalid remote
+ * Shell only: fetches and validates /remotes/manifest.json (no HTTP cache; within remotes.loadTimeoutMs). Each invalid remote
  * is dropped with an error log; a manifest that is not a JSON object throws. The result is
  * published to the PlatformRuntime: the entries for loadRemote, and remote → ownerDomain for
  * /metrics.
  */
 export async function loadManifest(url: string = DEFAULT_URL): Promise<RemoteManifest> {
-  const res = await fetch(url, { cache: 'no-cache', credentials: 'same-origin', headers: { accept: 'application/json' } });
+  // Bounded like a remote load: a hung request would otherwise hold the shell's bootstrap for ever.
+  const timeoutMs = tryGetConfig()?.remotes.loadTimeoutMs ?? 10_000;
+  const res = await fetch(url, { cache: 'no-cache', credentials: 'same-origin', headers: { accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`${url} answered HTTP ${res.status}`);
   const raw = (await res.json()) as unknown;
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new TypeError(`${url} is not a JSON object of remotes`);

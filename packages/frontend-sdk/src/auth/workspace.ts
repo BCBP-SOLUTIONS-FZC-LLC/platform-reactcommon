@@ -11,6 +11,7 @@ export const WORKSPACE_CACHE_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:workspa
 const MAX_CACHED = 20;
 const SLUG = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 const MAX_SLUG = 63;
+const REALM = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 function isSlug(v: unknown): v is string {
   return typeof v === 'string' && v.length <= MAX_SLUG && SLUG.test(v);
@@ -45,9 +46,13 @@ function readCache(): CachedWorkspace[] {
     return [];
   }
   if (!Array.isArray(raw)) return [];
+  // An entry written by another version or by other code must still fit its slug (the realm decides the
+  // login URL): without the config, only the realm's shape is checked.
+  const cfg = tryGetConfig()?.auth;
   return raw.flatMap((e: unknown) => {
     const { slug, realm, trial } = (e ?? {}) as Record<string, unknown>;
-    return isSlug(slug) && typeof realm === 'string' && realm !== '' && typeof trial === 'boolean' ? [{ slug, realm, trial }] : [];
+    if (!isSlug(slug) || typeof realm !== 'string' || !REALM.test(realm) || typeof trial !== 'boolean') return [];
+    return !cfg || realmMatches({ realm, trial }, slug, cfg) ? [{ slug, realm, trial }] : [];
   });
 }
 

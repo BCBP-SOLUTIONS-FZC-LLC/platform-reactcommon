@@ -1225,7 +1225,7 @@ Response headers policy (all behaviors except `/api/*`, which the gateway owns):
 Content-Security-Policy:
   default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self';
   connect-src 'self' https://auth.bcbpsolutions.com;
-  manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self';
+  manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self' https://auth.bcbpsolutions.com;
   frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests;
   require-trusted-types-for 'script'; trusted-types platform-sdk platform-webpack dompurify 'allow-duplicates';
   report-uri /csp-report; report-to csp

@@ -194,6 +194,23 @@ describe('loadRemote', () => {
     expect(injected).toHaveLength(1);
   });
 
+  it('the timeout covers the whole attempt: a module whose chunks hang fails as a timeout (review: init/get)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const c = install('tenders', {});
+      c.get.mockImplementation(() => new Promise(() => {})); // a chunk that never arrives
+      const p = loadRemote('tenders', './Hung', { timeoutMs: 1_000, retries: 1 }).catch((x: unknown) => x);
+      await vi.advanceTimersByTimeAsync(5_000);
+      const e = await p;
+      expect(e).toBeInstanceOf(RemoteLoadError);
+      expect((e as RemoteLoadError).message).toContain('within 1000 ms');
+      expect(c.get).toHaveBeenCalledTimes(2); // retried, as a timeout is
+      expect(metrics.at(-1)).toEqual({ mfe: 'tenders', outcome: 'error', reason: 'timeout' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('refuses a killed remote without loading it', async () => {
     resetRuntimeForTests();
     initializeCore({ serviceName: 'web-app', domain: 'tender_management', environment: 'dev' });
@@ -403,11 +420,17 @@ describe('app updates', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ version }))));
     const l = vi.fn();
     subscribeAppUpdate(l);
-    const stop = startVersionPolling({ intervalMs: 10 });
-    await vi.waitFor(() => expect(getRuntime().appUpdate).toMatchObject({ current: '7' }));
-    version = '8';
-    await vi.waitFor(() => expect(l).toHaveBeenCalledWith({ current: '7', available: '8' }));
-    stop();
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const stop = startVersionPolling({ intervalMs: 1_000 });
+      await vi.waitFor(() => expect(getRuntime().appUpdate).toMatchObject({ current: '7' }));
+      version = '8';
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(l).toHaveBeenCalledWith({ current: '7', available: '8' }));
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('ignores failed or malformed polls', async () => {
@@ -415,10 +438,28 @@ describe('app updates', () => {
     vi.stubGlobal('fetch', fetchMock);
     const l = vi.fn();
     subscribeAppUpdate(l);
-    const stop = startVersionPolling({ intervalMs: 5 });
-    await vi.waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(3));
-    stop();
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const stop = startVersionPolling({ intervalMs: 1_000 });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(3));
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
     expect(l).not.toHaveBeenCalled();
+  });
+
+  it('refuses a polling interval that would hammer /version.json (review: intervalMs)', () => {
+    for (const intervalMs of [0, 5, Number.NaN, 1_500.5]) expect(() => startVersionPolling({ intervalMs })).toThrow(RangeError);
+  });
+
+  it('a manifest request that hangs fails within remotes.loadTimeoutMs instead of holding the bootstrap', async () => {
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init?: RequestInit) => ((signal = init!.signal!), new Promise<Response>(() => {}))));
+    void loadManifest().catch(() => {});
+    await vi.waitFor(() => expect(signal).toBeDefined());
+    expect(signal!.aborted).toBe(false); // a timeout signal, aborted when the timeout passes
   });
 });
 

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `/auth`: `IdentityProvider.dispose()` (optional) stops a provider without signing out: closes the cross-tab channel, clears timers and listeners, forgets the tokens. For hot module replacement and tests.
+
+### Changed
+
+- **Breaking (deployment):** `/auth`'s global sign-out POSTs to the realm's end-session endpoint (a hidden form, removed once the page leaves) instead of navigating to it with the ID token in the query string, so the token (with the user's name and email) never lands in the browser history or an access log. **The shell's CSP `form-action` must allow the IdP origin**, or the browser blocks the POST and the SSO session stays alive (a `content security policy violation` warn is logged). `examples/cloudfront/csp.mjs` (`buildCsp({ idpOrigin })`), `response-headers-policy.json` and the design doc's header do. **Upgrade:** add the IdP origin to `form-action` before deploying the shell; there is no opt-out.
+- `/react`: `useBeforeAuthRedirect` also runs before the SDK reloads the page (a chunk-load error after a deploy, `useAppUpdate().reload`), so a draft survives those too.
+- `/core`: the RUM session id lasts at most 24 hours; a browser that silent-restores day after day gets a new one.
+
+### Fixed
+
+- `/logging`, `/tracing`: URL stripping is linear (40 000 `/` characters took 1.5 s on the main thread) and runs after the 256-byte cut; it also strips queries after scheme-less hosts (`bucket.s3.amazonaws.com/k?X-Amz-Signature=…`) and relative paths, and leaves prose such as `/help?` alone. Span names are cleaned like attribute values.
+- `/logging`: the ~8 KiB attribute cap counts serialised errors and keys, cuts long keys, and stops after one `[TRUNCATED]` marker (records of 853 KB and 433 KB got through).
+- `/react`: a boundary whose `resetKeys` change in the same update that makes its child throw catches and logs the error once, not twice. `useApi` never returns the previous deps' data or error for new deps, not even for one render (a form could save tender 42's fields to tender 43); `reload()` still keeps the data. The default fallback takes focus. Global error capture is rate-limited (10 per signature and 60 per page a minute; the next line carries `suppressed`).
+- `/auth`: while a refresh backs off, `getAccessToken` and a 401 join it and get its answer instead of failing at once; the retry must answer 5 s before the token expires. An expired or loading tab follows another tab's sign-out (anonymous, storage no longer the tenant's); a sign-in the loading tab was finishing is dropped. A step-up answer whose `auth_time` is older than `max_age` is reported (`step-up not performed by the identity provider`). Cached workspaces whose realm does not fit their slug are ignored.
+- `/security`: `sanitizeHtml({ allowLinks: true })` removed `//evil` but kept `/\evil.example`, which browsers follow to another origin; links and images with a backslash, whitespace or control character are removed, and images and media (`src`, `poster`) only keep same-origin paths and `data:image/*` (as CSP `img-src 'self' data:` allows).
+- `/http`: a 2xx body that is not the JSON it claims, or a redirect on a call that carries a token or correlation headers (no longer followed: they would go to the redirect's origin), is a synthetic 502 `ProblemError` instead of a raw `SyntaxError`; typed arrays and DataViews are sent as bytes (they were JSON-encoded), a `ReadableStream` body is refused (not replayable); `retry.attempts` is capped at 5.
+- `/mfe`: a remote load's timeout covers the whole attempt (the entry, the share-scope `init` and the module's chunks), not only the entry script; `loadManifest` and the `/version.json` poll time out; `startVersionPolling` refuses an interval under 1 s. The container cache and the flag provider's subscription live on the runtime, so a second SDK copy of the major neither re-initialises containers nor leaks subscriptions.
+- `/i18n`: a catalog that does not answer within 10 s counts as failed instead of holding `setLocale`; a failed catalog is retried (2 s, 4 s, 8 s) while its locale is shown; the Intl format caches are bounded.
+- `/storage`: `clearAllAppStorage` also removes the unprefixed realm keys alpha.3 and earlier wrote, so they never outlive a sign-out on a shared device.
+- `/react`: `useStepUp().needed` turns true when the MFA window lapses while the page stays open.
+
 ### Changed
 
 - **Breaking:** a remote's container global is `__platform_mfe_<name>` (`-` as `_`), not the bare name. Browsers expose every element `id` as a `window` property, and `loadRemote` skipped the entry script whenever the global existed, so a remote named like an element on the page (`<div id="dashboard">`, the example shell's `root`) or a browser global (`history`, `status`, `name`) failed as `incompatible`. The SDK's `loadRemote` and the preset's `containerName` change together, and `loadRemote` now also loads the entry when the global holds something other than a container. **Upgrade:** rebuild every remote with the new preset and deploy the shell with the new SDK at the same time (a remote built with an older preset defines the old global, which the new SDK does not read). There is no opt-out.

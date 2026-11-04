@@ -2,6 +2,7 @@
 // once per version, and /version.json polling tells the shell an update is available.
 import { getIdentity } from '../core/index.ts';
 import { tryGetConfig } from '../config/index.ts';
+import { reloadPage } from '../internal/reload.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { getLogger } from '../logging/index.ts';
 import { RemoteLoadError } from './remote.ts';
@@ -64,7 +65,7 @@ export function reloadOnceForChunkError(e: unknown): boolean {
   // Essential: a deploy that removed the running build's chunks must be visible without telemetry
   // consent. The reload's pagehide sends it by beacon.
   getLogger().warn('chunk load failed: reloading', { error: e, version, essential: true });
-  globalThis.location?.reload();
+  reloadPage(); // useBeforeAuthRedirect's listeners keep their drafts first
   return true;
 }
 
@@ -80,7 +81,7 @@ async function check(url: string): Promise<void> {
   if (globalThis.document?.visibilityState === 'hidden') return;
   let version: unknown;
   try {
-    const res = await fetch(url, { cache: 'no-cache', credentials: 'same-origin', headers: { accept: 'application/json' } });
+    const res = await fetch(url, { cache: 'no-cache', credentials: 'same-origin', headers: { accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
     if (!res.ok) return;
     version = ((await res.json()) as { version?: unknown })?.version;
   } catch {
@@ -112,6 +113,8 @@ async function check(url: string): Promise<void> {
 export function startVersionPolling(o?: { url?: string; intervalMs?: number }): () => void {
   const url = o?.url ?? '/version.json';
   const interval = o?.intervalMs ?? tryGetConfig()?.appUpdate.pollIntervalMs ?? 300_000;
+  // 0 or a typo would poll /version.json in a tight loop from every open tab.
+  if (!Number.isInteger(interval) || interval < 1_000) throw new RangeError(`intervalMs must be an integer of at least 1000, got ${String(interval)}`);
   void check(url);
   const timer = setInterval(() => void check(url), interval);
   const onVisible = () => {

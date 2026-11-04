@@ -138,7 +138,7 @@ export function tracingStats(): Readonly<TracingStats> | undefined {
 
 /** As a logged string: URL queries and fragments removed, control characters removed, 256 bytes, JWT and Bearer credentials scrubbed. */
 function cleanString(s: string): string {
-  return scrubSecrets(sanitizeString(stripUrlQueries(s)));
+  return scrubSecrets(stripUrlQueries(sanitizeString(s))); // cut to 256 bytes first: the strip is then cheap
 }
 
 function safeAttribute(k: string, v: string | number | boolean): string | number | boolean {
@@ -185,7 +185,8 @@ class SdkSpan implements Span {
 export function getTracer(scope: string): Tracer {
   const inner = trace.getTracer(scope);
   return {
-    startSpan: (name, attrs) => new SdkSpan(inner.startSpan(name, { attributes: safeAttributes(attrs) })),
+    // The name is cleaned like an attribute: a caller's `GET ${url}` would otherwise carry a query or a token.
+    startSpan: (name, attrs) => new SdkSpan(inner.startSpan(cleanString(String(name)), { attributes: safeAttributes(attrs) })),
   };
 }
 

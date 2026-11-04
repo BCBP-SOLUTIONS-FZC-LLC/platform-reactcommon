@@ -102,3 +102,35 @@ test.describe('detector controls', () => {
       .toEqual([expect.objectContaining({ effective: 'trusted-types' })]);
   });
 });
+
+// Global sign-out is a form POST to the IdP's end-session endpoint (the ID token stays out of URLs): the
+// production CSP's form-action must let it through, or the SSO session silently stays alive.
+test('the sign-out form POST to the IdP is allowed by form-action', async ({ openHarness }) => {
+  const page = await openHarness();
+  const idp = 'https://auth.bcbpsolutions.com'; // buildCsp's default idpOrigin, which the server's headers use
+  const posted: { method: string; body: string }[] = [];
+  await page.route(`${idp}/**`, async (route) => {
+    posted.push({ method: route.request().method(), body: route.request().postData() ?? '' });
+    // A 200, not Keycloak's 302 back: WebKit's Playwright cannot fulfil a redirect. form-action is checked
+    // before the request leaves, so a POST that arrives here is one the CSP allowed.
+    await route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>signed out</title>' });
+  });
+  await Promise.all([
+    page.waitForURL(`${idp}/**`),
+    page.evaluate((action) => {
+      const form = document.createElement('form');
+      form.method = 'post';
+      form.action = action;
+      for (const [name, value] of [['id_token_hint', 'eyJ.a.b'], ['client_id', 'tender-web']]) {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = name!;
+        input.value = value!;
+        form.appendChild(input);
+      }
+      document.body.appendChild(form);
+      form.submit();
+    }, `${idp}/realms/tenant-acme/protocol/openid-connect/logout`),
+  ]);
+  expect(posted).toEqual([{ method: 'POST', body: 'id_token_hint=eyJ.a.b&client_id=tender-web' }]);
+});

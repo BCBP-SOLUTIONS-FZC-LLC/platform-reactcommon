@@ -1,7 +1,7 @@
 // Error boundaries for remotes (design doc §C1 /react): a render failure in one remote is logged with
 // its mfe scope and shows a fallback with the trace and request ids; it never takes the shell down.
 // A chunk-load failure after a deploy reloads the page once instead.
-import { Component, Suspense, lazy, useMemo, useReducer, type ComponentType, type ErrorInfo, type JSX, type ReactNode } from 'react';
+import { Component, Suspense, lazy, useEffect, useMemo, useReducer, useRef, type ComponentType, type ErrorInfo, type JSX, type ReactNode } from 'react';
 import { problemMessage, t } from '../i18n/index.ts';
 import { getLogger } from '../logging/index.ts';
 import { loadRemote, reloadOnceForChunkError, RemoteDisabledError } from '../mfe/index.ts';
@@ -47,8 +47,13 @@ function viewOf(e: unknown, retry: () => void): ErrorInfoView {
 }
 
 function DefaultFallback({ view }: { view: ErrorInfoView }): JSX.Element {
+  // Focus moves here when the remote is replaced, so a keyboard or screen-reader user is not left on <body>.
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
   return (
-    <div role="alert">
+    <div role="alert" tabIndex={-1} ref={ref}>
       <p>{view.message}</p>
       {view.traceId || view.requestId ? (
         <p>
@@ -101,9 +106,13 @@ class Boundary extends Component<BoundaryProps, { error: { e: unknown } | undefi
     else log.error('remote failed to render', attrs);
   }
 
-  override componentDidUpdate(prev: BoundaryProps): void {
+  override componentDidUpdate(prev: BoundaryProps, prevState: { error: { e: unknown } | undefined }): void {
     // What the boundary shows changed (another tender, another remote): the old error is not this one's.
-    if (this.state.error && (prev.mfe !== this.props.mfe || keysChanged(prev.resetKeys, this.props.resetKeys))) this.setState({ error: undefined });
+    // Only an error from before this update: one caught in it is the new content's own (a reset would
+    // render it again and catch and log it twice).
+    if (prevState.error && this.state.error === prevState.error && (prev.mfe !== this.props.mfe || keysChanged(prev.resetKeys, this.props.resetKeys))) {
+      this.setState({ error: undefined });
+    }
   }
 
   private retry = (): void => {

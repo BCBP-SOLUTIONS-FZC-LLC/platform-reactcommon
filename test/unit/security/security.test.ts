@@ -40,6 +40,19 @@ describe('sanitizeHtml', () => {
     expect(href('//evil.example/x')).toBe('<a>x</a>');
   });
 
+  it('removes links and images a browser would send to another origin, and images CSP would block (review 2)', () => {
+    const href = (h: string) => clean(`<a href="${h}">x</a>`, { allowLinks: true });
+    expect(href('/\\evil.example/x')).toBe('<a>x</a>'); // '\' reads as '/': //evil.example
+    expect(href('/\t/evil.example/x')).toBe('<a>x</a>'); // the tab is dropped: //evil.example
+    expect(href('https://ok.example/a\\b')).toBe('<a>x</a>');
+    expect(href('/tenders/1?tab=bids')).toContain('href="/tenders/1?tab=bids"');
+    expect(clean('<img src="https://tracker.example/p.gif">')).toBe('<img>');
+    expect(clean('<img src="/\\evil.example/p.gif">')).toBe('<img>');
+    expect(clean('<img src="/img/logo.png">')).toBe('<img src="/img/logo.png">');
+    expect(clean('<img src="data:image/png;base64,iVBORw0KGgo=">')).toBe('<img src="data:image/png;base64,iVBORw0KGgo=">');
+    expect(clean('<video src="https://tracker.example/v.mp4" poster="https://tracker.example/p.png"></video>')).toBe('<video></video>');
+  });
+
   it('returns TrustedHTML when the browser has Trusted Types', async () => {
     const created: string[] = [];
     // DOMPurify detects Trusted Types when it is created, as it would at page load.
@@ -214,14 +227,23 @@ describe('sanitizeHtml pre-pass: linear time and no change to the sanitised outp
   it('for 2000 generated inputs, sanitizeHtml returns exactly what DOMPurify returns without the pre-pass', async () => {
     const { default: createDOMPurify } = await import('../../../packages/frontend-sdk/node_modules/dompurify/dist/purify.es.mjs');
     const reference = createDOMPurify(window);
+    // The SDK's own hook: URLs a browser would reroute, images outside 'self' and data:, rel on links.
     reference.addHook('afterSanitizeAttributes', (node) => {
+      for (const attr of ['href', 'src']) {
+        const v = node.getAttribute(attr);
+        if (v !== null && /[\p{Cc}\s\\\u2028\u2029]/u.test(v)) node.removeAttribute(attr);
+      }
+      for (const attr of ['src', 'poster']) {
+        const v = node.tagName === 'A' ? null : node.getAttribute(attr);
+        if (v !== null && !/^(?:\/(?![/\\])|data:image\/(?:png|gif|jpe?g|webp|avif);)/i.test(v)) node.removeAttribute(attr);
+      }
       if (node.tagName === 'A' && node.hasAttribute('href')) node.setAttribute('rel', 'noopener noreferrer');
     });
     const config = {
       USE_PROFILES: { html: true },
       FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'option', 'iframe', 'frame', 'object', 'embed', 'svg', 'math', 'template', 'base', 'link', 'meta', 'a'],
       FORBID_ATTR: ['style', 'srcset', 'action', 'formaction', 'target'],
-      ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|\/(?!\/))/i,
+      ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|\/(?![/\\]))/i,
       ALLOW_DATA_ATTR: false,
     };
     const pieces = ['<p', '<b', '<img', '<a', '<style>', '</style>', '<STYLE >', ' ', '/', '=', '"', "'", '>', 'onclick', 'ONLOAD', 'style', 'title', 'href', 'src', 'x', '/y', 'alert(1)', 'a>b', '</p>', '</b>', 'text', '<!--', '-->', '&amp;', '\n'];

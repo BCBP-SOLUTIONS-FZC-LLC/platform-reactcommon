@@ -1,13 +1,20 @@
 // The RUM session id (design doc §C1 /core). One id per browser profile: it is kept in
 // localStorage under an SDK-reserved key (outside /storage namespaces), shared by every tab and
-// kept across reloads. Logout and the cross-tab idle timeout rotate it (/auth calls
-// rotateSessionId); other tabs see the new id on their next read. It is a random correlation id,
+// kept across reloads, for at most SESSION_MAX_AGE_MS. Logout and the cross-tab idle timeout rotate it
+// (/auth calls rotateSessionId); other tabs see the new id on their next read. It is a random correlation id,
 // never the IdP session id, and it is sent as x-session-id and logged as session_id.
 // When localStorage is unavailable, a per-page id is kept on the PlatformRuntime instead.
 import { UUID_V4_PATTERN, uuidV4 } from './ids.ts';
 import { getRuntime } from './runtime.ts';
 
 export const SESSION_ID_STORAGE_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:session-id';
+/** When the stored session id was created (epoch ms): a session id lives at most SESSION_MAX_AGE_MS. */
+export const SESSION_STARTED_STORAGE_KEY = '@bcbp-solutions-fzc-llc/frontend-sdk:session-started';
+/**
+ * A browser that silent-restores day after day would otherwise keep one session id for weeks, which merges
+ * unrelated visits in RUM and makes the id a long-lived identifier. A new one starts after this.
+ */
+export const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function localStore(): Storage | undefined {
   try {
@@ -28,9 +35,18 @@ export function getSessionId(): string {
   if (!store) return memoryId();
   try {
     const stored = store.getItem(SESSION_ID_STORAGE_KEY);
-    if (stored !== null && UUID_V4_PATTERN.test(stored)) return stored;
+    const started = Number(store.getItem(SESSION_STARTED_STORAGE_KEY));
+    if (stored !== null && UUID_V4_PATTERN.test(stored)) {
+      if (Number.isFinite(started) && started > 0 && Date.now() - started < SESSION_MAX_AGE_MS) return stored;
+      if (!(started > 0)) {
+        store.setItem(SESSION_STARTED_STORAGE_KEY, String(Date.now())); // an id from before the start was kept
+        return stored;
+      }
+      return rotateSessionId(); // older than SESSION_MAX_AGE_MS
+    }
     const id = getRuntime().memorySessionId ?? uuidV4();
     store.setItem(SESSION_ID_STORAGE_KEY, id);
+    store.setItem(SESSION_STARTED_STORAGE_KEY, String(Date.now()));
     return id;
   } catch {
     return memoryId(); // quota or security errors: keep one stable id for this page
@@ -43,6 +59,7 @@ export function rotateSessionId(): string {
   getRuntime().memorySessionId = id;
   try {
     localStore()?.setItem(SESSION_ID_STORAGE_KEY, id);
+    localStore()?.setItem(SESSION_STARTED_STORAGE_KEY, String(Date.now()));
   } catch {
     // the per-page id above still rotates
   }

@@ -35,7 +35,7 @@ const packagePatternsFor = (owner) =>
     }));
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', '**/.build/**', '**/.state/**', '**/temp/**', 'test/fixtures/boundaries/**'] },
+  { ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', '**/.build/**', '**/.state/**', '**/temp/**', 'test/fixtures/boundaries/**', '.claude/worktrees/**'] }, // agent worktrees, git-ignored too
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

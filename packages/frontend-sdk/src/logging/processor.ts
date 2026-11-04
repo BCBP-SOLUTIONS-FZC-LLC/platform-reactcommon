@@ -64,11 +64,7 @@ export class DropOldestLogProcessor implements LogRecordProcessor {
     if (typeof nav?.sendBeacon !== 'function' || batch.length === 0) return batch;
     const body = JsonLogsSerializer.serializeRequest(batch);
     if (!body) return batch;
-    if (body.byteLength > BEACON_MAX_BYTES) {
-      if (batch.length === 1) return batch; // one record over the limit goes through fetch
-      const half = Math.ceil(batch.length / 2);
-      return [...this.beacon(batch.slice(0, half)), ...this.beacon(batch.slice(half))];
-    }
+    if (body.byteLength > BEACON_MAX_BYTES) return batch; // never: drainOnUnload sized it (newestThatFit)
     let accepted: boolean;
     try {
       accepted = nav.sendBeacon(this.beaconUrl, new Blob([body as BlobPart], { type: 'application/json' }));
