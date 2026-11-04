@@ -61,6 +61,8 @@ const ACCESS_TOKEN_LEAD_MS = 5_000;
 const REFRESH_RETRY_MAX_MS = 30_000;
 const ACTIVITY_WRITE_MS = 5_000;
 const IDLE_CHECK_MS = 15_000;
+/** Allowed between a step-up's max_age and the answer's auth_time (clock skew, the user's own time at the IdP). */
+const STEP_UP_SKEW_S = 120;
 const SILENT_ERRORS = new Set(['login_required', 'interaction_required', 'consent_required']);
 const REALM = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'scroll'] as const;
@@ -73,6 +75,8 @@ interface PendingLogin {
   returnUrl: string;
   reason: Reason;
   createdAt: number;
+  /** Step-up: the max_age asked for, checked against the answer's auth_time (OIDC Core §3.1.2.1). */
+  maxAge?: number;
 }
 
 interface Tokens {
@@ -99,11 +103,33 @@ interface TokenResponse {
   error?: unknown;
 }
 
+/**
+ * A top-level form POST to `url`: the fields travel in the body, never in the URL, so nothing lands in the
+ * browser's history or an access log. CSP form-action must allow the IdP origin (examples/cloudfront/csp.mjs).
+ */
+function postNavigate(url: string, fields: Record<string, string>): void {
+  const doc = globalThis.document;
+  const form = doc.createElement('form');
+  form.method = 'post';
+  form.action = url;
+  form.style.display = 'none';
+  for (const [name, value] of Object.entries(fields)) {
+    const input = doc.createElement('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = value;
+    form.appendChild(input);
+  }
+  doc.body.appendChild(form);
+  form.submit();
+}
+
 /** Test seams: the clock, randomness and the page navigation. */
 const internals = {
   now: () => Date.now(),
   random: () => Math.random(),
   assign: (url: string) => globalThis.location.assign(url),
+  post: postNavigate,
 };
 
 export function setAuthInternalsForTests(o: Partial<typeof internals>): void {
@@ -315,7 +341,17 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   };
   channel?.addEventListener('message', (ev: MessageEvent) => {
     const type = (ev.data as { type?: unknown } | null)?.type;
-    if (state.status !== 'authenticated') return;
+    if (state.status !== 'authenticated') {
+      // Expired (idle, a lapsed session) or still loading: no tokens to drop, but the storage namespace is
+      // the tenant's, which the sending tab just cleared; a write here would outlive the sign-out.
+      if ((type === 'logout' || type === 'workspace-switched') && state.status !== 'anonymous') {
+        restoring = false;
+        dropTokens();
+        getRuntime().storageNamespace = 'anon';
+        if (type === 'logout' && state.status === 'expired') setState({ status: 'anonymous', ...(workspace ? { workspace } : {}), reason: 'signed-out' });
+      }
+      return;
+    }
     if (type === 'logout') {
       // The sending tab cleared storage, rotated the session id and set the signed-out mark.
       restoring = false;
@@ -516,6 +552,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       returnUrl: safeReturnUrl(o.returnUrl ?? currentUrl()),
       reason: o.reason,
       createdAt: now,
+      ...(o.maxAge !== undefined ? { maxAge: o.maxAge } : {}),
     };
     const challenge = await s256(record.codeVerifier);
     purgePending(now);
@@ -707,6 +744,12 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     return inflight;
   }
 
+  /** Seconds since the signed-in user authenticated, on the provider's clock; Infinity without auth_time. */
+  function authAgeS(): number {
+    const authTime = state.status === 'authenticated' ? state.user.authTime : undefined;
+    return authTime === undefined ? Number.POSITIVE_INFINITY : internals.now() / 1000 - clockOffsetS - authTime;
+  }
+
   // --- init ----------------------------------------------------------------------------------
   async function handleCallback(params: URLSearchParams): Promise<Settled | undefined> {
     const now = internals.now();
@@ -750,7 +793,13 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       await forgetPreviousUser(w.realm, t.sub);
       flag('session', RESTORE_MARK_KEY, false);
       flag('local', SIGNED_OUT_KEY, false);
-      return becomeAuthenticated(t, w);
+      const settled = becomeAuthenticated(t, w);
+      // An IdP that ignored prompt=login / max_age (a misconfiguration, a proxy) returns the old session:
+      // signed in, but not re-authenticated. Reported, so a step-up loop has a cause in the logs.
+      if (typeof record.maxAge === 'number' && authAgeS() > record.maxAge + STEP_UP_SKEW_S) {
+        log().warn('step-up not performed by the identity provider: auth_time is older than max_age', { max_age: record.maxAge, essential: true });
+      }
+      return settled;
     } catch (e) {
       tokens = undefined;
       user = undefined;
@@ -817,11 +866,12 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       // Global by default (report Issue 10): a local logout leaves the provider's SSO session alive, and on a
       // shared device the next person's sign-in then shows the previous user. { global: false } opts out.
       if (o?.global === false || !w) return;
-      const params = new URLSearchParams();
-      if (idToken) params.set('id_token_hint', idToken);
-      params.set('client_id', cfg.clientId);
-      params.set('post_logout_redirect_uri', `${globalThis.location?.origin ?? ''}/`);
-      internals.assign(`${endpoint(w.realm, 'logout')}?${params.toString()}`);
+      // POSTed (OIDC RP-Initiated Logout §2): the ID token, with the user's name and email, never goes in a URL.
+      internals.post(endpoint(w.realm, 'logout'), {
+        ...(idToken ? { id_token_hint: idToken } : {}),
+        client_id: cfg.clientId,
+        post_logout_redirect_uri: `${globalThis.location?.origin ?? ''}/`,
+      });
     },
 
     async getAccessToken() {
@@ -866,5 +916,19 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     },
 
     getState: () => state,
+
+    dispose() {
+      restoring = false;
+      dropTokens();
+      inflight = undefined;
+      listeners.clear();
+      redirectListeners.clear();
+      try {
+        channel?.close();
+      } catch {
+        // already closed
+      }
+      channel = undefined;
+    },
   };
 }

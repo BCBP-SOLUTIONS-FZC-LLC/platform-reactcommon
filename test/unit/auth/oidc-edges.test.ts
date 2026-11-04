@@ -2,7 +2,7 @@
 // refresh races with logout, timeouts, the cross-tab channel being unavailable, and listener handling.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createOidcProvider, initializeAuth, type IdentityProvider, type SessionState, type Workspace } from '../../../packages/frontend-sdk/src/auth/index.ts';
-import { ACTIVITY_KEY, PENDING_PREFIX, RESTORE_MARK_KEY, setAuthInternalsForTests } from '../../../packages/frontend-sdk/src/auth/oidc.ts';
+import { ACTIVITY_KEY, PENDING_PREFIX, RESTORE_MARK_KEY, SIGNED_OUT_KEY, setAuthInternalsForTests } from '../../../packages/frontend-sdk/src/auth/oidc.ts';
 import { WORKSPACE_CACHE_KEY } from '../../../packages/frontend-sdk/src/auth/workspace.ts';
 import { RuntimeConfigSchema, setRuntimeConfig, type RuntimeConfig } from '../../../packages/frontend-sdk/src/config/index.ts';
 import { initializeCore } from '../../../packages/frontend-sdk/src/core/index.ts';
@@ -202,13 +202,12 @@ describe('storage that is denied', () => {
     expect(page.assigned).toEqual([]);
   });
 
-  it('a cached realm the provider refuses is logged and the page stays anonymous', async () => {
+  it('a cached realm that is not a realm is never used: the page stays anonymous, with no redirect', async () => {
     const page = new FakePage('/t/acme/');
     page.local.setItem(WORKSPACE_CACHE_KEY, JSON.stringify([{ slug: 'acme', realm: 'Tenant_Acme/../x', trial: false }]));
     page.install();
     expect(await provider().init()).toEqual({ status: 'anonymous', reason: 'none' });
-    expect(page.assigned).toEqual([]);
-    expect(errors).toHaveBeenCalledWith(expect.stringContaining('silent sign-in could not start'), expect.anything());
+    expect(page.assigned).toEqual([]); // skipped when the cache is read, before any redirect is prepared
   });
 
   it('a refresh failure that cannot set the loop guard expires the session instead of redirecting', async () => {
@@ -245,7 +244,7 @@ describe('refresh edge cases', () => {
 
     await idp.logout({ global: true });
     // The logout hint is the last ID token Keycloak issued, not lost when a refresh omits it.
-    expect(new URL(page.assigned.at(-1)!).searchParams.get('id_token_hint')).toBe(last);
+    expect(page.posted.at(-1)!.fields.id_token_hint).toBe(last);
   });
 
   it.each([
@@ -660,5 +659,21 @@ describe('reauthenticate and initializeAuth arguments', () => {
 
   it.each([undefined, {}, { getAccessToken: () => undefined }])('initializeAuth refuses %j', (p) => {
     expect(() => initializeAuth(p as unknown as IdentityProvider)).toThrow(TypeError);
+  });
+});
+
+describe('dispose (review: no way to stop a provider)', () => {
+  it('closes the channel, stops the refresh timer and listeners, and forgets the tokens, without signing out', async () => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page);
+    const channels = FakeBroadcastChannel.open.size;
+    const calls = tokenCalls();
+    idp.dispose!();
+    expect(FakeBroadcastChannel.open.size).toBe(channels - 1);
+    expect(await idp.getAccessToken()).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(tokenCalls()).toBe(calls); // no refresh timer left
+    expect(page.local.getItem(SIGNED_OUT_KEY)).toBeNull(); // not a sign-out
+    expect(page.assigned).toEqual([]);
   });
 });

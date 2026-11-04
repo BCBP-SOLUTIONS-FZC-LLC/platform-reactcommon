@@ -52,7 +52,8 @@ export function buildCsp({ idpOrigin = 'https://auth.bcbpsolutions.com', remoteO
     "manifest-src 'self'",
     "worker-src 'self'",
     "base-uri 'none'",
-    "form-action 'self'",
+    // The IdP: sign-out is a form POST to its end-session endpoint (the ID token stays out of URLs).
+    `form-action ${list("'self'", origin)}`,
     "frame-ancestors 'none'",
     "object-src 'none'",
     'upgrade-insecure-requests',

@@ -310,12 +310,12 @@ describe('the reference shell', () => {
     // The page goes to Keycloak's end-session endpoint, which ends the SSO session (Issue 10: the next
     // person on this device is not shown the previous user) and returns to the app's root.
     expect(page.assigned).toHaveLength(1);
-    const endSession = new URL(page.assigned[0]!);
-    expect(endSession.pathname).toBe('/realms/tenant-acme/protocol/openid-connect/logout');
-    expect(endSession.searchParams.get('post_logout_redirect_uri')).toBe(`${ORIGIN}/`);
-    expect(endSession.searchParams.get('client_id')).toBe('tender-web');
+    const endSession = page.posted[0]!; // a form POST: the ID token stays out of URLs
+    expect(new URL(endSession.url).pathname).toBe('/realms/tenant-acme/protocol/openid-connect/logout');
+    expect(endSession.fields.post_logout_redirect_uri).toBe(`${ORIGIN}/`);
+    expect(endSession.fields.client_id).toBe('tender-web');
     page.assigned.length = 0;
-    await load(endSession.searchParams.get('post_logout_redirect_uri')!);
+    await load(endSession.fields.post_logout_redirect_uri!);
     await until(() => text().includes('You are signed out'));
     expect(getSession()).toEqual({ status: 'anonymous', reason: 'signed-out' });
     expect(page.assigned).toEqual([]); // no silent sign-in

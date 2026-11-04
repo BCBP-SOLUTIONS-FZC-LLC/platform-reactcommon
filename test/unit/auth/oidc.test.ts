@@ -514,6 +514,18 @@ describe('idle timeout', () => {
     expect(await idp.getAccessToken()).toBeUndefined();
   });
 
+  it('an expired tab follows another tab\'s sign-out: signed out, and its storage no longer the tenant\'s (review: cross-tab)', async () => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page);
+    expect(getRuntime().storageNamespace).toBe('tenant-acme');
+    await vi.advanceTimersByTimeAsync(1_800_000 + 15_000);
+    expect(idp.getState().status).toBe('expired');
+    new FakeBroadcastChannel('platform-auth').postMessage({ type: 'logout' }); // another tab signs out
+    await flush(() => idp.getState().status === 'anonymous');
+    expect(idp.getState()).toEqual({ status: 'anonymous', workspace: ACME, reason: 'signed-out' });
+    expect(getRuntime().storageNamespace).toBe('anon');
+  });
+
   it('activity in any tab keeps the session alive', async () => {
     const page = new FakePage('/');
     const { idp } = await signIn(page);
@@ -568,22 +580,24 @@ describe('logout', () => {
     expect(page.local.getItem(SIGNED_OUT_KEY)).not.toBeNull();
     expect(FakeBroadcastChannel.sent).toEqual([{ type: 'logout' }]);
     expect(page.assigned.slice(before)).toHaveLength(1); // exactly one navigation: the end-session request
-    const url = new URL(page.assigned.at(-1)!);
-    expect(`${url.origin}${url.pathname}`).toBe(`${IDP}/realms/tenant-acme/protocol/openid-connect/logout`);
-    expect(url.searchParams.get('client_id')).toBe(CLIENT);
-    expect(url.searchParams.get('post_logout_redirect_uri')).toBe(`${ORIGIN}/`);
-    expect(url.searchParams.get('id_token_hint')!.split('.')).toHaveLength(3);
+    // A form POST (review: id_token_hint): the ID token is in the body, never in a URL or the history.
+    const { url, fields } = page.posted.at(-1)!;
+    expect(url).toBe(`${IDP}/realms/tenant-acme/protocol/openid-connect/logout`);
+    expect(fields.client_id).toBe(CLIENT);
+    expect(fields.post_logout_redirect_uri).toBe(`${ORIGIN}/`);
+    expect(fields.id_token_hint!.split('.')).toHaveLength(3);
+    expect(page.assigned.join(' ')).not.toMatch(/id_token_hint|eyJ/);
   });
 
   it('{ global: true } is the same as the default', async () => {
     const page = new FakePage('/');
     const { idp } = await signIn(page);
     await idp.logout({ global: true });
-    const url = new URL(page.assigned.at(-1)!);
-    expect(`${url.origin}${url.pathname}`).toBe(`${IDP}/realms/tenant-acme/protocol/openid-connect/logout`);
-    expect(url.searchParams.get('client_id')).toBe(CLIENT);
-    expect(url.searchParams.get('post_logout_redirect_uri')).toBe(`${ORIGIN}/`);
-    expect(url.searchParams.get('id_token_hint')!.split('.')).toHaveLength(3);
+    const { url, fields } = page.posted.at(-1)!;
+    expect(url).toBe(`${IDP}/realms/tenant-acme/protocol/openid-connect/logout`);
+    expect(fields.client_id).toBe(CLIENT);
+    expect(fields.post_logout_redirect_uri).toBe(`${ORIGIN}/`);
+    expect(fields.id_token_hint!.split('.')).toHaveLength(3);
   });
 
   it('the channel never carries a token', async () => {
@@ -714,6 +728,22 @@ describe('step-up', () => {
     expect([p.get('prompt'), p.get('max_age')]).toEqual(['login', '300']);
     expect(reasons).toEqual(['step-up']);
     expect(JSON.parse(page.session.getItem(`${PENDING_PREFIX}${p.get('state')}`)!)).toMatchObject({ reason: 'step-up', returnUrl: '/t/acme/approvals/9' });
+  });
+
+  it('a step-up answer whose auth_time is older than max_age is reported (review: auth_time)', async () => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page, ACME, { claims: { auth_time: Math.floor(Date.now() / 1000) } });
+    await vi.advanceTimersByTimeAsync(600_000); // ten minutes later (inside the idle timeout)
+    await idp.reauthenticate({ maxAgeSeconds: 300 });
+    // An IdP that ignored prompt=login returns the old session: the same auth_time, ten minutes old.
+    page.url = new URL(kc.approve(page.assigned.at(-1)!, { claims: { auth_time: Math.floor(Date.now() / 1000) - 600 } }));
+    await provider().init();
+    expect(warns).toHaveBeenCalledWith(expect.stringContaining('step-up not performed by the identity provider'), expect.objectContaining({ max_age: 300 }));
+    warns.mockClear();
+    await provider().reauthenticate({ maxAgeSeconds: 300 }).catch(() => {});
+    page.url = new URL(kc.approve(page.assigned.at(-1)!, { claims: { auth_time: Math.floor(Date.now() / 1000) } }));
+    await provider().init();
+    expect(warns).not.toHaveBeenCalledWith(expect.stringContaining('step-up not performed'), expect.anything());
   });
 
   it('reauthenticate needs a session', async () => {

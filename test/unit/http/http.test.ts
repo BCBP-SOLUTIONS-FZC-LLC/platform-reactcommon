@@ -737,3 +737,43 @@ describe('edge paths', () => {
     expect(getRuntime().readOnlyDenied).toBeFalsy();
   });
 });
+
+describe('review 2: response and request edge cases', () => {
+  it('a 2xx body that is not the JSON it claims is a synthetic 502, with the request id and the trace id', async () => {
+    handler = () => new Response('<html>proxy error</html>', { status: 200, headers: { 'content-type': 'application/json', 'x-trace-id': '4bf92f3577b34da6a3ce929d0e0e4736' } });
+    const e = await createApiClient().get('/a').catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(ProblemError);
+    expect(e).toMatchObject({ status: 502, synthetic: true, traceId: '4bf92f3577b34da6a3ce929d0e0e4736' });
+    expect((e as ProblemError).requestId).toBe(h().get('x-request-id'));
+  });
+
+  it('an authenticated call does not follow redirects, and an unexpected redirect is a synthetic 502', async () => {
+    setTokenSource(tokens());
+    handler = () => new Response(null, { status: 302, headers: { location: 'https://elsewhere.example/x' } });
+    const e = await createApiClient().get('/a').catch((x: unknown) => x);
+    expect(calls[0]!.init.redirect).toBe('manual');
+    expect(e).toMatchObject({ status: 502, synthetic: true });
+    setTokenSource(undefined as never);
+    calls = [];
+    handler = () => json({ ok: true });
+    await createApiClient().get('/b', { auth: false });
+    expect(calls[0]!.init.redirect).toBe('follow');
+  });
+
+  it('sends typed arrays and DataViews as bytes, and refuses a ReadableStream body', async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    await createApiClient().post('/files', { body: bytes });
+    expect(calls[0]!.init.body).toBe(bytes);
+    expect(h().has('content-type')).toBe(false);
+    await expect(createApiClient().post('/files', { body: new ReadableStream() })).rejects.toThrow(TypeError);
+  });
+
+  it('caps retry.attempts at 5, and treats a non-number as no retries', async () => {
+    handler = () => new Response('', { status: 503 });
+    await createApiClient().get('/a', { retry: { attempts: Number.POSITIVE_INFINITY } }).catch(() => {});
+    expect(calls).toHaveLength(6);
+    calls = [];
+    await createApiClient().get('/b', { retry: { attempts: Number.NaN } }).catch(() => {});
+    expect(calls).toHaveLength(1);
+  }, 60_000);
+});
