@@ -556,7 +556,7 @@ Build-time constants (shell): `__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack
 | **HTML** | Only through `sanitizeHtml` (DOMPurify + Trusted Types); lint rule `no-unsafe-html` |
 | **Tenant isolation in the browser** | Storage namespaced by realm or `trial:<tenant_id>`; cleared on logout and workspace switch; nothing written before sign-in |
 | **Redirects** | Every `returnUrl` and `navigate` target passes `isSafeRedirect` |
-| **Remote code** | Entries only from the page's origin or exact allowed origins, checked twice; SRI on the entry when the manifest gives it, and on every lazily loaded chunk in production builds (`ChunkIntegrityPlugin`: the entry carries each chunk's sha384, a chunk without one fails closed); kill switch |
+| **Remote code** | Entries only from the page's origin or exact allowed origins, checked twice; SRI on the entry when the manifest gives it, and on every lazily loaded chunk, JS and CSS, in production builds (`ChunkIntegrityPlugin`: the entry carries each chunk's sha384, a chunk without one fails closed; lazily loaded CSS must come through mini-css-extract-plugin, `CssExtractRspackPlugin` or native CSS, or the build fails); the shell's `index.html` pins its scripts and stylesheets; kill switch |
 | **Telemetry** | Redacted with gincommon's rules (sensitive keys, JWT, `Bearer`, URL queries); consent-gated; the collector drops per-browser attributes |
 | **Supply chain** | Actions pinned to commit SHAs; Trivy on dependencies, secrets and config; `pnpm audit --prod`; CycloneDX SBOM; Cosign-signed release checksums. Vulnerability reporting and trust model: [SECURITY.md](SECURITY.md) |
 

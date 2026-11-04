@@ -44,7 +44,7 @@ Import a subpath (`@bcbp-solutions-fzc-llc/frontend-sdk/http`), never the root (
 | `containerName(remote)` | The container-global naming rule: `__platform_mfe_<name>`, `-` as `_` |
 | `SdkVersionPlugin` | In every preset: fails the build when the installed SDK is not the preset's version |
 | `ProvideSdkPlugin` | Shell: provides every SDK subpath lazily |
-| `ChunkIntegrityPlugin`, `integrityOf`, `INTEGRITY_PLACEHOLDER`, `MISSING_INTEGRITY` | Production: sha384 for every lazy chunk, fail-closed (`MISSING_INTEGRITY`); pins the HTML's scripts |
+| `ChunkIntegrityPlugin`, `integrityOf`, `INTEGRITY_PLACEHOLDER`, `MISSING_INTEGRITY` | Production: sha384 for every lazy JS and CSS chunk (CSS: mini-css-extract-plugin, `CssExtractRspackPlugin`, native CSS), fail-closed (`MISSING_INTEGRITY`); pins the HTML's scripts and stylesheets; fails a build whose lazy CSS loader sets no integrity |
 
 No api-extractor report for this package; its surface is `src/index.ts`. LLD §13.1.
 

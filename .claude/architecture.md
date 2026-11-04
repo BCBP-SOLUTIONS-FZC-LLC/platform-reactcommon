@@ -74,7 +74,7 @@ One `PlatformRuntime` per page on `globalThis[Symbol.for('@bcbp-solutions-fzc-ll
 - **`platformWebpackConfig({ role, name?, exposes?, mode })`**: shell `publicPath: '/'` (scripts under `/assets`), remote `'auto'`; Trusted Types policy `platform-webpack`; no `eval` devtools; content hashes; `crossOriginLoading: 'anonymous'`.
 - **`platformShared` / `sharedFor('shell' | 'remote')`**: React, react-dom, `@opentelemetry/api` and every SDK subpath (except `/testing`) as strict singletons; the shell shares the SDK under `^1.0.0-0`, a remote requires `^<the version it was built against>`.
 - **`ProvideSdkPlugin`** (shell): provides every SDK subpath lazily, not only those the shell imports (report Issue 2).
-- **`ChunkIntegrityPlugin`** (production): a sha384 for every lazily loaded chunk, fail-closed `MISSING_INTEGRITY`; the HTML's `<script>`s pinned with `integrity` + `crossorigin`.
+- **`ChunkIntegrityPlugin`** (production): a sha384 for every lazily loaded JS and CSS chunk (CSS through mini-css-extract-plugin, `CssExtractRspackPlugin` or native CSS; any other lazy CSS loader fails the build), fail-closed `MISSING_INTEGRITY`; the HTML's `<script>`s and `<link rel="stylesheet">`s pinned with `integrity` + `crossorigin`.
 
 ## Examples
 
