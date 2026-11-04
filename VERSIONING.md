@@ -97,8 +97,8 @@ The packages are published to **GitHub Packages** (the npm registry at `npm.pkg.
 - **GitHub Actions:** `NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` with `permissions: packages: read`. On each package's settings page (*Manage Actions access*), give the consuming repository read access once.
 
 ```bash
-pnpm add @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.2
-pnpm add -D @bcbp-solutions-fzc-llc/webpack-preset@1.0.0-alpha.2 @bcbp-solutions-fzc-llc/eslint-plugin@1.0.0-alpha.2
+pnpm add @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.3
+pnpm add -D @bcbp-solutions-fzc-llc/webpack-preset@1.0.0-alpha.3 @bcbp-solutions-fzc-llc/eslint-plugin@1.0.0-alpha.3
 ```
 
 | Pin style | Use when |
@@ -112,8 +112,8 @@ Dist-tags: a pre-release is published under its identifier (`alpha`, `rc`), and 
 **Verifying what you install.** Each tarball has a GitHub build-provenance attestation from the release workflow:
 
 ```bash
-npm pack @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.2
-gh attestation verify bcbp-solutions-fzc-llc-frontend-sdk-1.0.0-alpha.2.tgz --repo BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
+npm pack @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.3
+gh attestation verify bcbp-solutions-fzc-llc-frontend-sdk-1.0.0-alpha.3.tgz --repo BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
 ```
 
 The same tarballs are attached to the GitHub Release, with Cosign-signed `checksums.txt` (see *Verifying a release* in the [README](README.md#cutting-a-release)).
