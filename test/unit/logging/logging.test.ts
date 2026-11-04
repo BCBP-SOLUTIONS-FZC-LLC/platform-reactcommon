@@ -6,7 +6,7 @@ import { getRuntime, resetRuntimeForTests } from '../../../packages/frontend-sdk
 import { PAGE_KEEPALIVE_BYTES, keepaliveLeft } from '../../../packages/frontend-sdk/src/internal/unload.ts';
 import { getLogger, initializeLogging, serializeError, setRouteTemplate } from '../../../packages/frontend-sdk/src/logging/index.ts';
 import { loggingStats, setLoggingInternalsForTests, shutdownLogging } from '../../../packages/frontend-sdk/src/logging/logging.ts';
-import { cleanString, scrubSecrets } from '../../../packages/frontend-sdk/src/logging/redact.ts';
+import { ATTRIBUTES_MAX_BYTES, cleanString, scrubSecrets } from '../../../packages/frontend-sdk/src/logging/redact.ts';
 import { initializeTracing, shutdownTracing, withSpan } from '../../../packages/frontend-sdk/src/tracing/index.ts';
 import { setTracingInternalsForTests } from '../../../packages/frontend-sdk/src/tracing/tracing.ts';
 
@@ -219,6 +219,36 @@ describe('redaction (sanitizeFields, then strings, then JWT/Bearer, then the mes
     expect(JSON.stringify(attrsOf(r!))).not.toMatch(/hunter2|tok"/);
   });
 
+  it('removes URL query strings and fragments from the message and every attribute (review: redaction)', async () => {
+    start();
+    getLogger().info('callback https://idp.example/realms/r/cb?code=abc&state=xyz failed', {
+      url: 'https://s3.example/bucket/o.pdf?X-Amz-Signature=deadbeef#page=2',
+      nested: { links: ['see (https://a.example/p?token=t) now', 'ws://h.example/s#frag'] },
+      plain: 'a?b#c is not a URL',
+      path: 'GET /realms/r/protocol/openid-connect/auth?code=abc&state=xyz',
+      ratio: '1/2?',
+    });
+    const [r] = await sent();
+    expect(r!.body).toBe('callback https://idp.example/realms/r/cb failed');
+    expect(attrsOf(r!)).toMatchObject({
+      url: 'https://s3.example/bucket/o.pdf',
+      nested: { links: ['see (https://a.example/p) now', 'ws://h.example/s'] },
+      plain: 'a?b#c is not a URL',
+      path: 'GET /realms/r/protocol/openid-connect/auth',
+      ratio: '1/2?',
+    });
+  });
+
+  it('caps a record\'s attributes, so one record never outgrows the unload budget (review: oversized record)', async () => {
+    start();
+    getLogger().error('save failed', { ids: Array.from({ length: 5_000 }, (_, i) => `id-${i}-${'x'.repeat(40)}`), after: 'kept?' });
+    const [r] = await sent();
+    const attrs = attrsOf(r!) as { ids: string[]; after?: string };
+    expect(JSON.stringify(attrs.ids).length).toBeLessThan(ATTRIBUTES_MAX_BYTES + 1_024);
+    expect(attrs.ids.at(-1)).toBe('[TRUNCATED]');
+    expect(attrs.after).toBe('[TRUNCATED]');
+  });
+
   it('catches a JWT cut short by the 256-byte limit', () => {
     const long = `${'x'.repeat(200)} ${JWT}`;
     expect(cleanString(long)).not.toContain('eyJ');
@@ -352,6 +382,32 @@ describe('consent and level', () => {
     expect(out.map((r) => r.body)).toEqual(['csp violation', 'e']);
     expect(attrsOf(out[0]!)).not.toHaveProperty('essential');
     expect(stats.droppedNoConsent).toBe(3);
+  });
+
+  it('consent withdrawn while records are queued: those that needed it are not sent, by fetch or beacon (review: consent purge)', async () => {
+    start({ flushMs: 60_000 });
+    const log = getLogger();
+    log.info('i');
+    log.warn('w');
+    log.warn('essential', { essential: true });
+    log.error('e');
+    consent([]);
+    const stats = loggingStats()!;
+    const out = await sent();
+    expect(out.map((r) => r.body)).toEqual(['essential', 'e']);
+    expect(stats.droppedNoConsent).toBe(2);
+  });
+
+  it('consent withdrawn before pagehide: the beacon carries only what needs no consent', async () => {
+    const beacons: Blob[] = [];
+    vi.stubGlobal('navigator', { sendBeacon: (_u: string, data: Blob) => (beacons.push(data), true) });
+    start({ flushMs: 60_000 });
+    getLogger().info('i');
+    getLogger().error('e');
+    consent([]);
+    (getRuntime().logging as { processor: { drainOnUnload(b: number): number } }).processor.drainOnUnload(60 * 1024);
+    const bodies = ((JSON.parse(await beacons[0]!.text()) as { resourceLogs: { scopeLogs: { logRecords: { body: { stringValue: string } }[] }[] }[] }).resourceLogs[0]!.scopeLogs[0]!.logRecords).map((r) => r.body.stringValue);
+    expect(bodies).toEqual(['e']);
   });
 
   it('with telemetry consent sends every level at or above the configured one', async () => {
@@ -493,20 +549,19 @@ describe('transport', () => {
     expect(loggingStats()!.beacons).toBe(0);
   });
 
-  it('sends a single record over 60 KiB by fetch, not by beacon', async () => {
+  it('a record with a huge attribute is capped, so it still goes by beacon on pagehide (review: oversized record)', async () => {
     const target = new EventTarget();
     vi.stubGlobal('addEventListener', target.addEventListener.bind(target));
     vi.stubGlobal('removeEventListener', target.removeEventListener.bind(target));
-    const sendBeacon = vi.fn(() => true);
-    vi.stubGlobal('navigator', { sendBeacon });
+    const beacons: Blob[] = [];
+    vi.stubGlobal('navigator', { sendBeacon: (_u: string, data: Blob) => (beacons.push(data), true) });
     start({ flushMs: 60_000 });
-    // Each string is capped at 256 bytes, but not how many an array holds (OTel caps attributes at 128).
+    // Each string is capped at 256 bytes, and the record's attributes at ATTRIBUTES_MAX_BYTES (once about 75 KB).
     getLogger().info('huge', { rows: Array.from({ length: 300 }, () => 'y'.repeat(250)) });
     target.dispatchEvent(new Event('pagehide'));
-    expect(sendBeacon).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(records.map((r) => r.body)).toEqual(['huge']));
-    expect(attrsOf(records[0]!).rows).toHaveLength(300);
-    expect(loggingStats()!.beacons).toBe(0);
+    expect(beacons).toHaveLength(1);
+    expect(beacons[0]!.size).toBeLessThan(ATTRIBUTES_MAX_BYTES + 4_096);
+    expect(loggingStats()!.beacons).toBe(1);
   });
 
   it('never rejects on shutdown when the exporter fails to flush or shut down', async () => {
@@ -550,7 +605,9 @@ describe('transport', () => {
     expect(beacons).toHaveLength(1);
     expect(beacons[0]).toBeLessThanOrEqual(PAGE_KEEPALIVE_BYTES);
     expect(beacons[0]).toBeGreaterThan(PAGE_KEEPALIVE_BYTES - 2_000);
-    expect(keepaliveLeft()).toBe(PAGE_KEEPALIVE_BYTES - beacons[0]!);
+    // The rest goes through the exporter, which sends with keepalive while the browser's budget allows:
+    // the ledger counts that too, so a pagehide right after leaves it alone (review: two keepalive ledgers).
+    expect(keepaliveLeft()).toBe(0);
     // Nothing is lost while the page stays: the rest goes by fetch.
     await vi.waitFor(() => expect(loggingStats()!.exported).toBe(400));
   });
@@ -566,8 +623,27 @@ describe('transport', () => {
     await vi.waitFor(() => expect(loggingStats()!.exported).toBe(3));
     await shutdownLogging();
     vi.stubGlobal('navigator', { sendBeacon: () => false });
-    expect(records(2).drainOnUnload(60 * 1024)).toBe(0);
+    // No beacon; the exporter's fetch for the two records is counted against the budget it shares.
+    const taken = records(2).drainOnUnload(60 * 1024);
+    expect(taken).toBeGreaterThan(0);
+    expect(taken).toBeLessThan(2_000);
+    expect(loggingStats()!.beacons).toBe(0);
     await vi.waitFor(() => expect(loggingStats()!.exported).toBe(2));
+  });
+
+  it('on pagehide, a newest record too big for the beacon on its own does not hold back the others (review: oversized record)', async () => {
+    const beacons: Blob[] = [];
+    vi.stubGlobal('navigator', { sendBeacon: (_u: string, data: Blob) => (beacons.push(data), true) });
+    start({ flushMs: 60_000, batchSize: 512 });
+    for (let i = 0; i < 5; i++) getLogger().info(`r${i}`);
+    const processor = (getRuntime().logging as { processor: { drainOnUnload(b: number): number } }).processor;
+    // A record over 1 KiB, newest in the queue, against a 1 KiB budget: it alone could never fit.
+    getLogger().error('save failed', { ids: Array.from({ length: 40 }, (_, i) => `id-${i}-${'x'.repeat(40)}`) });
+    expect(processor.drainOnUnload(1024)).toBeGreaterThan(0);
+    expect(beacons).toHaveLength(1);
+    const bodies = ((JSON.parse(await beacons[0]!.text()) as { resourceLogs: { scopeLogs: { logRecords: { body: { stringValue: string } }[] }[] }[] }).resourceLogs[0]!.scopeLogs[0]!.logRecords).map((r) => r.body.stringValue);
+    expect(bodies.at(-1)).toBe('r4'); // the newest that fit; the oversized record goes back for fetch
+    await vi.waitFor(() => expect(loggingStats()!.exported).toBe(6));
   });
 
   it('on pagehide, the newest records that fit the page budget go in one beacon; the rest go back for fetch', async () => {

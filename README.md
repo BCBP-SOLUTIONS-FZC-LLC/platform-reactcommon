@@ -256,7 +256,7 @@ With Rsbuild, don't set its `moduleFederation` option: it adds Rspack's v2 Modul
 // Rspack: platformRspackConfig({ …the same }) · Rsbuild: pluginPlatform({ role: 'remote', name: 'tenders', exposes: { … } })
 export default function EditTender({ id }: { id: string }) {
   return (
-    <MFEErrorBoundary mfe="tenders">
+    <MFEErrorBoundary mfe="tenders" resetKeys={[id]}>
       <EditTenderForm id={id} />
     </MFEErrorBoundary>
   );

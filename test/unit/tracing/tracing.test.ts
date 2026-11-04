@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT_CONTEXT } from '@opentelemetry/api';
 import { JsonTraceSerializer } from '@opentelemetry/otlp-transformer';
+import { keepaliveLeft } from '../../../packages/frontend-sdk/src/internal/unload.ts';
 import { SamplingDecision, type ReadableSpan, type SpanExporter } from '@opentelemetry/sdk-trace';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeConfigSchema, setRuntimeConfig } from '../../../packages/frontend-sdk/src/config/index.ts';
@@ -366,6 +367,8 @@ describe('export queue', () => {
     expect(JsonTraceSerializer.serializeRequest(first)!.byteLength).toBeLessThanOrEqual(KEEPALIVE_MAX_BYTES);
     expect(first.length).toBeGreaterThan(10);
     expect(first.map((x) => x.name)).toEqual(names(300 - first.length, 300));
+    // The rest goes through the exporter, which may use keepalive: the ledger leaves pagehide nothing of it (review: two ledgers).
+    expect(keepaliveLeft()).toBe(0);
     await vi.waitFor(() => expect(spans()).toHaveLength(300)); // the rest still arrives while the page stays
     expect(limited.rejected()).toBe(0);
     expect(tracingStats()).toMatchObject({ exported: 300, exportFailures: 0, droppedOnUnload: 0 });
@@ -564,6 +567,16 @@ describe('export queue', () => {
     expect(stats.droppedNoConsent).toBe(1);
   });
 
+  it('consent withdrawn while spans are queued: they are dropped, not exported (review: consent purge)', async () => {
+    start();
+    getTracer('t').startSpan('queued').end();
+    consent([]);
+    const stats = tracingStats()!;
+    await shutdownTracing();
+    expect(spans()).toEqual([]);
+    expect(stats.droppedNoConsent).toBe(1);
+  });
+
   it('drops the oldest spans when the queue is full', async () => {
     setTracingInternalsForTests({ queue: { maxQueueSize: 3, maxExportBatchSize: 100, scheduledDelayMillis: 60_000 } });
     start();
@@ -646,6 +659,17 @@ describe('spans', () => {
     expect(span.attributes).toEqual({ note: 'got [REDACTED]', header: 'Bearer [REDACTED]' });
     expect(span.status).toEqual({ code: 2, message: 'token [REDACTED] rejected' });
     expect(span.events[0]!.attributes).toMatchObject({ 'exception.message': 'token [REDACTED] rejected' });
+  });
+
+  it('remove URL query strings and fragments from attribute values and error messages, as logs do (review: redaction)', async () => {
+    start();
+    const s = getTracer('t').startSpan('op', { link: 'https://s3.example/o?X-Amz-Signature=zz' });
+    s.recordError(new Error('GET https://idp.example/cb?code=abc#x failed'));
+    s.end();
+    await shutdownTracing();
+    const span = spans()[0]!;
+    expect(span.attributes).toEqual({ link: 'https://s3.example/o' });
+    expect(span.status).toEqual({ code: 2, message: 'GET https://idp.example/cb failed' });
   });
 });
 

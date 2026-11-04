@@ -28,6 +28,8 @@ const flush = async (until?: () => boolean) => {
 const json = (status: number, b: unknown) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
 const claimsOf = (token: string) => JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString('utf8')) as Record<string, unknown>;
 const refreshes = () => kc.requests.filter((r) => r.grant === 'refresh_token');
+/** Token-endpoint requests, answered by the fake or by a mockImplementationOnce. */
+const tokenCalls = () => kc.fetch.mock.calls.filter(([u]) => String(u).endsWith('/protocol/openid-connect/token')).length;
 const provider = (): IdentityProvider => createOidcProvider(cfg.auth, { resolve: vi.fn(async () => undefined) });
 
 /** The next token response, passed through `edit` (the real Keycloak answer, as JSON). */
@@ -271,14 +273,72 @@ describe('refresh edge cases', () => {
     expect(refreshes()).toHaveLength(1);
   });
 
-  it('a non-JSON error page is ambiguous: restores with prompt=none', async () => {
+  it('a non-JSON 500 error page is ambiguous: restores with prompt=none', async () => {
     const page = new FakePage('/');
     const { idp } = await signIn(page);
-    kc.fetch.mockImplementationOnce(async () => new Response('<html>oops</html>', { status: 503 }));
+    kc.fetch.mockImplementationOnce(async () => new Response('<html>oops</html>', { status: 500 }));
     expect(await idp.refresh()).toBe(false);
     await flush(() => page.assigned.length > 0);
-    expect(warns).toHaveBeenCalledWith(expect.stringContaining('token refresh failed'), expect.objectContaining({ status: 503 }));
+    expect(warns).toHaveBeenCalledWith(expect.stringContaining('token refresh failed'), expect.objectContaining({ status: 500 }));
     expect(new URL(page.assigned[0]!).searchParams.get('prompt')).toBe('none');
+  });
+
+  describe('a token endpoint refusing the refresh (review: Keycloak 5xx/429 sent every tab to the IdP)', () => {
+    it.each([
+      ['429', () => new Response('', { status: 429 })],
+      ['503 with Retry-After', () => new Response('<html>down</html>', { status: 503, headers: { 'retry-after': '1' } })],
+    ] as const)('%s keeps the tokens and retries with backoff, without a redirect', async (_name, refusal) => {
+      const page = new FakePage('/');
+      const { idp } = await signIn(page);
+      const before = await idp.getAccessToken();
+      const calls = tokenCalls();
+      kc.fetch.mockImplementationOnce(async () => refusal());
+      kc.fetch.mockImplementationOnce(async () => refusal());
+      expect(await idp.refresh()).toBe(false);
+      expect(await idp.getAccessToken()).toBe(before); // still usable while the IdP refuses
+      expect(warns).toHaveBeenCalledWith(expect.stringContaining('token endpoint unavailable'), expect.objectContaining({ retry_in_ms: 1500 }));
+      expect(await idp.refresh()).toBe(false); // a 401 or getAccessToken meanwhile waits for the backoff too
+      expect(tokenCalls()).toBe(calls + 1);
+      await vi.advanceTimersByTimeAsync(1499);
+      expect(tokenCalls()).toBe(calls + 1);
+      await vi.advanceTimersByTimeAsync(1); // 2 s × (0.5 + random/2)
+      await flush(() => tokenCalls() === calls + 2);
+      expect(warns).toHaveBeenLastCalledWith(expect.stringContaining('token endpoint unavailable'), expect.objectContaining({ retry_in_ms: 3000 })); // doubled
+      await vi.advanceTimersByTimeAsync(3000);
+      await flush(() => refreshes().length === 1);
+      await flush(() => idp.getState().status === 'authenticated');
+      expect(tokenCalls()).toBe(calls + 3);
+      expect(await idp.getAccessToken()).not.toBe(before); // the third attempt rotated the tokens
+      expect(page.assigned).toEqual([]);
+      expect(kc.reuseDetected).toBe(0);
+    });
+
+    it('honours Retry-After', async () => {
+      const page = new FakePage('/');
+      const { idp } = await signIn(page);
+      const calls = tokenCalls();
+      kc.fetch.mockImplementationOnce(async () => new Response('', { status: 503, headers: { 'retry-after': '20' } }));
+      await idp.refresh();
+      expect(warns).toHaveBeenCalledWith(expect.stringContaining('token endpoint unavailable'), expect.objectContaining({ retry_in_ms: 20_000 }));
+      await vi.advanceTimersByTimeAsync(19_999);
+      expect(tokenCalls()).toBe(calls + 1);
+      await vi.advanceTimersByTimeAsync(1);
+      await flush(() => refreshes().length === 1);
+      expect(tokenCalls()).toBe(calls + 2);
+      expect(page.assigned).toEqual([]);
+    });
+
+    it('restores the session when the access token would expire before the next attempt', async () => {
+      const page = new FakePage('/');
+      const { idp, state } = await signIn(page);
+      const expiresAt = (state as { expiresAt: number }).expiresAt;
+      vi.setSystemTime(expiresAt - 1000);
+      kc.fetch.mockImplementationOnce(async () => new Response('', { status: 429 }));
+      expect(await idp.refresh()).toBe(false);
+      await flush(() => page.assigned.length > 0);
+      expect(warns).toHaveBeenCalledWith(expect.stringContaining('token refresh failed'), expect.objectContaining({ status: 429 }));
+      expect(new URL(page.assigned[0]!).searchParams.get('prompt')).toBe('none');
+    });
   });
 
   it('a token request that hangs is aborted after 15 s and treated as ambiguous', async () => {

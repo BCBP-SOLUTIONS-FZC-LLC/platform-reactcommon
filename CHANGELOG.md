@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `@bcbp-solutions-fzc-llc/webpack-preset`: `SdkVersionPlugin`, in every preset (webpack, `/rspack`, `/rsbuild`). A build fails when the SDK installed for the app is not the preset's own version: the preset's shared map and a remote's required range (`^<version>`) come from that SDK, so a mismatch declared one SDK and called another's exports. An app without the SDK installed is not checked.
+- `/react`: `MFEErrorBoundary` takes `resetKeys`. The boundary clears its error when `mfe` or any reset key changes (say the route's id), as retry does; `RemoteBoundary` does so when `remote` or `module` changes. Before, a boundary that stayed mounted kept showing the previous tender's error after navigating to another.
+
+### Fixed
+
+- `/auth`: a refresh the token endpoint refused without processing it (429, or 503 with `Retry-After`: Keycloak or its gateway shedding load) keeps the tokens and retries with backoff (2 s doubling to 30 s, with jitter, or `Retry-After`) while the access token stays valid; meanwhile `getAccessToken` and a 401 wait for the backoff instead of sending more. It restores the session (`prompt=none`) only when the token would expire first. Before, every tab dropped its tokens and redirected to the IdP at once. A 500, 502, 504 or bare 503 stays ambiguous (a gateway may answer it after Keycloak rotated the token, and resending the old one is refresh-token reuse) and restores as before. Logged as `token endpoint unavailable: retrying the refresh` (warn, essential).
+- `/logging`: a record's attributes are capped at about 8 KiB (`[TRUNCATED]` past it); a record too big for the unload beacon on its own is skipped instead of cancelling the beacon for every record. Before, `logger.error('…', { ids: bigArray })` as the newest record meant nothing was sent on `pagehide`.
+- `/logging`, `/tracing`: what is left after the hide or `pagehide` beacon goes through the OTLP exporter, which sends with `keepalive` while the browser allows; its estimated size now counts against the page's keepalive budget, so a later beacon is not refused by the browser (known browser bug 1, through the exporter).
+- `/logging`, `/tracing`: withdrawing `telemetry` consent drops the spans and the info, debug and non-essential warning records already queued (counted in `droppedNoConsent`), before any send or beacon. Before, up to 2,048 spans and 1,000 records collected under consent were still sent.
+- `/logging`, `/tracing`: URL query strings and fragments are removed from every logged string (message and attributes) and span attribute, not only from stacks, as LLD §7.2 states (an OIDC callback's `code` and `state`, a pre-signed URL's signature).
 
 ## [1.0.0-alpha.3] - 2026-11-04
 

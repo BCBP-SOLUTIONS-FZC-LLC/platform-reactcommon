@@ -328,7 +328,7 @@ Any failure is a `RemoteLoadError` carrying the cause. One span `remote load` an
 
 #### 5.4.4 Error boundaries
 
-`MFEErrorBoundary { mfe, fallback? }` sets the MFE scope for its subtree.
+`MFEErrorBoundary { mfe, fallback?, resetKeys? }` sets the MFE scope for its subtree. Its error is cleared by retry, and when `mfe` or any of `resetKeys` changes (`RemoteBoundary`: `remote` or `module`).
 - **On catch:**
   1. It counts `platform_web_errors_total{ source: boundary or chunk_load }`.
   2. A chunk-load error reloads the page once per version.
@@ -397,7 +397,7 @@ The order is fixed by design doc §C2 and drawn in ARCHITECTURE.md § Shell boot
 | Provider | OTel JS 3 `TracerProvider`; resource `service.name`, `service.version`, `service.namespace` (= domain), `deployment.environment.name`; no `service.instance.id` (would explode cardinality) |
 | Sampler | `ParentBased`, root = `AlwaysOn` (ratio ≥ 1), `AlwaysOff` (≤ 0), else Go's `TraceIDRatioBased` algorithm, so browser and Go roots agree for the same trace id; default ratio 0.1 |
 | Propagation | W3C `traceparent` / `tracestate` to the page's origin and exact allowlisted origins only |
-| Export | Drop-oldest batch processor: batch 512, delay 5 s, queue 2048, ≤ 2 sends in flight; spans dropped without `telemetry` consent (counted). Hidden: the newest spans that fit what is left of the page budget in one keepalive request, the rest from the next task; `pagehide`: the newest that fit, by `sendBeacon` (else fetch keepalive), started inside the listener, the rest counted in `droppedOnUnload` (§7.5) |
+| Export | Drop-oldest batch processor: batch 512, delay 5 s, queue 2048, ≤ 2 sends in flight; spans dropped without `telemetry` consent (counted), queued ones too once it is withdrawn. Hidden: the newest spans that fit what is left of the page budget in one keepalive request, the rest from the next task; `pagehide`: the newest that fit, by `sendBeacon` (else fetch keepalive), started inside the listener, the rest counted in `droppedOnUnload` (§7.5) |
 | Context | `StackContextManager` (no zone.js) |
 
 ### 7.2 Logs (`/logging`)
@@ -405,8 +405,9 @@ The order is fixed by design doc §C2 and drawn in ARCHITECTURE.md § Shell boot
 Every record carries the envelope `trace_id`, `span_id` (active span), `request_id` (when given), `session_id`, `mfe` (`shell` by default) and `page_route` (a registered template or `unknown`). Caller attributes of the same name are dropped. Attributes go through redaction:
 - sensitive keys become `[REDACTED]`;
 - JWT and `Bearer` patterns are masked;
-- URL query strings and fragments are removed;
-- stacks are cut to 4 KiB.
+- URL query strings and fragments are removed, after an absolute URL or a `/`-rooted path (from the message and every string, as from span attributes);
+- stacks are cut to 4 KiB;
+- a record's attributes are capped at about 8 KiB (`[TRUNCATED]` past it), so one record always fits the unload budget.
 
 | Level | Leaves the page when |
 |---|---|
@@ -414,7 +415,7 @@ Every record carries the envelope `trace_id`, `span_id` (active span), `request_
 | `warn` | `essential: true`, or `telemetry` consent |
 | `info`, `debug` | `telemetry` consent (and `level` allows) |
 
-The export uses batch 50, flush 5 s, queue 1 000 (drop oldest), and at most 2 sends in flight. On page hide and `pagehide`, the newest queued records that fit what is left of the page budget go in one `navigator.sendBeacon`, first among the signals after the metrics share (§7.5); the rest, and anything the browser refuses, go back to the queue for fetch (a task later when hidden). Before `initializeLogging`, loggers write to the console in `local`/`dev` (and when there's no identity) and are no-ops otherwise.
+The export uses batch 50, flush 5 s, queue 1 000 (drop oldest), and at most 2 sends in flight. On page hide and `pagehide`, the newest queued records that fit what is left of the page budget go in one `navigator.sendBeacon`, first among the signals after the metrics share (§7.5); a record too big for it alone is skipped. The rest, and anything the browser refuses, go back to the queue for fetch (a task later when hidden); their estimated size counts against the budget, since the exporter sends them with `keepalive` while the browser allows. Records that needed `telemetry` consent are dropped from the queue, before any send, once it is withdrawn. Before `initializeLogging`, loggers write to the console in `local`/`dev` (and when there's no identity) and are no-ops otherwise.
 
 ### 7.3 Metrics (`/metrics`)
 
@@ -555,7 +556,7 @@ See ARCHITECTURE.md § Concurrency model. All shared mutable state is on the run
 | Silent restore | Loop guard (one per tab) |
 | Reload on chunk error | Per-version sessionStorage key |
 | POST retries | Only with `retry: { unsafe: true }`; every POST carries an `Idempotency-Key` |
-| Refresh-token use | Single-flight; never re-sent after an ambiguous failure |
+| Refresh-token use | Single-flight; never re-sent after an ambiguous failure; re-sent after 429 or 503 with `Retry-After` (refused unprocessed), with backoff, while the access token is valid; 502, 504 and a bare 503 are ambiguous |
 
 ### 9.3 Failure scenarios
 
@@ -631,6 +632,7 @@ CSP violations after bootstrap are logged by `installGlobalErrorHandlers` (direc
 | `/auth` | error | `silent sign-in could not start` | restore redirect could not be prepared |
 | `/auth` | error | `trial ID token has no valid tenant_id: storage stays anonymous` | trial token without `tenant_id` |
 | `/auth` | warn (essential) | `token refresh outcome unknown: restoring the session` · `token refresh failed: restoring the session` | ambiguous refresh outcome |
+| `/auth` | warn (essential) | `token endpoint unavailable: retrying the refresh` | 429, or 503 with `Retry-After`, on refresh; `status`, `retry_in_ms` |
 | `/auth` | error | `token refresh answer rejected: restoring the session` · `token refresh failed` | invalid refresh answer; unexpected exception |
 | `/auth` | warn (essential) / info | `session ended` | `invalid_grant`: warn when Keycloak ended a live session (`server_ended: true`), info when the refresh token's lifetime is unknown (`server_ended: false`) |
 | `/auth` | info | `token refresh cancelled by a navigation away` | the refresh request failed after `beforeunload`/`pagehide` |

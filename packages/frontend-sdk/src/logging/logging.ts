@@ -8,7 +8,7 @@ import { tryGetConfig } from '../config/index.ts';
 import { NotInitializedError, getIdentity, getSessionId, hasConsent, type MfeScope } from '../core/index.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { collectorUrl } from '../internal/urls.ts';
-import { DropOldestLogProcessor, type LogQueueOptions, type LoggingStats } from './processor.ts';
+import { DropOldestLogProcessor, NEEDS_CONSENT, type LogQueueOptions, type LoggingStats } from './processor.ts';
 import { cleanString, redactAttributes, serializeError, type LogValue } from './redact.ts';
 import { onUnload } from '../internal/unload.ts';
 
@@ -34,7 +34,7 @@ interface LoggingState {
   logger: ReturnType<LoggerProvider['getLogger']>;
   processor: DropOldestLogProcessor;
   level: LogLevel;
-  stats: LoggingStats & { droppedNoConsent: number };
+  stats: LoggingStats;
   removeListeners: () => void;
 }
 
@@ -125,7 +125,7 @@ export async function shutdownLogging(): Promise<void> {
 }
 
 /** Internal: counters for exports, drops and failures. */
-export function loggingStats(): Readonly<LoggingStats & { droppedNoConsent: number }> | undefined {
+export function loggingStats(): Readonly<LoggingStats> | undefined {
   return state()?.stats;
 }
 
@@ -163,7 +163,8 @@ function emit(level: LogLevel, msg: string, attrs: Record<string, unknown> | und
 
   if (isDev()) console[level](`[${attributes.mfe}] ${body}`, attributes);
   if (!s) return;
-  if (needsTelemetryConsent(level, essential === true) && !hasConsent('telemetry')) {
+  const needsConsent = needsTelemetryConsent(level, essential === true);
+  if (needsConsent && !hasConsent('telemetry')) {
     s.stats.droppedNoConsent++;
     return;
   }
@@ -172,7 +173,8 @@ function emit(level: LogLevel, msg: string, attrs: Record<string, unknown> | und
     severityText: level.toUpperCase(),
     body,
     attributes,
-    context: otelContext.active(),
+    // Marked, so the processor drops it if consent is withdrawn while it is queued.
+    context: needsConsent ? otelContext.active().setValue(NEEDS_CONSENT, true) : otelContext.active(),
     timestamp: Date.now(),
   });
 }

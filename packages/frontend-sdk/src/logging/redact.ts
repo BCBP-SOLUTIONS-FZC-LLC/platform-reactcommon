@@ -1,14 +1,15 @@
-// Log redaction (design doc §C1 /logging): sanitizeFields, then sanitizeString on every string
-// value, then scrubbing of JWT- and Bearer-shaped substrings, then the message the same way.
+// Log redaction (design doc §C1 /logging): sanitizeFields, then on every string value URL queries and
+// fragments removed, sanitizeString, and scrubbing of JWT- and Bearer-shaped substrings; the message the same way.
 import { isSensitiveKey, sanitizeFields, sanitizeString, scrubSecrets } from '../core/index.ts';
+import { stripUrlQueries } from '../internal/urls.ts';
 
 export { scrubSecrets } from '../core/index.ts';
 
 const REDACTED = '[REDACTED]';
 
-/** sanitizeString (controls, 256 bytes) then scrubSecrets: what every logged string goes through. */
+/** URL queries and fragments removed, sanitizeString (controls, 256 bytes), then scrubSecrets: what every logged string goes through. */
 export function cleanString(s: string): string {
-  return scrubSecrets(sanitizeString(s));
+  return scrubSecrets(sanitizeString(stripUrlQueries(s)));
 }
 
 /** A log attribute value: OTLP AnyValue (primitives, arrays, maps). */
@@ -23,7 +24,30 @@ function mapKey(k: unknown): string {
   }
 }
 
-function toLogValue(v: unknown, seen: WeakSet<object>): LogValue | undefined {
+/**
+ * A record's attributes are at most about this many bytes (strings at their cleaned length, 8 per other
+ * value): a large array or object would otherwise make one record bigger than the page's whole unload
+ * budget. Past it, a value becomes TRUNCATED and the collections stop.
+ */
+export const ATTRIBUTES_MAX_BYTES = 8 * 1024;
+const TRUNCATED = '[TRUNCATED]';
+
+interface Walk {
+  seen: WeakSet<object>;
+  /** Bytes of attribute data left (ATTRIBUTES_MAX_BYTES). */
+  left: number;
+}
+
+function toLogValue(v: unknown, walk: Walk): LogValue | undefined {
+  if (walk.left <= 0) return TRUNCATED;
+  const value = toLogValueOnce(v, walk);
+  if (typeof value === 'string') walk.left -= value.length;
+  else if (value !== undefined && (typeof value !== 'object' || value === null)) walk.left -= 8;
+  return value;
+}
+
+function toLogValueOnce(v: unknown, walk: Walk): LogValue | undefined {
+  const { seen } = walk;
   if (typeof v === 'string') return cleanString(v);
   if (typeof v === 'number') return Number.isFinite(v) ? v : String(v);
   if (typeof v === 'boolean' || v === null) return v;
@@ -36,18 +60,31 @@ function toLogValue(v: unknown, seen: WeakSet<object>): LogValue | undefined {
     seen.add(v);
     let out: LogValue;
     if (Array.isArray(v) || v instanceof Set) {
-      out = Array.from(v as Iterable<unknown>, (x) => toLogValue(x, seen) ?? null);
+      const items: LogValue[] = [];
+      for (const x of v as Iterable<unknown>) {
+        if (walk.left <= 0) {
+          items.push(TRUNCATED);
+          break;
+        }
+        items.push(toLogValue(x, walk) ?? null);
+      }
+      out = items;
     } else {
       // A Map logs as an object of its entries; a non-string key is stringified (and cleaned).
       const entries = v instanceof Map ? Array.from(v as Map<unknown, unknown>, ([k, x]) => [mapKey(k), x] as const) : Object.entries(v);
       const o: Record<string, LogValue> = {};
       for (const [k, x] of entries) {
+        if (walk.left <= 0) {
+          o[k] = TRUNCATED;
+          break;
+        }
+        walk.left -= k.length;
         // sanitizeFields (gincommon parity) passes class instances through; their keys are checked here.
         if (isSensitiveKey(k)) {
           o[k] = REDACTED;
           continue;
         }
-        const lv = toLogValue(x, seen);
+        const lv = toLogValue(x, walk);
         if (lv !== undefined) o[k] = lv;
       }
       out = o;
@@ -58,13 +95,14 @@ function toLogValue(v: unknown, seen: WeakSet<object>): LogValue | undefined {
   return undefined;
 }
 
-/** Caller attributes, redacted: sensitive keys at any depth, then every string cleaned. */
+/** Caller attributes, redacted: sensitive keys at any depth, then every string cleaned; at most ATTRIBUTES_MAX_BYTES. */
 export function redactAttributes(attrs: Record<string, unknown>): Record<string, LogValue> {
   const redacted = sanitizeFields(attrs);
   const out: Record<string, LogValue> = {};
-  const seen = new WeakSet<object>();
+  const walk: Walk = { seen: new WeakSet<object>(), left: ATTRIBUTES_MAX_BYTES };
   for (const [k, v] of Object.entries(redacted)) {
-    const lv = toLogValue(v, seen);
+    walk.left -= k.length;
+    const lv = toLogValue(v, walk);
     if (lv !== undefined) out[k] = lv;
   }
   return out;

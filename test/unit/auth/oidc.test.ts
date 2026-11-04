@@ -447,7 +447,7 @@ describe('refresh', () => {
     expect(kc.requests.filter((r) => r.grant === 'refresh_token')).toHaveLength(0);
   });
 
-  it.each(['network-after-send', 'server-error', 'bad-id-token'] as const)(
+  it.each(['network-after-send', 'server-error', 'timeout-after-rotate', 'unavailable-after-rotate', 'bad-id-token'] as const)(
     'after an ambiguous failure (%s) drops the lineage and restores with prompt=none, never resending the token',
     async (failure) => {
       const page = new FakePage('/');

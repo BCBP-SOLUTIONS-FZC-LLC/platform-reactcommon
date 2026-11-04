@@ -8,7 +8,7 @@ import type { Context } from '@opentelemetry/api';
 import { JsonTraceSerializer } from '@opentelemetry/otlp-transformer';
 import type { ReadableSpan, Span, SpanExporter, SpanProcessor } from '@opentelemetry/sdk-trace';
 import { hasConsent } from '../core/index.ts';
-import { Batcher, exportWith, type BatcherStats } from '../internal/batcher.ts';
+import { Batcher, exportWith, leftoverKeepaliveBytes, newestThatFit, type BatcherStats } from '../internal/batcher.ts';
 
 export interface TracingStats extends BatcherStats {
   /** Spans dropped because telemetry consent was not granted when they ended. */
@@ -58,6 +58,12 @@ export class DropOldestBatchSpanProcessor implements SpanProcessor {
       batchSize: opts.maxExportBatchSize,
       delayMs: opts.scheduledDelayMillis,
       maxInFlight: MAX_IN_FLIGHT,
+      // Consent withdrawn after the spans were queued: they are not sent either.
+      purge: (spans) => {
+        if (spans.length === 0 || hasConsent('telemetry')) return spans;
+        stats.droppedNoConsent += spans.length;
+        return [];
+      },
     });
   }
 
@@ -72,30 +78,15 @@ export class DropOldestBatchSpanProcessor implements SpanProcessor {
     this.batcher.add(span);
   }
 
-  /** The longest run of the newest spans in `queue` whose OTLP JSON body fits `maxBytes`. */
-  private newestThatFit(queue: ReadableSpan[], maxBytes = KEEPALIVE_MAX_BYTES): ReadableSpan[] {
-    const fits = (n: number) => {
+  /** The newest spans in `queue` whose OTLP JSON body fits `maxBytes` (src/internal/batcher.ts newestThatFit). */
+  private newestThatFit(queue: ReadableSpan[], maxBytes: number) {
+    return newestThatFit(queue, maxBytes, (spans) => {
       try {
-        return (JsonTraceSerializer.serializeRequest(queue.slice(queue.length - n))?.byteLength ?? Infinity) <= maxBytes;
+        return JsonTraceSerializer.serializeRequest(spans)?.byteLength ?? Infinity;
       } catch {
-        return false; // the exporter could not send it either; never throw from a pagehide listener
+        return Infinity; // the exporter could not send it either; never throw from a pagehide listener
       }
-    };
-    // The body grows with n: double n until it no longer fits, then binary search. Each probe
-    // serialises at most about twice the budget, not the whole queue (up to 2048 spans).
-    let lo = 0;
-    let hi = 1;
-    while (hi <= queue.length && fits(hi)) {
-      lo = hi;
-      hi *= 2;
-    }
-    hi = Math.min(hi - 1, queue.length);
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2);
-      if (fits(mid)) lo = mid;
-      else hi = mid - 1;
-    }
-    return queue.slice(queue.length - lo);
+    });
   }
 
   /**
@@ -103,23 +94,18 @@ export class DropOldestBatchSpanProcessor implements SpanProcessor {
    * newest spans that fit `budget` (what the page's keepalive budget has left, src/internal/unload.ts)
    * go first in one keepalive request, which outlives a closing tab; the rest are flushed MAX_IN_FLIGHT
    * requests at a time from the next task, which completes while the page stays. Returns the first
-   * request's bytes.
+   * request's bytes, plus what the exporter may take with keepalive for the rest.
    */
   flushOnHidden(budget: number = KEEPALIVE_MAX_BYTES): number {
     const queue = this.batcher.takeAll();
-    const first = this.newestThatFit(queue, Math.min(budget, KEEPALIVE_MAX_BYTES));
-    this.batcher.requeue(queue.slice(0, queue.length - first.length));
-    let bytes: number;
-    try {
-      bytes = first.length > 0 ? (JsonTraceSerializer.serializeRequest(first)?.byteLength ?? 0) : 0;
-    } catch {
-      bytes = 0;
-    }
+    const { batch: first, bytes, rest } = this.newestThatFit(queue, Math.min(budget, KEEPALIVE_MAX_BYTES));
+    this.batcher.requeue(rest);
     this.sendOne(first);
     // The rest a task later, after the metrics interval took its share of the keepalive budget (the
     // exporter sends with keepalive whenever its own count allows); a closing tab sends it on pagehide.
     setTimeout(() => void this.batcher.flush(), 0);
-    return bytes;
+    // The exporter's keepalive requests draw on the browser's budget too: pagehide must leave it.
+    return bytes + leftoverKeepaliveBytes(rest.length, first.length, bytes, budget - bytes);
   }
 
   /**
@@ -132,7 +118,7 @@ export class DropOldestBatchSpanProcessor implements SpanProcessor {
    */
   drainOnUnload(budget: number = KEEPALIVE_MAX_BYTES): number {
     const queue = this.batcher.takeAll();
-    const batch = this.newestThatFit(queue, Math.min(budget, KEEPALIVE_MAX_BYTES));
+    const { batch } = this.newestThatFit(queue, Math.min(budget, KEEPALIVE_MAX_BYTES));
     this.stats.droppedOnUnload += queue.length - batch.length;
     if (batch.length === 0) return 0;
     let body: Uint8Array | undefined;
