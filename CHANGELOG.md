@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `/testing`: `createTestPlatform()` scopes `storage()` to its signed-in workspace, as a real sign-in does; before, every `set()` was dropped ("no workspace is signed in") and `get()` returned `undefined`. A trial workspace takes `user.tenantId`, else `context.tenantId`. The new option `storageNamespace: 'anon'` tests the signed-out case. Reported by mfe-dashboard.
+
 ## [1.0.0-alpha.2] - 2026-11-03
 
 ### Added

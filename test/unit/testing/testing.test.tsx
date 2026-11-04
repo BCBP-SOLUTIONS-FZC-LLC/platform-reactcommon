@@ -11,6 +11,7 @@ import { shutdownLogging } from '../../../packages/frontend-sdk/src/logging/logg
 import { getServiceMeter } from '../../../packages/frontend-sdk/src/metrics/index.ts';
 import { PlatformProblemTypes, isProblemError, parseProblemResponse } from '../../../packages/frontend-sdk/src/problem/index.ts';
 import { useBeforeAuthRedirect, useCurrentUser, useSessionContext, useStepUp, useSwitchWorkspace, useWorkspace } from '../../../packages/frontend-sdk/src/react/index.ts';
+import { storage } from '../../../packages/frontend-sdk/src/storage/index.ts';
 import { withSpan } from '../../../packages/frontend-sdk/src/tracing/index.ts';
 import { shutdownTracing } from '../../../packages/frontend-sdk/src/tracing/tracing.ts';
 import { createTestPlatform, mockApi, mockProblem, renderMetricInventory } from '../../../packages/frontend-sdk/src/testing/index.ts';
@@ -172,6 +173,41 @@ describe('createTestPlatform identity provider', () => {
     );
     expect(container.textContent).toBe('tenant-x|test');
     await expect(switchTo!('globex')).resolves.toBeUndefined();
+  });
+});
+
+describe('createTestPlatform storage', () => {
+  afterEach(() => localStorage.clear());
+
+  // mfe-dashboard's report (2026-11-04): storage() dropped every write under createTestPlatform, as if signed out.
+  it('persists storage for the signed-in test user', () => {
+    createTestPlatform(); // signed in: DEFAULT_USER in workspace { realm: 'tenant-test', slug: 'test' }
+    storage('app2').set('theme', 'dark');
+    expect(storage('app2').get('theme')).toBe('dark');
+    expect(getRuntime().storageNamespace).toBe('tenant-test');
+    expect(localStorage.getItem('tenant-test:app2:theme')).not.toBeNull();
+  });
+
+  it('scopes a trial workspace to the tenant: user.tenantId, else the session context\'s', () => {
+    createTestPlatform({ workspace: { realm: 'trial', trial: true, slug: 't' }, user: { sub: 'u', name: 'U', email: 'u@example.com', tenantId: '11111111-1111-4111-8111-111111111111' } });
+    expect(getRuntime().storageNamespace).toBe('trial:11111111-1111-4111-8111-111111111111');
+    createTestPlatform({ workspace: { realm: 'trial', trial: true, slug: 't' }, context: { tenantId: '22222222-2222-4222-8222-222222222222' } });
+    expect(getRuntime().storageNamespace).toBe('trial:22222222-2222-4222-8222-222222222222');
+  });
+
+  it("storageNamespace: 'anon' tests the signed-out case: nothing is written", () => {
+    createTestPlatform({ storageNamespace: 'anon' });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    storage('app2').set('theme', 'dark');
+    expect(storage('app2').get('theme')).toBeUndefined();
+    expect(localStorage.length).toBe(0);
+  });
+
+  it('a later workspace does not read an earlier one\'s storage', () => {
+    createTestPlatform();
+    storage('app2').set('theme', 'dark');
+    createTestPlatform({ workspace: { realm: 'tenant-other', trial: false, slug: 'other' } });
+    expect(storage('app2').get('theme')).toBeUndefined();
   });
 });
 

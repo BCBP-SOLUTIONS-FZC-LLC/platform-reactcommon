@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Packages | `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin` (one version, changesets `fixed`) |
-| Version | `1.0.0-alpha.1`, the first release (tag `v1.0.0-alpha.1`, 2026-11-03, GitHub Packages, dist-tag `alpha`); `1.0.0-alpha.N` until the first end-to-end environment |
+| Version | `1.0.0-alpha.2` (tag `v1.0.0-alpha.2`, 2026-11-03, GitHub Packages, dist-tag `alpha`), after the first release `1.0.0-alpha.1` the same day; `1.0.0-alpha.N` until the first end-to-end environment |
 | Runtime | Evergreen browsers (ES2022, Trusted Types where supported); build tooling on Node ≥ 22 |
 | Peers | `react` / `react-dom` `^19.0.0` (one major; floor tested in CI), `@opentelemetry/api` `~1.10.0`, `webpack` `^5.100.0`, `@rspack/core` `^2.2.0`, `@rsbuild/core` `^2.2.0` (the preset's bundler peers, each optional: an app installs the one it builds with; `/rsbuild` uses the Rspack inside `@rsbuild/core`), `eslint` `^9 \|\| ^10` |
 | Design record | [`docs/design/frontend-sdk-design.md`](../design/frontend-sdk-design.md) (decisions, public API per subpath, contracts, backend changes) |
@@ -17,7 +17,7 @@
 |---|---|---|
 | 1.0 | 2026-10-31 | First LLD, written from the implementation of design-doc steps 0–14 plus the `portal` domain and the CI pipeline (all on `main`). Step 15 (Tier 1 metric binding) is open; see §15 |
 | 1.1 | 2026-11-03 | Aligned with the first release `1.0.0-alpha.1`: GitHub Packages distribution and its publish gate (§14.1), React 19 only, sign-out global by default (§8.7), one keepalive budget for all three signals on hide and `pagehide` (§7.5), metrics sent on page hide (§7.3), the reference two-tier Collector (§7.6), the test layers and nightly integrated run (§14.3), open items (§15) |
-| 1.2 | 2026-11-03 | `@bcbp-solutions-fzc-llc/webpack-preset` supports Rspack 2 (`/rspack`) and Rsbuild 2 (`/rsbuild`) besides webpack 5, interoperable over the v1 Module Federation protocol (§13.1, unreleased: `[Unreleased]` in the CHANGELOG) |
+| 1.2 | 2026-11-03 | `@bcbp-solutions-fzc-llc/webpack-preset` supports Rspack 2 (`/rspack`) and Rsbuild 2 (`/rsbuild`) besides webpack 5, interoperable over the v1 Module Federation protocol (§13.1), released in `1.0.0-alpha.2` |
 
 ### Table of Contents
 
@@ -734,7 +734,7 @@ The packages are released together with one version (changesets `fixed`):
 4. `npm-publish` publishes the three tarballs to **GitHub Packages** (`@bcbp-solutions-fzc-llc/*`, dist-tag from `publish:check`: `alpha`, `rc` or `latest`), with a build-provenance attestation each. It runs in the `npm` environment and refuses to publish unless publishing is gated (`.github/scripts/check-npm-environment.sh`): required reviewers, or (this private repository on GitHub Team) the environment accepts only release tags and an active tag ruleset limits creating, moving and deleting `v*` tags to admins and named teams. A version already published with the same integrity is skipped; a different one is refused.
 5. It publishes a GitHub Release with the three tarballs, a CycloneDX SBOM, and `checksums.txt` with a Cosign keyless signature bundle. Pre-release tags (`v1.0.0-alpha.N`) are marked as pre-releases.
 
-The first release is `v1.0.0-alpha.1` (2026-11-03). Changesets v3's pre mode moves consumed changesets into `.changeset/pre/`; `changelog-check.yml` recognises that as a release PR.
+The first release is `v1.0.0-alpha.1` (2026-11-03); the latest is `v1.0.0-alpha.2` (the same day). Changesets v3's pre mode moves consumed changesets into `.changeset/pre/`; `changelog-check.yml` recognises that as a release PR.
 
 ### 14.2 Compatibility
 - **During the alpha:** breaking changes bump `N` and are listed in the CHANGELOG. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`.

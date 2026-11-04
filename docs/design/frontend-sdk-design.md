@@ -1081,7 +1081,8 @@ export function installGlobalErrorHandlers(): () => void;              // window
 ```ts
 export function createTestPlatform(o?: Partial<{ identity: CoreIdentityInput; config: Partial<RuntimeConfig>;
   user: SessionUser; workspace: Workspace; context: Partial<SessionContext>;
-  permissions: readonly `${string}:${string}`[]; flags: Record<string, FlagValue> }>):
+  permissions: readonly `${string}:${string}`[]; flags: Record<string, FlagValue>;
+  storageNamespace: string /* default: the workspace's, as after sign-in; 'anon' = signed out */ }>):
   { Wrapper: ComponentType<{ children: ReactNode }>; logs: LogRecord[]; spans: SpanRecord[]; reset(): void };
 export function mockProblem(t: ProblemType, extra?: Partial<ProblemDetails>): Response;
 export function mockApi(routes: Record<`${'GET'|'POST'|'PUT'|'PATCH'|'DELETE'} /${string}`, Response | ((req: Request) => Response)>): void;

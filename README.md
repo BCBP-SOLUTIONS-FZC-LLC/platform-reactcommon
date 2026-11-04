@@ -335,7 +335,7 @@ mockApi({ 'GET /tenders/:id': Response.json(tender), 'PUT /tenders/:id': mockPro
 expect(p.logs.filter((l) => l.level === 'error')).toEqual([]);
 ```
 
-`createTestPlatform` runs the real SDK with fakes only at the edges: in-memory exporters, a signed-in identity provider, a role-map authorizer. `p.reset()` clears records and undoes `mockApi`.
+`createTestPlatform` runs the real SDK with fakes only at the edges: in-memory exporters, a signed-in identity provider, a role-map authorizer. `storage(appId)` is scoped to the test workspace, as after a real sign-in (`storageNamespace: 'anon'` tests the signed-out case, where nothing is written). `p.reset()` clears records and undoes `mockApi`.
 
 ### 11. Upgrading between alpha versions
 
@@ -517,7 +517,7 @@ test/
 
 ### Coverage
 
-`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.7% today (1342 tests). Don't lower the threshold.
+`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.7% today (1346 tests). Don't lower the threshold.
 
 ---
 
@@ -608,7 +608,7 @@ SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as publi
 
 | Version | Status | Notes |
 |---|---|---|
-| `1.0.0-alpha.N` | Current line; **`1.0.0-alpha.1`** released 2026-11-03 | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`). Unreleased: the preset's Rspack and Rsbuild entry points (`[Unreleased]` in the CHANGELOG) |
+| `1.0.0-alpha.N` | Current line; **`1.0.0-alpha.2`** released 2026-11-03 (`1.0.0-alpha.1` the same day) | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`). `alpha.2` added the preset's Rspack and Rsbuild entry points |
 | `1.0.0` | Cut with the first end-to-end environment | Strict SemVer from then on |
 
 ### Cutting a release
