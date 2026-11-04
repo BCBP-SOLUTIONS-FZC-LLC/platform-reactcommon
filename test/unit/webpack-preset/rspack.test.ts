@@ -82,6 +82,18 @@ describe('platformRspackConfig', () => {
 });
 
 describe('a real Rspack build', () => {
+  it('fails when the installed SDK is not the preset\'s version (review: preset/SDK version check)', async () => {
+    const root = mkdtempSync(join(dir, 'version-'));
+    const pkgDir = join(root, 'node_modules', '@bcbp-solutions-fzc-llc', 'frontend-sdk');
+    mkdirSync(pkgDir, { recursive: true });
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@bcbp-solutions-fzc-llc/frontend-sdk', version: '1.0.0-alpha.0' }));
+    writeFileSync(join(root, 'remote.js'), '// remote entry\n');
+    const preset = platformRspackConfig({ role: 'remote', name: 'skewed', exposes: { './X': './remote.js' }, mode: 'development' });
+    await expect(compile({ ...preset, context: root, entry: {}, output: { ...preset.output, path: join(root, 'dist') } })).rejects.toThrow(
+      `PlatformSdkVersionPlugin: @bcbp-solutions-fzc-llc/webpack-preset ${SDK_VERSION} needs @bcbp-solutions-fzc-llc/frontend-sdk ${SDK_VERSION}, but ${root} has 1.0.0-alpha.0`,
+    );
+  });
+
   it('a production remote: window.<containerName>, the platform-webpack policy, no eval or Function, no SDK, hidden maps', async () => {
     const root = mkdtempSync(join(dir, 'remote-'));
     writeFileSync(join(root, 'Edit.js'), "import { getLogger } from '@bcbp-solutions-fzc-llc/frontend-sdk/logging';\nexport default function Edit() { getLogger().info('edit'); return 'edit'; }\n");
