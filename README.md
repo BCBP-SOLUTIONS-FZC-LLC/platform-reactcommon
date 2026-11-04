@@ -608,7 +608,7 @@ SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as publi
 
 | Version | Status | Notes |
 |---|---|---|
-| `1.0.0-alpha.N` | Current line; **`1.0.0-alpha.2`** released 2026-11-03 (`1.0.0-alpha.1` the same day) | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`). `alpha.2` added the preset's Rspack and Rsbuild entry points |
+| `1.0.0-alpha.N` | Current line; **`1.0.0-alpha.3`** released 2026-11-04 (`alpha.1` and `alpha.2` 2026-11-03) | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`). `alpha.2` added the preset's Rspack and Rsbuild entry points; `alpha.3` fixed `createTestPlatform`'s storage |
 | `1.0.0` | Cut with the first end-to-end environment | Strict SemVer from then on |
 
 ### Cutting a release
