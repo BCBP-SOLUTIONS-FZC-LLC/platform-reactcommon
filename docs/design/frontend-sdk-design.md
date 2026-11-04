@@ -1373,6 +1373,10 @@ function EditTenderForm({ id }: { id: string }) {
     c.get<Tender>('/tenders/:id', { params: { id }, signal }).then((r) => r.data), [id]);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
   const [formError, setFormError] = useState<string>();
+  // A save that failed without an answer (timeout, network): thrown while rendering, so MFEErrorBoundary
+  // shows it with its request id. (onSubmit's own rejection would go nowhere: it is not React's action.)
+  const [failed, setFailed] = useState<{ e: unknown }>();
+  if (failed) throw failed.e;
 
   if (loading) return <p>{t('loading')}</p>;
   if (error) throw error;                       // MFEErrorBoundary renders traceId/requestId
@@ -1389,7 +1393,7 @@ function EditTenderForm({ id }: { id: string }) {
       await api.put('/tenders/:id', { params: { id }, body: { ...Object.fromEntries(form), version: data!.version } });
       reload(); // the saved tender, with its new version
     } catch (e) {
-      if (!isProblemError(e)) throw e;          // Timeout/Network → boundary
+      if (!isProblemError(e)) { setFailed({ e }); return; }   // Timeout/Network → boundary
       if (e.is(PlatformProblemTypes.ValidationFailed)) setFieldErrors(toFieldErrorMap(e));
       else if (e.is(PlatformProblemTypes.Conflict)) setFormError(problemMessage(e));
       else setFormError(problemMessage(e));     // localized by type id, falls back to title
@@ -1397,8 +1401,7 @@ function EditTenderForm({ id }: { id: string }) {
   }
 
   return (
-    // Keyed by version: after a save the fields show the saved tender, not the values they started with.
-    <form key={data.version} onSubmit={(e) => void onSubmit(e)}>
+    <form onSubmit={(e) => void onSubmit(e)}>
       <input name="title" defaultValue={data.title} disabled={!canEdit} aria-invalid={!!fieldErrors.title} />
       {fieldErrors.title?.map((m) => <span key={m} role="alert">{m}</span>)}
       <input name="deadline" type="date" defaultValue={data.deadline} disabled={!canEdit} />

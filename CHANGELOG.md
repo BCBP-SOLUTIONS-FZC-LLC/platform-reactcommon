@@ -59,7 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/testing`: `createTestPlatform`'s shell provides `signOut` (calls recorded in `signOuts`), so `useSignOut()` works in a remote's tests; a new platform stops the previous one (unload listeners, logging, tracing, identity provider) instead of leaving them across a test file.
 - Reference Collector: metrics keep no resource attribute. `service.version` made old-build and new-build tabs two streams writing one Prometheus series after a deploy (read by `rate()` as counter resets), and `service.name` (the Prometheus `job` and `target_info`) let anyone POST new series. Traces and logs keep the SDK's four.
 - Example shell: a sign-out during boot (another tab) no longer mounts the app for the signed-out user; the session-context retry's wait stops at once on an aborted signal and leaves no listener.
-- Example remote: `EditTender` submits with `onSubmit` (React 19's `<form action>` reset the fields, erasing the user's edits next to a 422's errors), sends the `version` it read (a concurrent edit is a 409, now reachable), and shows the saved tender after a save.
+- Example remote: `EditTender` submits with `onSubmit` (React 19's `<form action>` reset the fields, erasing the user's edits next to a 422's errors), sends the `version` it read (a concurrent edit is a 409, now reachable), shows the saved tender after a save, and still hands a save with no answer (timeout, network) to its error boundary.
+- `/tracing`: `shutdownTracing` leaves the OTel globals alone when tracing was started again while it flushed; a second `createTestPlatform` in a test file recorded no spans after an await.
+- `/config`: `loadRuntimeConfig` refuses a `timeoutMs` outside 1 to 2 147 483 647 (setTimeout would take it as about 1 ms).
 
 
 ## [1.0.0-alpha.3] - 2026-11-04

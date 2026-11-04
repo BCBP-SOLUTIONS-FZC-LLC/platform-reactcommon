@@ -282,6 +282,14 @@ describe('createTestPlatform, review 3', () => {
     expect(platform.signOuts).toEqual([]);
   });
 
+  it('a second platform still records spans after an await: the first one\'s shutdown leaves its tracing alone (review 4)', async () => {
+    createTestPlatform();
+    const second = createTestPlatform();
+    await new Promise((r) => setTimeout(r, 50)); // the first platform's provider finishes shutting down
+    await withSpan('after', async () => {});
+    await vi.waitFor(() => expect(second.spans.map((x) => x.name)).toContain('after'));
+  });
+
   it('a new platform stops the previous one: its pagehide listener is removed', () => {
     const added = vi.spyOn(globalThis, 'addEventListener');
     const removed = vi.spyOn(globalThis, 'removeEventListener');

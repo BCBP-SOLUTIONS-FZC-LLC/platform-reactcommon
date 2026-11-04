@@ -262,6 +262,12 @@ describe('the reference shell', () => {
     await user(() => $<HTMLButtonElement>('button[type=submit]')!.click());
     await until(() => [...document.querySelectorAll('p[role=alert]')].length > 0);
     expect(await net.sent('/api/tenders/1').filter((r) => r.method === 'PUT').at(-1)!.json()).toMatchObject({ version: 4 });
+
+    // A save that gets no answer (network) reaches the remote's error boundary, not an unhandled rejection.
+    net.on('PUT /api/tenders/:id', () => Promise.reject(new TypeError('Failed to fetch')));
+    await user(() => $<HTMLButtonElement>('button[type=submit]')!.click());
+    await until(() => text().includes('Something went wrong') || text().includes('You are offline'));
+    expect($('form')).toBeNull();
   });
 
   it('a session context that fails at boot is retried: the page starts deny-all, then the subject gets its roles (review 2)', async () => {

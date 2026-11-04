@@ -123,6 +123,10 @@ export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSig
   // Bounded: a stalled CDN or origin would otherwise leave a blank page instead of the "unavailable" one.
   // Own timer plus the caller's signal (AbortSignal.any is missing in older Safari).
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // setTimeout takes NaN, Infinity or anything over 2^31-1 ms as about 1 ms.
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) {
+    throw new RangeError(`timeoutMs must be an integer from 1 to 2147483647, got ${String(timeoutMs)}`);
+  }
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {

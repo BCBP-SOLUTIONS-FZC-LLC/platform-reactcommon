@@ -281,6 +281,13 @@ describe('loadRuntimeConfig', () => {
     expect(fetchMock.mock.calls[0]![1]!.signal!.aborted).toBe(true); // the caller's abort reaches the request
   });
 
+  it('refuses a timeoutMs that setTimeout would take as about 1 ms', async () => {
+    vi.stubGlobal('fetch', respond('{}'));
+    for (const timeoutMs of [0, Number.POSITIVE_INFINITY, Number.NaN, 2 ** 31, 1.5]) {
+      await expect(loadRuntimeConfig({ timeoutMs })).rejects.toThrow(RangeError);
+    }
+  });
+
   it('gives up after 10 s with a RuntimeConfigError, so the shell shows its unavailable page (review 3)', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
