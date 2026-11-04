@@ -7,6 +7,7 @@ import { clearAllAppStorage, workspaceNamespace } from '../storage/index.ts';
 import { isOnline, subscribeOnline } from '../internal/online.ts';
 import { isSafeRedirect } from '../internal/redirect.ts';
 import { retryAfterMs } from '../internal/retry-after.ts';
+import { emitRuntime } from '../internal/events.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { rotateSessionId } from '../internal/session.ts';
 import type { IdentityProvider, SessionState, SessionUser, Workspace, WorkspaceResolver } from './types.ts';
@@ -146,6 +147,22 @@ export function setAuthInternalsForTests(o: Partial<typeof internals>): void {
 }
 
 const log = () => getLogger();
+
+/**
+ * The signed-in user's page state, dropped at sign-out (this tab's or another's) and on a workspace switch:
+ * storage no longer the tenant's, and the UI authorization subject, the flag provider and the read-only
+ * mark gone, so a shell that does not unmount cannot show the previous user's permissions or flags.
+ */
+function forgetUser(): void {
+  const rt = getRuntime() as ReturnType<typeof getRuntime> & { stopFlagWatching?: (() => void) | undefined };
+  rt.storageNamespace = 'anon';
+  rt.authzSubject = undefined;
+  rt.stopFlagWatching?.();
+  rt.stopFlagWatching = undefined;
+  rt.flagProvider = undefined;
+  rt.readOnlyDenied = false;
+  for (const topic of ['authz', 'flags', 'read-only'] as const) emitRuntime(topic);
+}
 
 function store(area: 'local' | 'session'): Storage | undefined {
   try {
@@ -358,7 +375,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       if ((type === 'logout' || type === 'workspace-switched') && state.status !== 'anonymous') {
         restoring = false;
         dropTokens();
-        getRuntime().storageNamespace = 'anon';
+        forgetUser();
         if (type === 'logout') signedOutElsewhere = true; // a sign-in this tab is finishing must not undo it
         if (type === 'logout' && state.status === 'expired') setState({ status: 'anonymous', ...(workspace ? { workspace } : {}), reason: 'signed-out' });
       }
@@ -368,7 +385,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       // The sending tab cleared storage, rotated the session id and set the signed-out mark.
       restoring = false;
       dropTokens();
-      getRuntime().storageNamespace = 'anon';
+      forgetUser();
       setState({ status: 'anonymous', ...(workspace ? { workspace } : {}), reason: 'signed-out' });
     } else if (type === 'workspace-switched') {
       expire({ serverEnded: false, idle: false });
@@ -877,7 +894,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       rotateSessionId();
       flag('local', SIGNED_OUT_KEY, true);
       broadcast('logout');
-      getRuntime().storageNamespace = 'anon';
+      forgetUser();
       setState({ status: 'anonymous', ...(w ? { workspace: w } : {}), reason: 'signed-out' });
       // Global by default (report Issue 10): a local logout leaves the provider's SSO session alive, and on a
       // shared device the next person's sign-in then shows the previous user. { global: false } opts out.
@@ -905,7 +922,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       clearAllAppStorage();
       rotateSessionId();
       broadcast('workspace-switched');
-      getRuntime().storageNamespace = 'anon';
+      forgetUser();
       await authorize({ workspace: w, reason: 'switch' });
     },
 

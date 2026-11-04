@@ -185,7 +185,7 @@ The **RUM session id** is a random v4 UUID kept in localStorage under `@bcbp-sol
 
 ### 4.2 Runtime configuration (`/config`)
 
-`loadRuntimeConfig()` fetches `/config/runtime.json` with `cache: no-cache`. `RuntimeConfigSchema` (zod, strict at every level: an unknown key fails) parses it, and the result is deep-frozen. `setRuntimeConfig()` publishes it on the runtime; `getConfig()` throws `NotInitializedError` before that, and `tryGetConfig()` returns `undefined`. Fields and defaults are listed in §12.1. Zod runs in **jitless** mode: its first-parse `new Function('')` probe would otherwise fire a CSP violation on every page load.
+`loadRuntimeConfig()` fetches `/config/runtime.json` with `cache: no-cache`, within `timeoutMs` (default 10 s, with the caller's `signal`; a timeout is a `RuntimeConfigError`). `RuntimeConfigSchema` (zod, strict at every level: an unknown key fails) parses it, and the result is deep-frozen. `setRuntimeConfig()` publishes it on the runtime; `getConfig()` throws `NotInitializedError` before that, and `tryGetConfig()` returns `undefined`. Fields and defaults are listed in §12.1. Zod runs in **jitless** mode: its first-parse `new Function('')` probe would otherwise fire a CSP violation on every page load.
 
 ### 4.3 Session model (`/auth`)
 
@@ -437,7 +437,7 @@ For a remote, `domain` is its manifest `ownerDomain` and `service` is the remote
 - known bucket presets, at most 50 buckets;
 - no reuse of a legacy name.
 
-Tier 3 label values are capped at 100 per label, and the overflow value is `__other__`. Export uses OTLP/HTTP with **delta** temporality every 60 s, through a consent gate that discards the interval when `telemetry` isn't granted. When the page is hidden or closing, the interval is collected then and sent by `sendBeacon` in the share the logs and spans leave it (§7.5); an empty interval sends nothing, a refused or oversized one goes through the exporter. Up to 1 000 label sets per instrument are kept for `renderMetricInventory()`.
+A Tier 3 metric declares at most 8 labels besides `domain`, `service` and `environment` (`MAX_SERVICE_LABELS`, the gateway's per-point limit; more is an `InvalidMetricError`), and its label values are capped at 100 per label, the overflow value being `__other__`. Export uses OTLP/HTTP with **delta** temporality every 60 s, through a consent gate that discards the interval when `telemetry` isn't granted. When the page is hidden or closing, the interval is collected then and sent by `sendBeacon` in the share the logs and spans leave it (§7.5); an empty interval sends nothing, a refused or oversized one goes through the exporter. Up to 1 000 label sets per instrument are kept for `renderMetricInventory()`. `shutdownMetrics` collects and sends the last interval.
 
 ### 7.4 Governance and CI
 
@@ -464,7 +464,7 @@ The platform's Collector is deployed elsewhere; this repository ships its **refe
 
 | Tier | Does |
 |---|---|
-| Gateway (`gateway.yaml`, behind `/otel/*`, any number of replicas) | OTLP/HTTP on `/otel/v1/*`; keeps only the SDK's resource attributes (`service.name`, `service.version`, `service.namespace`, `deployment.environment.name`); allowlists metric names (a Tier 1 name of the proposal, or a `<domain>_*` matching the `domain` label, with a unit suffix), label keys (Tier 1 and Tier 2: the registry's and the proposal's; Tier 3: snake_case, not prohibited, at most 8 besides the const labels) and label values (registry vocabulary, this deployment's environment); `page_route` over 64 characters becomes `unknown`; cuts values at 128 characters; routes each metric stream to one aggregator (`loadbalancing`, `routing_key: streamID`) |
+| Gateway (`gateway.yaml`, behind `/otel/*`, any number of replicas) | OTLP/HTTP on `/otel/v1/*`; keeps only the SDK's resource attributes on traces and logs (`service.name`, `service.version`, `service.namespace`, `deployment.environment.name`) and none on metrics (labels carry the identity; a version or forged name would split or mint series); allowlists metric names (a Tier 1 name of the proposal, or a `<domain>_*` matching the `domain` label, with a unit suffix), label keys (Tier 1 and Tier 2: the registry's and the proposal's; Tier 3: snake_case, not prohibited, at most 8 besides the const labels) and label values (registry vocabulary, this deployment's environment); `page_route` over 64 characters becomes `unknown`; cuts values at 128 characters; routes each metric stream to one aggregator (`loadbalancing`, `routing_key: streamID`) |
 | Aggregator (`aggregator.yaml`) | Re-stamps each delta with its arrival time (device clocks are not trusted), then `delta_to_cumulative` for Mimir. One converter per stream: two Collectors converting the same stream would write conflicting totals |
 
 The allowlists bound what one request adds, not the product of allowed values: set Mimir's per-tenant series limits too (`examples/collector/README.md`). `examples/collector/test` keeps the allowlists equal to the metric registry; `pnpm test-collector` (CI job `collector`) runs two gateways and two aggregators in the Collector image; the integrated stack routes `/otel` through both tiers.
@@ -644,7 +644,7 @@ CSP violations after bootstrap are logged by `installGlobalErrorHandlers` (direc
 The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are recorded through the instrument port. They are no-ops until the names are ratified and the binding ships (§15). The list is in [docs/observability/README.md](../observability/README.md).
 
 ### 11.3 Counters for tests and support
-`tracingStats()`, `loggingStats()` and `metricsStats()` (internal) count exported items, items dropped because the queue was full or consent was missing, export failures and beacons. `/testing`'s `createTestPlatform` exposes the logs and spans that would have been exported.
+`tracingStats()`, `loggingStats()` and `metricsStats()` (internal) count exported items, items dropped because the queue was full or consent was missing, export failures and beacons. `/testing`'s `createTestPlatform` exposes the logs and spans that would have been exported, and `signOuts` (its shell's `signOut`, for `useSignOut`); a new platform stops the previous one (unload listeners, logging, tracing, identity provider).
 
 ---
 
@@ -721,7 +721,7 @@ Shells and remotes built with webpack and Rspack interoperate: an Rspack shell p
 | `no-sdk-deep-import` | any SDK specifier that is not a public subpath (or `package.json`) |
 | `no-identity-headers` | a forbidden header (list generated from the contracts) as a key of a `headers: {}` object or `x.headers = {}`, in a `new Headers({})` or `new Headers([[name, v]])` (also `[[name, v]]` as `headers`), as the name in `.set` / `.append` (string or template without expressions), or in a computed assignment `h['x-user-id'] = v` |
 | `no-raw-storage` | global `localStorage` / `sessionStorage`, also via `window`, `globalThis`, `self`, chains of them (`window.self`), a `const` / `let` alias never reassigned (`const w = window; w.localStorage`) and destructuring (`const { localStorage } = window`) |
-| `no-unsafe-html` | without `sanitizeHtml(…)` imported from `@bcbp-solutions-fzc-llc/frontend-sdk/security` (named, aliased or through its namespace; the `sanitizers` option replaces it with names of your own): `innerHTML` / `outerHTML` / `srcdoc` assignment, `setAttribute('srcdoc', …)`, JSX `srcDoc`, `insertAdjacentHTML`, `setHTMLUnsafe`, `parseHTMLUnsafe`, `createContextualFragment`, `parseFromString` of any type but `text/xml` / `application/xml`, `dangerouslySetInnerHTML`; `document.write` / `writeln` always |
+| `no-unsafe-html` | without `sanitizeHtml(…)` imported from `@bcbp-solutions-fzc-llc/frontend-sdk/security` (named, aliased or through its namespace; the `sanitizers` option replaces it with names of your own): `innerHTML` / `outerHTML` / `srcdoc` assignment, `setAttribute('srcdoc', …)`, JSX `srcDoc`, `insertAdjacentHTML`, `setHTMLUnsafe`, `parseHTMLUnsafe`, `createContextualFragment`, `parseFromString` (any type: Trusted Types requires TrustedHTML for XML too), `dangerouslySetInnerHTML`; `document.write` / `writeln` always |
 | `no-runtime-css-in-js` | `@emotion/*`, `styled-components`, `@mui/*`, `@stitches/react`, `goober`, `styled-jsx`, `@vanilla-extract/dynamic` (written exceptions via `allow`) |
 | `api-route-template` | an `ApiClient`-style `get/post/put/patch/delete` whose path is a template literal with expressions or a `+` concatenation starting with `/` |
 

@@ -122,6 +122,18 @@ tester.run('no-raw-storage', rules['no-raw-storage']!, {
     { code: 'window.self.localStorage.clear();', errors: [{ messageId: 'raw', data: { name: 'self.localStorage' } }] },
     { code: 'const { localStorage: ls } = window; ls.clear();', errors: [{ messageId: 'raw', data: { name: 'localStorage' } }] },
     { code: 'const w = window; const { sessionStorage } = w;', errors: 1 },
+    // With browser globals configured (globals.browser, as nearly every project sets), the storages and the
+    // global object are resolved variables, not unresolved references (review 3).
+    ...[
+      "localStorage.setItem('token', t);",
+      "sessionStorage.getItem('draft'); localStorage.clear();",
+      'window.localStorage.clear();',
+      'const w = window; w.sessionStorage.clear();',
+    ].map((code) => ({
+      code,
+      languageOptions: { globals: { localStorage: 'readonly' as const, sessionStorage: 'readonly' as const, window: 'readonly' as const } },
+      errors: code.split(/(?:local|session)Storage/).length - 1,
+    })),
   ],
 });
 
@@ -137,8 +149,6 @@ tester.run('no-unsafe-html', rules['no-unsafe-html']!, {
     `${SANITIZE} const a = <iframe srcDoc={sanitizeHtml(html)} />;`,
     `${SANITIZE} range.createContextualFragment(sanitizeHtml(html));`,
     `${SANITIZE} new DOMParser().parseFromString(sanitizeHtml(html), 'text/html');`,
-    "new DOMParser().parseFromString(xml, 'application/xml');",
-    "parser.parseFromString(xml, 'text/xml');",
     "iframe.setAttribute('title', html);",
     `${SANITIZE} iframe.setAttribute('srcdoc', sanitizeHtml(html));`,
     { code: 'el.innerHTML = clean(html);', options: [{ sanitizers: ['clean'] }] },
@@ -172,6 +182,9 @@ tester.run('no-unsafe-html', rules['no-unsafe-html']!, {
     { code: "new DOMParser().parseFromString(html, 'text/html');", errors: [{ messageId: 'unsanitized', data: { what: 'DOMParser.parseFromString' } }] },
     { code: 'parser.parseFromString(html, type);', errors: 1 }, // an unknown type may be HTML
     { code: "parser.parseFromString(svg, 'image/svg+xml');", errors: 1 },
+    // XML too (review 3): XHTML/SVG nodes keep their handlers, and Trusted Types requires TrustedHTML for every type.
+    { code: "new DOMParser().parseFromString(xml, 'application/xml');", errors: 1 },
+    { code: "parser.parseFromString(xml, 'text/xml');", errors: 1 },
     // A sanitizeHtml that is not the SDK's is not trusted.
     { code: 'el.innerHTML = sanitizeHtml(html);', errors: [{ messageId: 'unsanitized', data: { what: 'innerHTML' } }] },
     { code: 'function sanitizeHtml(s) { return s; } el.innerHTML = sanitizeHtml(html);', errors: 1 },

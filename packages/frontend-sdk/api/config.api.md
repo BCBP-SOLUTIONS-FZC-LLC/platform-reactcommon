@@ -13,6 +13,7 @@ export function getConfig(): RuntimeConfig;
 export function loadRuntimeConfig(opts?: {
     url?: string;
     signal?: AbortSignal;
+    timeoutMs?: number;
 }): Promise<RuntimeConfig>;
 
 // @public

@@ -549,6 +549,18 @@ describe('idle timeout', () => {
     expect(await idp.getAccessToken()).toBeUndefined();
   });
 
+  it('a sign-out in another tab also drops this tab\'s permissions, flags and read-only mark (review 3)', async () => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page);
+    const rt = getRuntime();
+    let stopped = false;
+    Object.assign(rt, { authzSubject: { roles: ['admin'] }, flagProvider: { get: () => true }, readOnlyDenied: true, stopFlagWatching: () => (stopped = true) });
+    new FakeBroadcastChannel('platform-auth').postMessage({ type: 'logout' });
+    await flush(() => idp.getState().status === 'anonymous');
+    expect([rt.authzSubject, rt.flagProvider, rt.readOnlyDenied, rt.storageNamespace]).toEqual([undefined, undefined, false, 'anon']);
+    expect(stopped).toBe(true);
+  });
+
   it('activity in any tab keeps the session alive', async () => {
     const page = new FakePage('/');
     const { idp } = await signIn(page);

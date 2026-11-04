@@ -98,9 +98,28 @@ function tapCssLoaders(compiler: Compiler, compilation: Compilation, require: st
   }
 }
 
+/**
+ * Chunks a runtime can load on demand: every runtime chunk's async chunks (webpack and Rspack both give
+ * them), else those that cannot be initial. A chunk the HTML loads at startup is not one: a CSS file in a
+ * runtimeChunk: 'single' build or a `css/mini-extract` cacheGroup is pinned by the HTML instead.
+ */
+function onDemandChunks(compilation: Compilation): Set<Chunk> {
+  const out = new Set<Chunk>();
+  let known = false;
+  for (const chunk of compilation.chunks) {
+    const all = (chunk as { getAllAsyncChunks?(): Iterable<Chunk> }).getAllAsyncChunks;
+    if (!chunk.hasRuntime() || typeof all !== 'function') continue;
+    known = true;
+    for (const c of all.call(chunk)) out.add(c);
+  }
+  if (!known) for (const chunk of compilation.chunks) if (!chunk.canBeInitial()) out.add(chunk);
+  return out;
+}
+
 /** The lazily loadable file with `ext` of a chunk; undefined for chunks loaded as entries or without one. */
-function lazyFile(chunk: Chunk, ext: Ext): string | undefined {
+function lazyFile(chunk: Chunk, ext: Ext, onDemand?: Set<Chunk>): string | undefined {
   if (chunk.hasRuntime()) return undefined; // an entry: pinned in the build's HTML, or by the remote manifest
+  if (onDemand && !onDemand.has(chunk)) return undefined; // loaded at startup: pinned in the build's HTML
   const files = [...chunk.files].filter((f) => f.endsWith(ext));
   if (files.length > 1) throw new Error(`chunk ${String(chunk.id)} has ${files.length} ${ext === '.js' ? 'JS' : 'CSS'} files (${files.join(', ')}); integrity expects one`);
   return files[0];
@@ -156,8 +175,11 @@ function pinTags(compilation: Compilation, html: string, add: boolean): { html: 
 /** chunk id → integrity of every lazily loadable file with `ext`, in chunk order (a stable key order). */
 function lazyIntegrities(compilation: Compilation, ext: Ext): Map<string | number, string> {
   const out = new Map<string | number, string>();
+  // CSS only: an initial CSS chunk has no loader that reads the map (mini-css-extract adds one only for
+  // async CSS), so mapping it would fail the loader check below. JS keeps every non-runtime chunk.
+  const onDemand = ext === '.css' ? onDemandChunks(compilation) : undefined;
   for (const chunk of compilation.chunks) {
-    const file = lazyFile(chunk, ext);
+    const file = lazyFile(chunk, ext, onDemand);
     if (file === undefined || chunk.id === null) continue;
     out.set(chunk.id, integrityOf(compilation.getAsset(file)!.source.buffer()));
   }

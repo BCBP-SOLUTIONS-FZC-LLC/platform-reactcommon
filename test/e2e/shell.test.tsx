@@ -238,11 +238,30 @@ describe('the reference shell', () => {
       mockProblem(PlatformProblemTypes.ValidationFailed, { validationErrors: [{ field: 'title', message: 'Title is required', code: 'required' }] }),
     );
     $<HTMLInputElement>('input[name=title]')!.value = '';
+    $<HTMLInputElement>('input[name=deadline]')!.value = '2027-01-15';
     await user(() => $<HTMLButtonElement>('button[type=submit]')!.click());
     await until(() => text().includes('Title is required'));
     const [put] = net.sent('/api/tenders/1').filter((r) => r.method === 'PUT');
-    expect(await put!.json()).toEqual({ title: '', deadline: '2026-12-01' });
+    // The version read goes with the save, so a concurrent edit is a 409, not an overwrite (review 3).
+    expect(await put!.json()).toEqual({ title: '', deadline: '2027-01-15', version: 3 });
     expect($('input[name=title]')!.getAttribute('aria-invalid')).toBe('true');
+    // The user's edits stay next to the field errors (React 19's <form action> reset them; review 3).
+    expect($<HTMLInputElement>('input[name=deadline]')!.value).toBe('2027-01-15');
+
+    // A save that succeeds shows the saved tender, with its new version.
+    net.on('PUT /api/tenders/:id', () => Response.json({ ...TENDER, title: 'Road works, phase 2', version: 4 }));
+    net.on('GET /api/tenders/:id', () => Response.json({ ...TENDER, title: 'Road works, phase 2', version: 4 }));
+    $<HTMLInputElement>('input[name=title]')!.value = 'Road works, phase 2';
+    await user(() => $<HTMLButtonElement>('button[type=submit]')!.click());
+    await until(() => $<HTMLInputElement>('input[name=title]')?.defaultValue === 'Road works, phase 2');
+    expect(text()).not.toContain('Title is required');
+    expect(await net.sent('/api/tenders/1').filter((r) => r.method === 'PUT').at(-1)!.json()).toMatchObject({ version: 3 });
+
+    // Someone else saved meanwhile: the version no longer matches, and the form says so.
+    net.on('PUT /api/tenders/:id', () => mockProblem(PlatformProblemTypes.Conflict));
+    await user(() => $<HTMLButtonElement>('button[type=submit]')!.click());
+    await until(() => [...document.querySelectorAll('p[role=alert]')].length > 0);
+    expect(await net.sent('/api/tenders/1').filter((r) => r.method === 'PUT').at(-1)!.json()).toMatchObject({ version: 4 });
   });
 
   it('a session context that fails at boot is retried: the page starts deny-all, then the subject gets its roles (review 2)', async () => {
@@ -356,6 +375,26 @@ describe('the reference shell', () => {
     const again = new URL(page.assigned[0]!);
     expect(again.pathname).toBe('/realms/tenant-acme/protocol/openid-connect/auth');
     expect(again.searchParams.get('prompt')).toBe('login');
+  });
+
+  it("another tab's sign-out while this tab is still booting: the app is never mounted (review 3)", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    net.on('GET /api/v1/me/session-context', async () => {
+      await held; // the session context is slow
+      return Response.json({ tenant_id: TENANT, slug: 'acme', roles: ['preparator'], feature_flags: [], read_only: false });
+    });
+    await load('/t/acme/');
+    await until(() => page.assigned.length > 0);
+    await approveLogin();
+    await until(() => net.sent('/api/v1/me/session-context').length > 0);
+    page.local.setItem(SIGNED_OUT_KEY, String(Date.now()));
+    await user(() => new FakeBroadcastChannel('platform-auth').postMessage({ type: 'logout' }));
+    await until(() => text().includes('You are signed out'));
+    release();
+    await flush();
+    expect(document.getElementById('root')!.childElementCount).toBe(0); // the previous user's app never appears
+    expect([...document.querySelectorAll('h1')].map((h) => h.textContent)).toEqual(['You are signed out']);
   });
 
   it("another tab's sign-out takes this tab to the signed-out screen; the app is no longer shown (Issue 7)", async () => {

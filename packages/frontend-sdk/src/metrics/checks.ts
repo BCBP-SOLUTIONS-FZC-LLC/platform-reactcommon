@@ -95,6 +95,13 @@ export function checkServiceMetric(type: MetricType, name: string, labelNames: r
   checkServicePrefix(name, domain, service);
 }
 
+/**
+ * A service metric declares at most this many labels besides domain, service and environment: the
+ * reference Collector gateway keeps that many per point (examples/collector/gateway.yaml `limit`), and a
+ * point with more would lose an arbitrary one, merging series. Refused here, where the author sees it.
+ */
+export const MAX_SERVICE_LABELS = 8;
+
 /** checkServiceMetric's rules that need no scope identity: everything but the service prefix. */
 export function checkServiceMetricShape(type: MetricType, name: string, labelNames: readonly string[]): void {
   if (typeof name !== 'string' || !NAME_RE.test(name)) throw new InvalidMetricError('namespace', `metric ${JSON.stringify(name)}: name must be snake_case [a-z0-9_]`);
@@ -111,6 +118,9 @@ export function checkServiceMetricShape(type: MetricType, name: string, labelNam
     if (CONST_LABELS.includes(l)) throw new InvalidMetricError('required_labels', `metric "${name}": label "${l}" is injected centrally and must not be declared`);
   }
   if (new Set(labelNames).size !== labelNames.length) throw new InvalidMetricError('label_vocabulary', `metric "${name}": duplicate label names`);
+  if (labelNames.length > MAX_SERVICE_LABELS) {
+    throw new InvalidMetricError('label_vocabulary', `metric "${name}": ${labelNames.length} labels; at most ${MAX_SERVICE_LABELS} besides domain, service and environment`);
+  }
 }
 
 /** checkServiceMetric's last rule: the name starts with the scope's service prefix. */

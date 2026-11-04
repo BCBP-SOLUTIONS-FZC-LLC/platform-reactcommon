@@ -271,4 +271,32 @@ describe('lazily loaded CSS: integrity', () => {
     };
     await expect(build(join(root, 'dist2'), [rewriteCss])).rejects.toThrow(/index\.html loads assets\/main\.\S+\.css without its current integrity/);
   });
+
+  it.each([
+    ['runtimeChunk: \'single\'', { runtimeChunk: 'single' as const }],
+    ['one CSS file for all (mini-css-extract\'s cacheGroup)', { splitChunks: { cacheGroups: { styles: { type: 'css/mini-extract', name: 'styles', chunks: 'all' as const, enforce: true } } } }],
+  ])('a shell whose CSS only loads at startup builds (%s): the HTML pins it, no lazy CSS map is needed (review 3)', async (_name, optimization) => {
+    const HtmlWebpackPlugin = createRequire(join(import.meta.dirname, '../../../examples/shell/package.json'))('html-webpack-plugin') as new (o: object) => webpack.WebpackPluginInstance;
+    const root = mkdtempSync(join(dir, 'initial-css-'));
+    fakeSdk(root);
+    writeFileSync(join(root, 'shell.js'), "import './shell.css';\nimport('./bootstrap.js');\n");
+    writeFileSync(join(root, 'shell.css'), 'body { margin: 0; }\n');
+    writeFileSync(join(root, 'bootstrap.js'), 'export const ready = 1;\n');
+    writeFileSync(join(root, 'index.html'), '<!doctype html><html><head></head><body></body></html>\n');
+    const preset = platformWebpackConfig({ role: 'shell', mode: 'production' });
+    const out = join(root, 'dist');
+    await compileWebpack({
+      ...preset,
+      context: root,
+      entry: { main: './shell.js' },
+      output: { ...preset.output, path: out },
+      optimization: { ...preset.optimization, ...optimization },
+      module: { rules: [cssModulesRule(MiniCssExtractPlugin.loader)] },
+      plugins: [...preset.plugins!, new MiniCssExtractPlugin({ filename: 'assets/[name].[contenthash].css' }), new HtmlWebpackPlugin({ template: './index.html', inject: 'body', scriptLoading: 'defer' })],
+    });
+    const html = readFileSync(join(out, 'index.html'), 'utf8');
+    const link = [...html.matchAll(/<link\b[^>]*>/g)].map((m) => m[0]).find((t) => /rel="?stylesheet/.test(t))!;
+    const href = /href="?\/?([^" >]+)/.exec(link)![1]!;
+    expect(link).toContain(`integrity="${integrityOf(readFileSync(join(out, href)))}"`);
+  });
 });

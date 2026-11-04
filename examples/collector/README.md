@@ -19,7 +19,8 @@ what the SDK can send and nothing else:
 
 | What | Kept | Otherwise |
 |---|---|---|
-| Resource attributes (every signal) | `service.name`, `service.version`, `service.namespace`, `deployment.environment.name` | removed |
+| Resource attributes (traces, logs) | `service.name`, `service.version`, `service.namespace`, `deployment.environment.name` | removed |
+| Resource attributes (metrics) | none: `domain`, `service` and `environment` are labels; `service.version` would split a series after a deploy, and `service.name` (Prometheus `job`, `target_info`) would let a POST mint series | removed |
 | Metric names | a Tier 1 name of the proposal (`platform_web_vitals_seconds`, …), or a `<domain>_*` name matching the `domain` label with a `_total` / `_seconds` / `_bytes` suffix | point dropped |
 | Label keys, Tier 1 and Tier 2 (the proposal's and the registry's metric names) | the registry's labels (`contracts/metric-registry.json`) and the Tier 1 proposal's (`page_route`, `mfe`, `vital`, `rating`) | key removed |
 | Label keys, Tier 3 (any other `<domain>_<service>_*`) | snake_case keys (≤ 64 characters) that are not prohibited (`user_id`, `email`, `*_id`, `*_token`, …: the registry's list); `domain`, `service`, `environment` and at most 8 others | key removed |

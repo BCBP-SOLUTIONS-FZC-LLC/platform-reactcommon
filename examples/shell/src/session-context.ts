@@ -21,10 +21,13 @@ export interface RetryOptions {
   onError?: (e: unknown, attempt: number) => void;
 }
 
+/** Resolves after `ms`, or at once when `signal` is (or becomes) aborted; leaves no listener behind. */
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve) => {
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+    if (signal?.aborted) return resolve();
+    const onAbort = () => { clearTimeout(t); resolve(); };
+    const t = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 
 /**

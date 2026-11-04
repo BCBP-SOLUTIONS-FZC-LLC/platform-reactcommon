@@ -183,6 +183,12 @@ export const noRawStorage = rule(
         for (const ref of scope.through) {
           if (STORAGES.has(ref.identifier.name)) report(ref.identifier as Node, ref.identifier.name);
         }
+        // A configured global (languageOptions.globals: globals.browser, as nearly every browser project
+        // sets) is resolved, so its references are not in `through`: a declared-nowhere variable's are.
+        for (const name of STORAGES) {
+          const v = scope.set.get(name);
+          if (v && v.defs.length === 0) for (const ref of v.references) report(ref.identifier as Node, name);
+        }
       },
       // window.localStorage, globalThis['sessionStorage'], w.localStorage after const w = window
       MemberExpression(n) {
@@ -212,8 +218,6 @@ const HTML_METHODS = new Map([
   ['parseHTMLUnsafe', 0],
   ['createContextualFragment', 0],
 ]);
-/** DOMParser types that do not parse HTML (no event-handler attributes, no scripts to adopt). */
-const XML_TYPES = new Set(['text/xml', 'application/xml']);
 const SECURITY = `${SDK_PACKAGE}/security`;
 
 export const noUnsafeHtml = rule(
@@ -262,11 +266,10 @@ export const noUnsafeHtml = rule(
         if (!name) return;
         const index = HTML_METHODS.get(name);
         if (index !== undefined && !isSanitized(n.arguments[index] as Node | undefined)) report(n, name);
-        // new DOMParser().parseFromString(html, 'text/html'): its nodes keep their event handlers when adopted
-        if (name === 'parseFromString' && n.arguments.length >= 2) {
-          const type = staticString(n.arguments[1] as Node);
-          if (!(type !== undefined && XML_TYPES.has(type)) && !isSanitized(n.arguments[0] as Node)) report(n, 'DOMParser.parseFromString');
-        }
+        // new DOMParser().parseFromString(text, type), of any type: XML-parsed XHTML and SVG elements keep their
+        // event-handler attributes when adopted, and under require-trusted-types-for 'script' every type needs
+        // TrustedHTML, so an unsanitized string throws in production.
+        if (name === 'parseFromString' && n.arguments.length >= 2 && !isSanitized(n.arguments[0] as Node)) report(n, 'DOMParser.parseFromString');
         // el.setAttribute('srcdoc', html)
         if (name === 'setAttribute' && staticString(n.arguments[0] as Node)?.toLowerCase() === 'srcdoc' && !isSanitized(n.arguments[1] as Node)) report(n, 'srcdoc');
         if ((name === 'write' || name === 'writeln') && n.callee.object.type === 'Identifier' && n.callee.object.name === 'document') {

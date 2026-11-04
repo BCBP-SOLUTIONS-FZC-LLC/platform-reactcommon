@@ -29,3 +29,15 @@ describe('the production OTLP metric exporter', () => {
     expect(metricsState().provider).toBeUndefined();
   });
 });
+
+describe('shutdownMetrics (review 3)', () => {
+  it('collects and sends the last interval: what was recorded since the last export is not lost', async () => {
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    const saves = getServiceMeter().counter('tender_management_web_app_saves_total', 'Saves.', []);
+    saves.add(1);
+    await metricsState().provider!.forceFlush();
+    saves.add(1); // after the last export, before shutdown
+    await shutdownMetrics();
+    expect(metricsStats().droppedNoConsent).toBe(2); // the second interval reached the (consent-gated) exporter
+  });
+});

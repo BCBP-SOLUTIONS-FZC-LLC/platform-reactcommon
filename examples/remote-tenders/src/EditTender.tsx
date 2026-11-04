@@ -1,5 +1,5 @@
 // The remote component of design doc §C4, as written there.
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useApi, useApiClient, useHasPermission, useRouteTemplate, useT,
          MFEErrorBoundary } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
 import { isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@bcbp-solutions-fzc-llc/frontend-sdk/problem';
@@ -12,7 +12,7 @@ function EditTenderForm({ id }: { id: string }) {
   const t = useT('tenders');
   const api = useApiClient();
   const canEdit = useHasPermission('update', 'tender');
-  const { data, error, loading } = useApi((c, signal) =>
+  const { data, error, loading, reload } = useApi((c, signal) =>
     c.get<Tender>('/tenders/:id', { params: { id }, signal }).then((r) => r.data), [id]);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
   const [formError, setFormError] = useState<string>();
@@ -21,10 +21,16 @@ function EditTenderForm({ id }: { id: string }) {
   if (error) throw error;                       // MFEErrorBoundary renders traceId/requestId
   if (!data) return null;
 
-  async function onSubmit(form: FormData) {
+  // onSubmit, not <form action>: React 19 resets a form's uncontrolled fields once its action completes,
+  // which would erase the user's edits next to a 422's field errors.
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
     setFieldErrors({}); setFormError(undefined);
     try {
-      await api.put('/tenders/:id', { params: { id }, body: Object.fromEntries(form) });
+      // The version read: a concurrent edit answers 409 Conflict instead of being overwritten.
+      await api.put('/tenders/:id', { params: { id }, body: { ...Object.fromEntries(form), version: data!.version } });
+      reload(); // the saved tender, with its new version
     } catch (e) {
       if (!isProblemError(e)) throw e;          // Timeout/Network → boundary
       if (e.is(PlatformProblemTypes.ValidationFailed)) setFieldErrors(toFieldErrorMap(e));
@@ -34,7 +40,8 @@ function EditTenderForm({ id }: { id: string }) {
   }
 
   return (
-    <form action={onSubmit}>
+    // Keyed by version: after a save the fields show the saved tender, not the values they started with.
+    <form key={data.version} onSubmit={(e) => void onSubmit(e)}>
       <input name="title" defaultValue={data.title} disabled={!canEdit} aria-invalid={!!fieldErrors.title} />
       {fieldErrors.title?.map((m) => <span key={m} role="alert">{m}</span>)}
       <input name="deadline" type="date" defaultValue={data.deadline} disabled={!canEdit} />

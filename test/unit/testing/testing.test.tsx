@@ -10,7 +10,7 @@ import { getLogger } from '../../../packages/frontend-sdk/src/logging/index.ts';
 import { shutdownLogging } from '../../../packages/frontend-sdk/src/logging/logging.ts';
 import { getServiceMeter } from '../../../packages/frontend-sdk/src/metrics/index.ts';
 import { PlatformProblemTypes, isProblemError, parseProblemResponse } from '../../../packages/frontend-sdk/src/problem/index.ts';
-import { useBeforeAuthRedirect, useCurrentUser, useSessionContext, useStepUp, useSwitchWorkspace, useWorkspace } from '../../../packages/frontend-sdk/src/react/index.ts';
+import { useBeforeAuthRedirect, useCurrentUser, useSessionContext, useSignOut, useStepUp, useSwitchWorkspace, useWorkspace } from '../../../packages/frontend-sdk/src/react/index.ts';
 import { storage } from '../../../packages/frontend-sdk/src/storage/index.ts';
 import { withSpan } from '../../../packages/frontend-sdk/src/tracing/index.ts';
 import { shutdownTracing } from '../../../packages/frontend-sdk/src/tracing/tracing.ts';
@@ -259,5 +259,35 @@ describe('renderMetricInventory', () => {
     createTestPlatform();
     getServiceMeter().counter('tender_management_test_app_saves_total', 'Saves.', ['kind']).add(1, { kind: 'draft' });
     expect(renderMetricInventory()).toContain('tender_management_test_app_saves_total{domain="tender_management"');
+  });
+});
+
+describe('createTestPlatform, review 3', () => {
+  it('its shell provides signOut, so useSignOut works in a remote\'s tests, and records each call', async () => {
+    const platform = createTestPlatform();
+    let signOut: ((o?: { global?: boolean }) => Promise<void>) | undefined;
+    function Button() {
+      signOut = useSignOut();
+      return null;
+    }
+    await render(
+      <platform.Wrapper>
+        <Button />
+      </platform.Wrapper>,
+    );
+    await signOut!({ global: false });
+    await signOut!();
+    expect(platform.signOuts).toEqual([{ global: false }, {}]);
+    platform.reset();
+    expect(platform.signOuts).toEqual([]);
+  });
+
+  it('a new platform stops the previous one: its pagehide listener is removed', () => {
+    const added = vi.spyOn(globalThis, 'addEventListener');
+    const removed = vi.spyOn(globalThis, 'removeEventListener');
+    createTestPlatform();
+    const pagehide = added.mock.calls.filter(([type]) => type === 'pagehide').map(([, l]) => l);
+    createTestPlatform();
+    for (const l of pagehide) expect(removed).toHaveBeenCalledWith('pagehide', l);
   });
 });
