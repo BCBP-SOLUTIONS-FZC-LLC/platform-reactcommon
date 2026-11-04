@@ -1,5 +1,6 @@
 // createTestPlatform (design doc §C1 /testing): a real SDK runtime for a remote's component tests, with
-// in-memory log and span exporters, a signed-in fake identity provider, role-map permissions and flags.
+// in-memory log and span exporters, a signed-in fake identity provider (storage scoped to its workspace),
+// role-map permissions and flags.
 import { context as otelContext, trace } from '@opentelemetry/api';
 import type { LogRecordExporter, ReadableLogRecord } from '@opentelemetry/sdk-logs';
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace';
@@ -12,7 +13,8 @@ import { setFlagProvider, type FlagValue } from '../flags/index.ts';
 import { setLoggingInternalsForTests, initializeLogging } from '../logging/logging.ts';
 import { PlatformProvider } from '../react/index.ts';
 import { setTracingInternalsForTests, initializeTracing } from '../tracing/tracing.ts';
-import { resetRuntimeForTests } from '../internal/runtime.ts';
+import { getRuntime, resetRuntimeForTests } from '../internal/runtime.ts';
+import { workspaceNamespace } from '../storage/index.ts';
 import { restoreFetch } from './mock-api.ts';
 
 /** One log record as the collector would receive it. */
@@ -43,6 +45,12 @@ interface TestPlatformOptions {
   /** 'action:resource' grants of the signed-in user; none by default (deny all, as in production without a role). */
   permissions: readonly `${string}:${string}`[];
   flags: Record<string, FlagValue>;
+  /**
+   * The namespace `storage()` writes under. Default: the signed-in workspace's, as the OIDC provider sets
+   * at sign-in (a trial workspace takes `user.tenantId`, else `context.tenantId`). 'anon' tests the
+   * signed-out case, where storage writes nothing.
+   */
+  storageNamespace: string;
 }
 
 const DEFAULT_IDENTITY: CoreIdentityInput = { serviceName: 'test-app', domain: 'tender_management', environment: 'test', buildVersion: '0.0.0-test' };
@@ -166,6 +174,9 @@ export function createTestPlatform(o?: Partial<TestPlatformOptions>): {
     ...o?.context,
   };
   initializeAuth(fakeIdentityProvider(user, workspace));
+  // The fake provider is signed in, so storage() is scoped to its workspace, as createOidcProvider does
+  // at sign-in (mfe-dashboard's report: storage() dropped every write under createTestPlatform).
+  getRuntime().storageNamespace = o?.storageNamespace ?? workspaceNamespace(workspace, user.tenantId ?? context.tenantId);
   setAuthorizer(roleMapAuthorizer({ [TEST_ROLE]: o?.permissions ?? [] }));
   setAuthzSubject({ roles: [TEST_ROLE], tenantId: context.tenantId });
   const flags = { ...o?.flags };

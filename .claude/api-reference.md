@@ -33,7 +33,7 @@ Import a subpath (`@bcbp-solutions-fzc-llc/frontend-sdk/http`), never the root (
 - **`initializeMetrics`**: sends the interval by `sendBeacon` when the page is hidden or closing; Tier 1 `platform_web_*` names are recorded through the instrument port and stay no-ops until ratified (`startWebVitals` records nothing yet).
 - **`sanitizeHtml`**: DOMPurify after a linear pre-pass that drops handler/style attributes and `<style>` (no CSP reports); returns `TrustedHTML` where Trusted Types exist.
 - **`loadManifest`**: drops an entry without `integrity` outside local, dev and test.
-- **`createTestPlatform()`** (`/testing`): a real SDK runtime with in-memory logs and spans, a signed-in session, permissions and flags; `mockApi`, `mockProblem`, `renderMetricInventory`.
+- **`createTestPlatform()`** (`/testing`): a real SDK runtime with in-memory logs and spans, a signed-in session (`storage()` scoped to its workspace; `storageNamespace: 'anon'` for signed out), permissions and flags; `mockApi`, `mockProblem`, `renderMetricInventory`.
 
 ## `@bcbp-solutions-fzc-llc/webpack-preset`
 
