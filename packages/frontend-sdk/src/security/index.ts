@@ -40,9 +40,10 @@ function getPurifier(): DOMPurify | undefined {
       const v = node.getAttribute(attr);
       if (v !== null && UNSAFE_URL.test(v)) node.removeAttribute(attr);
     }
-    if (node.tagName === 'IMG') {
-      const src = node.getAttribute('src');
-      if (src !== null && !SAFE_IMAGE.test(src)) node.removeAttribute('src');
+    // Media too (img, video, audio, source, track, poster): only what CSP's media and img sources allow.
+    for (const attr of ['src', 'poster']) {
+      const v = node.tagName === 'A' ? null : node.getAttribute(attr);
+      if (v !== null && !SAFE_IMAGE.test(v)) node.removeAttribute(attr);
     }
     // Links that stay: no opener, no referrer.
     if (node.tagName === 'A' && node.hasAttribute('href')) node.setAttribute('rel', 'noopener noreferrer');

@@ -330,10 +330,11 @@ async function attempt(call: Call, token: string | undefined): Promise<Response>
   call.release = combined?.release;
   const signal = combined?.signal ?? timeout;
   try {
-    // With a token, a redirect is not followed: an API that redirects elsewhere would take the correlation
-    // headers (and, on browsers before the Fetch spec dropped Authorization on cross-origin redirects, the
-    // token) along. execute() turns it into a synthetic 502.
-    return await fetch(url, { method, headers, signal, redirect: headers.has('authorization') ? 'manual' : 'follow', ...(body === undefined ? {} : { body }) });
+    // A redirect is not followed when the call carries a token or correlation headers: an API that redirects
+    // elsewhere would take them along (fetch drops only Authorization, and only on newer browsers).
+    // execute() turns it into a synthetic 502. A plain call follows redirects as fetch does.
+    const carries = ['authorization', 'traceparent', 'tracestate', 'x-request-id', 'x-session-id'].some((h) => headers.has(h));
+    return await fetch(url, { method, headers, signal, redirect: carries ? 'manual' : 'follow', ...(body === undefined ? {} : { body }) });
   } catch (e) {
     throw transportError(call, e);
   }

@@ -50,6 +50,7 @@ describe('sanitizeHtml', () => {
     expect(clean('<img src="/\\evil.example/p.gif">')).toBe('<img>');
     expect(clean('<img src="/img/logo.png">')).toBe('<img src="/img/logo.png">');
     expect(clean('<img src="data:image/png;base64,iVBORw0KGgo=">')).toBe('<img src="data:image/png;base64,iVBORw0KGgo=">');
+    expect(clean('<video src="https://tracker.example/v.mp4" poster="https://tracker.example/p.png"></video>')).toBe('<video></video>');
   });
 
   it('returns TrustedHTML when the browser has Trusted Types', async () => {
@@ -232,8 +233,10 @@ describe('sanitizeHtml pre-pass: linear time and no change to the sanitised outp
         const v = node.getAttribute(attr);
         if (v !== null && /[\p{Cc}\s\\\u2028\u2029]/u.test(v)) node.removeAttribute(attr);
       }
-      const src = node.tagName === 'IMG' ? node.getAttribute('src') : null;
-      if (src !== null && !/^(?:\/(?![/\\])|data:image\/(?:png|gif|jpe?g|webp|avif);)/i.test(src)) node.removeAttribute('src');
+      for (const attr of ['src', 'poster']) {
+        const v = node.tagName === 'A' ? null : node.getAttribute(attr);
+        if (v !== null && !/^(?:\/(?![/\\])|data:image\/(?:png|gif|jpe?g|webp|avif);)/i.test(v)) node.removeAttribute(attr);
+      }
       if (node.tagName === 'A' && node.hasAttribute('href')) node.setAttribute('rel', 'noopener noreferrer');
     });
     const config = {

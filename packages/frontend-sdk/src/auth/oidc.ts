@@ -122,6 +122,15 @@ export function postNavigate(url: string, fields: Record<string, string>): void 
   }
   doc.body.appendChild(form);
   form.submit();
+  // The ID token must not stay in the DOM: not if the POST is blocked, not on a page restored from the
+  // back/forward cache. Removed once the page is leaving, or after 10 s if it never does.
+  const remove = () => {
+    clearTimeout(timer);
+    globalThis.removeEventListener?.('pagehide', remove);
+    form.remove();
+  };
+  const timer = setTimeout(remove, 10_000);
+  globalThis.addEventListener?.('pagehide', remove);
 }
 
 /** Test seams: the clock, randomness and the page navigation. */
@@ -309,6 +318,8 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   let stopActivity: (() => void) | undefined;
   let stopOnline: (() => void) | undefined;
   let lastActivityWrite = 0;
+  /** Another tab signed out while this one was not signed in (loading): its sign-in in progress is dropped. */
+  let signedOutElsewhere = false;
   /** Refreshes retried in a row after the token endpoint refused one (refusedUnprocessed). */
   let unavailableRetries = 0;
   const listeners = new Set<(s: SessionState) => void>();
@@ -348,6 +359,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
         restoring = false;
         dropTokens();
         getRuntime().storageNamespace = 'anon';
+        if (type === 'logout') signedOutElsewhere = true; // a sign-in this tab is finishing must not undo it
         if (type === 'logout' && state.status === 'expired') setState({ status: 'anonymous', ...(workspace ? { workspace } : {}), reason: 'signed-out' });
       }
       return;
@@ -790,6 +802,10 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       const body = (await res.json().catch(() => ({}))) as TokenResponse;
       if (!res.ok) throw new Error(`token endpoint answered ${res.status} ${typeof body?.error === 'string' ? body.error : ''}`.trim());
       const t = accept(body, w, record.nonce);
+      if (signedOutElsewhere) {
+        log().info('sign-in dropped: another tab signed out meanwhile');
+        return anonymous('none');
+      }
       await forgetPreviousUser(w.realm, t.sub);
       flag('session', RESTORE_MARK_KEY, false);
       flag('local', SIGNED_OUT_KEY, false);

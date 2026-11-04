@@ -526,6 +526,29 @@ describe('idle timeout', () => {
     expect(getRuntime().storageNamespace).toBe('anon');
   });
 
+  it('a tab finishing its sign-in drops it when another tab signed out meanwhile (review: loading race)', async () => {
+    const page = new FakePage('/');
+    page.install();
+    await provider().login({ workspace: ACME, returnUrl: '/t/acme/' });
+    page.url = new URL(kc.approve(page.assigned.at(-1)!));
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const real = kc.fetch.getMockImplementation()!;
+    kc.fetch.mockImplementationOnce(async (input, init) => {
+      await held; // the code exchange is slow
+      return real(input, init);
+    });
+    const idp = provider();
+    const settled = idp.init();
+    await flush(() => kc.fetch.mock.calls.length > 0);
+    new FakeBroadcastChannel('platform-auth').postMessage({ type: 'logout' });
+    await flush();
+    release();
+    expect((await settled).status).toBe('anonymous');
+    expect(getRuntime().storageNamespace).toBe('anon');
+    expect(await idp.getAccessToken()).toBeUndefined();
+  });
+
   it('activity in any tab keeps the session alive', async () => {
     const page = new FakePage('/');
     const { idp } = await signIn(page);

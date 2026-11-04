@@ -200,15 +200,19 @@ export async function loadRemote<T = unknown>(
     let lastError: AttemptError | undefined;
     let deadline: ReturnType<typeof attemptDeadline> | undefined;
     for (let n = 0; n <= retries; n++) {
+      let pending: Promise<Container> | undefined;
       try {
         // Checked before loadContainer, so an aborted caller never injects the entry script.
         if (o?.signal?.aborted) throw new AttemptError('aborted', 'aborted');
-        let pending = containers().get(name);
+        pending = containers().get(name);
         if (!pending) {
           const loading = loadContainer(name, timeoutMs);
           pending = loading;
           containers().set(name, loading);
-          loading.catch(() => containers().delete(name)); // a failed load may be retried
+          // A failed load may be retried; a late failure of a timed-out load must not drop a newer one.
+          loading.catch(() => {
+            if (containers().get(name) === loading) containers().delete(name);
+          });
         }
         // The timeout covers the whole attempt: the entry, the share-scope init and the module's chunks
         // (a hung chunk would otherwise hold the Suspense fallback for the bundler's own 120 s).
@@ -233,7 +237,7 @@ export async function loadRemote<T = unknown>(
       } catch (e) {
         deadline?.clear();
         lastError = e instanceof AttemptError ? e : new AttemptError('network', String(e), { cause: e });
-        if (lastError.reason === 'timeout') containers().delete(name); // a hung load is not reused by the next attempt
+        if (lastError.reason === 'timeout' && containers().get(name) === pending) containers().delete(name); // a hung load is not reused
         if (lastError.reason === 'aborted' || lastError.reason === 'incompatible' || n === retries) break;
         await sleep(Math.min(5_000, 250 * 2 ** n) * Math.random());
       }

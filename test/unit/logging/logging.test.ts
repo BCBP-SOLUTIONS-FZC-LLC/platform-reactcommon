@@ -253,6 +253,8 @@ describe('redaction (sanitizeFields, then strings, then JWT/Bearer, then the mes
     expect(cleanString('bucket.s3.amazonaws.com/k.pdf?X-Amz-Signature=abc')).toBe('bucket.s3.amazonaws.com/k.pdf');
     expect(cleanString('GET api/tenders?token=x failed')).toBe('GET api/tenders failed');
     expect(cleanString('Did you mean /help? Try')).toBe('Did you mean /help? Try');
+    expect(cleanString('GET /api/tenders?filter[owner]=jane@x.example&code=S ok')).toBe('GET /api/tenders ok'); // brackets stay in the query
+    expect(cleanString('see (https://a.example/p?ids[]=1&t=x)')).toBe('see (https://a.example/p)');
     const started = performance.now();
     cleanString('/'.repeat(1_000_000));
     cleanString(`data:image/png;base64,${'ab+/'.repeat(250_000)}`);

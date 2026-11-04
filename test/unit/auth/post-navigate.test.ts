@@ -16,3 +16,20 @@ it('submits a hidden POST form with the fields as hidden inputs, nothing in the 
     client_id: ['hidden', 'web'],
   });
 });
+
+it('removes the form (and the ID token in it) once the page leaves, or after 10 s', () => {
+  vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    document.body.replaceChildren();
+    postNavigate('https://idp.example/logout', { id_token_hint: 'eyJ.a.b' });
+    window.dispatchEvent(new Event('pagehide'));
+    expect(document.querySelector('form')).toBeNull();
+    postNavigate('https://idp.example/logout', { id_token_hint: 'eyJ.a.b' }); // a POST the CSP blocked: no pagehide
+    expect(document.querySelector('form')).not.toBeNull();
+    vi.advanceTimersByTime(10_000);
+    expect(document.querySelector('form')).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});

@@ -297,7 +297,7 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 | Accept | `application/json, application/problem+json` |
 | Deadline | `timeoutMs` (default `api.timeoutMs`, 35 000 ms; above gincommon's 30 s server timeout), per attempt, combined with the caller's signal |
 | Retries | `GET`, `PUT`, `DELETE` (or `retry: { unsafe: true }`): up to `attempts` (default 2, at most 5) more, on timeout, network error (online), 429, 502, 503, 504; wait `Retry-After` (≤ 30 s) else full-jitter `min(5 s, 250 ms · 2ⁿ)`; `retry: false` disables |
-| Unusable answers | A 2xx body that is not the JSON it claims, or a redirect on a call carrying a token (`redirect: 'manual'`), is a synthetic 502 `ProblemError`. Typed arrays and DataViews are sent as bytes; a `ReadableStream` body is refused (not replayable) |
+| Unusable answers | A 2xx body that is not the JSON it claims, or a redirect on a call carrying a token or correlation headers (`redirect: 'manual'`), is a synthetic 502 `ProblemError`. Typed arrays and DataViews are sent as bytes; a `ReadableStream` body is refused (not replayable) |
 | 401 | Once per call: if a newer token exists use it, else join the tab's `refresh()`; a new token retries (not counted as a retry); otherwise `onUnauthorized()` |
 | De-duplication | `GET` (unless `dedupe: false`): identical URL + token + headers share one call; the shared fetch is aborted only when every subscriber aborted |
 | Result | `{ data, status, headers, requestId, traceId? }`; `data` is JSON when the content type says so, text otherwise, `undefined` for 204/205/empty |
@@ -685,6 +685,7 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 | Key | Area | Owner |
 |---|---|---|
 | `@bcbp-solutions-fzc-llc/frontend-sdk:session-id` | local | `/core` |
+| `@bcbp-solutions-fzc-llc/frontend-sdk:session-started` | local | `/core` (a new session id after 24 h) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:workspaces` | local | `/auth` (workspace cache) |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:signed-out` | local | `/auth` |
 | `@bcbp-solutions-fzc-llc/frontend-sdk:auth:last-activity` | local | `/auth` |

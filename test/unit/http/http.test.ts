@@ -747,16 +747,19 @@ describe('review 2: response and request edge cases', () => {
     expect((e as ProblemError).requestId).toBe(h().get('x-request-id'));
   });
 
-  it('an authenticated call does not follow redirects, and an unexpected redirect is a synthetic 502', async () => {
+  it('a call carrying a token or correlation headers does not follow redirects; an unexpected redirect is a synthetic 502', async () => {
     setTokenSource(tokens());
     handler = () => new Response(null, { status: 302, headers: { location: 'https://elsewhere.example/x' } });
     const e = await createApiClient().get('/a').catch((x: unknown) => x);
     expect(calls[0]!.init.redirect).toBe('manual');
     expect(e).toMatchObject({ status: 502, synthetic: true });
-    setTokenSource(undefined as never);
+    calls = [];
+    await createApiClient().get('/b', { auth: false }).catch(() => {}); // no token, but x-request-id and x-session-id
+    expect(calls[0]!.init.redirect).toBe('manual');
     calls = [];
     handler = () => json({ ok: true });
-    await createApiClient().get('/b', { auth: false });
+    await createApiClient({ baseUrl: 'https://public.example' }).get('/c'); // another origin, not allowlisted: nothing to leak
+    expect([...h().keys()].map(String).filter((k) => k.startsWith('x-') || k === 'traceparent' || k === 'authorization')).toEqual([]);
     expect(calls[0]!.init.redirect).toBe('follow');
   });
 

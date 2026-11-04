@@ -26,11 +26,11 @@ export function collectorUrl(otlpBaseUrl: string, signal: 'traces' | 'logs' | 'm
   return new URL(`${otlpBaseUrl.replace(/\/$/, '')}/v1/${signal}`, base).href;
 }
 
-// A token of free text (up to whitespace, a quote, a bracket, '<' or '>'), and one that is a URL or a path
+// A token of free text (up to whitespace, a quote, '<', '>' or ')'; '[', ']' and '(' stay inside: `?filter[owner]=…`), and one that is a URL or a path
 // (a '/' before its first '?' or '#') with a query string or fragment after it: an OIDC callback's code and
 // state, a pre-signed URL's signature (`bucket.s3.amazonaws.com/k?X-Amz-Signature=…`, `api/x?token=…`).
 // Both are linear: a long run of '/' or a large data URL costs one pass, never one per character.
-const TOKEN = /[^\s"'<>()[\]]+/g;
+const TOKEN = /[^\s"'<>)]+/g;
 const WITH_QUERY = /^([^?#/]*\/[^?#]*)[?#]./;
 
 /** Removes the query string and fragment of every URL and path in `s` (logged text and span attributes). */
