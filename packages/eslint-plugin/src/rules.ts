@@ -1,16 +1,34 @@
 // The rules of @bcbp-solutions-fzc-llc/eslint-plugin. Each enforces something the design doc already requires of the
 // shell and remotes; the rule's doc string names the section.
-import type { Rule } from 'eslint';
+import type { Rule, Scope } from 'eslint';
 import type * as ESTree from 'estree';
 import { FORBIDDEN_REQUEST_HEADERS } from './generated/forbidden-headers.ts';
 import { SDK_PACKAGE, SDK_SUBPATHS } from './generated/sdk.ts';
 
 type Node = ESTree.Node & { parent?: Node };
 
-const DOCS = 'docs/design/frontend-sdk-design.md';
+/** The rules' reference: the LLD's table of what each rule reports (an absolute URL: editors open it as is). */
+export const DOCS_URL = 'https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/blob/main/docs/lld/platform-reactcommon-lld.md#132-bcbp-solutions-fzc-llceslint-plugin';
 
 function rule(description: string, messages: Record<string, string>, create: Rule.RuleModule['create'], schema: Rule.RuleMetaData['schema'] = []): Rule.RuleModule {
-  return { meta: { type: 'problem', docs: { description, url: DOCS }, messages, schema }, create };
+  return { meta: { type: 'problem', docs: { description, url: DOCS_URL }, messages, schema }, create };
+}
+
+/** The variable `name` refers to at `node`, or undefined for a global no declaration binds. */
+function findVariable(context: Rule.RuleContext, node: Node, name: string): Scope.Variable | undefined {
+  for (let scope: Scope.Scope | null = context.sourceCode.getScope(node); scope; scope = scope.upper) {
+    const v = scope.set.get(name);
+    if (v && v.defs.length > 0) return v;
+  }
+  return undefined;
+}
+
+const TS_WRAPPERS = new Set(['TSAsExpression', 'TSNonNullExpression', 'TSSatisfiesExpression', 'TSTypeAssertion']);
+/** `node` without TypeScript's type-only wrappers (`x as T`, `x!`, `x satisfies T`, `<T>x`). */
+function unwrap(node: Node | null | undefined): Node | null | undefined {
+  let n = node;
+  while (n && TS_WRAPPERS.has(n.type as string)) n = (n as unknown as { expression: Node }).expression;
+  return n;
 }
 
 /** The value of a string literal or of a template literal without expressions (`…`), else undefined. */
@@ -81,31 +99,51 @@ export const noIdentityHeaders = rule(
   'The browser never sends identity headers: the gateway derives them from the token and strips any it receives (§C1 /http).',
   { header: "'{{name}}' is an identity header the gateway sets from the token; the browser must never send it." },
   (context) => {
-    const report = (node: Node, name: string) => context.report({ node, messageId: 'header', data: { name } });
-    const checkObject = (obj: Node) => {
-      if (obj.type !== 'ObjectExpression') return;
-      for (const p of obj.properties) {
-        if (p.type !== 'Property') continue;
-        const name = keyName(p);
-        if (name && FORBIDDEN.has(name.toLowerCase())) report(p.key as Node, name);
+    const report = (node: ESTree.Node, name: string) => context.report({ node, messageId: 'header', data: { name } });
+    /** Reports `node` if it is a static string naming a forbidden header. */
+    const checkName = (node: Node | null | undefined) => {
+      const name = staticString(node);
+      if (name !== undefined && FORBIDDEN.has(name.toLowerCase())) report(node!, name);
+    };
+    /** A HeadersInit literal: { 'x-user-id': … } or [['x-user-id', …], …]. */
+    const checkInit = (init: Node | null | undefined) => {
+      const n = unwrap(init);
+      if (n?.type === 'ObjectExpression') {
+        for (const p of n.properties) {
+          if (p.type !== 'Property') continue;
+          const name = keyName(p);
+          if (name && FORBIDDEN.has(name.toLowerCase())) report(p.key as Node, name);
+        }
+      } else if (n?.type === 'ArrayExpression') {
+        for (const pair of n.elements) {
+          const p = unwrap(pair as Node | null);
+          if (p?.type === 'ArrayExpression') checkName(p.elements[0] as Node | null);
+        }
       }
     };
     return {
       // { headers: { 'x-user-id': … } } in fetch(), ApiClient options, …
       Property(n) {
-        if (keyName(n) === 'headers') checkObject(n.value as Node);
+        if (keyName(n) === 'headers') checkInit(n.value as Node);
       },
+      // new Headers({ … }) / new Headers([[…]]), also globalThis.Headers / window.Headers
       NewExpression(n) {
-        if (n.callee.type === 'Identifier' && n.callee.name === 'Headers' && n.arguments[0]) checkObject(n.arguments[0] as Node);
+        const c = n.callee;
+        const isHeaders = (c.type === 'Identifier' && c.name === 'Headers') || (c.type === 'MemberExpression' && memberName(c) === 'Headers');
+        if (isHeaders) checkInit(n.arguments[0] as Node | undefined);
       },
-      // headers.set('x-tenant-id', …) / append(…)
+      AssignmentExpression(n) {
+        if (n.left.type !== 'MemberExpression') return;
+        // h['x-user-id'] = v
+        if (n.left.computed) checkName(n.left.property as Node);
+        // init.headers = { 'x-user-id': … }
+        if (memberName(n.left) === 'headers') checkInit(n.right as Node);
+      },
+      // headers.set('x-tenant-id', …) / append(…), with a string or a template without expressions
       CallExpression(n) {
         if (n.callee.type !== 'MemberExpression') return;
         const m = memberName(n.callee);
-        const first = n.arguments[0];
-        if ((m === 'set' || m === 'append') && first?.type === 'Literal' && typeof first.value === 'string' && FORBIDDEN.has(first.value.toLowerCase())) {
-          report(first as Node, first.value);
-        }
+        if (m === 'set' || m === 'append') checkName(n.arguments[0] as Node | undefined);
       },
     };
   },
@@ -117,62 +155,139 @@ const GLOBAL_OBJECTS = new Set(['window', 'globalThis', 'self']);
 export const noRawStorage = rule(
   "Use storage(appId) from '@bcbp-solutions-fzc-llc/frontend-sdk/storage', which namespaces keys by workspace and refuses token-like keys (§C1 /storage).",
   { raw: "Use storage(appId) from '@bcbp-solutions-fzc-llc/frontend-sdk/storage' instead of {{name}}: keys must be namespaced per workspace, and tokens never stored." },
-  (context) => ({
-    'Program:exit'(program: ESTree.Program) {
-      const scope = context.sourceCode.getScope(program);
-      for (const ref of scope.through) {
-        if (STORAGES.has(ref.identifier.name)) context.report({ node: ref.identifier, messageId: 'raw', data: { name: ref.identifier.name } });
+  (context) => {
+    /**
+     * The global object's name if `node` is the global object: `window`, `globalThis`, `self`, a chain of
+     * them (`window.self`), or a variable initialised once with one (`const w = window`).
+     */
+    const globalObject = (node: Node | null | undefined, depth = 0): string | undefined => {
+      const n = unwrap(node);
+      if (!n || depth > 8) return undefined;
+      if (n.type === 'MemberExpression') {
+        const name = memberName(n);
+        return name && GLOBAL_OBJECTS.has(name) && globalObject(n.object as Node, depth + 1) ? name : undefined;
       }
-    },
-    MemberExpression(n) {
-      const name = memberName(n);
-      if (name && STORAGES.has(name) && n.object.type === 'Identifier' && GLOBAL_OBJECTS.has(n.object.name)) {
-        context.report({ node: n, messageId: 'raw', data: { name: `${n.object.name}.${name}` } });
-      }
-    },
-  }),
+      if (n.type !== 'Identifier') return undefined;
+      const v = findVariable(context, n, n.name);
+      if (!v) return GLOBAL_OBJECTS.has(n.name) ? n.name : undefined;
+      // An alias: one declarator with an initialiser, and no later assignment.
+      const def = v.defs[0]!;
+      if (v.defs.length !== 1 || def.type !== 'Variable' || def.node.id.type !== 'Identifier') return undefined;
+      if (v.references.some((r) => r.isWrite() && r.identifier !== def.node.id)) return undefined;
+      return globalObject(def.node.init as Node | null, depth + 1) ? n.name : undefined;
+    };
+    const report = (node: ESTree.Node, name: string) => context.report({ node, messageId: 'raw', data: { name } });
+    return {
+      'Program:exit'(program: ESTree.Program) {
+        const scope = context.sourceCode.getScope(program);
+        for (const ref of scope.through) {
+          if (STORAGES.has(ref.identifier.name)) report(ref.identifier as Node, ref.identifier.name);
+        }
+      },
+      // window.localStorage, globalThis['sessionStorage'], w.localStorage after const w = window
+      MemberExpression(n) {
+        const name = memberName(n);
+        if (!name || !STORAGES.has(name)) return;
+        const object = globalObject(n.object as Node);
+        if (object) report(n, `${object}.${name}`);
+      },
+      // const { localStorage } = window
+      VariableDeclarator(n) {
+        if (n.id.type !== 'ObjectPattern' || !globalObject(n.init as Node | null)) return;
+        for (const p of n.id.properties) {
+          const name = p.type === 'Property' ? keyName(p) : undefined;
+          if (name && STORAGES.has(name)) report(p as Node, name);
+        }
+      },
+    };
+  },
 );
 
-const HTML_PROPS = new Set(['innerHTML', 'outerHTML']);
+/** Element properties whose assignment parses HTML. */
+const HTML_PROPS = new Set(['innerHTML', 'outerHTML', 'srcdoc']);
+/** Methods that parse their argument at `index` as HTML. */
+const HTML_METHODS = new Map([
+  ['insertAdjacentHTML', 1],
+  ['setHTMLUnsafe', 0],
+  ['parseHTMLUnsafe', 0],
+  ['createContextualFragment', 0],
+]);
+/** DOMParser types that do not parse HTML (no event-handler attributes, no scripts to adopt). */
+const XML_TYPES = new Set(['text/xml', 'application/xml']);
+const SECURITY = `${SDK_PACKAGE}/security`;
 
 export const noUnsafeHtml = rule(
-  "HTML goes through sanitizeHtml from '@bcbp-solutions-fzc-llc/frontend-sdk/security' (DOMPurify + Trusted Types, §C1 /security, §C3 CSP).",
+  `HTML goes through sanitizeHtml from '${SECURITY}' (DOMPurify + Trusted Types, §C1 /security, §C3 CSP).`,
   {
-    unsanitized: "{{what}} needs sanitizeHtml(...) from '@bcbp-solutions-fzc-llc/frontend-sdk/security' (Trusted Types are enforced).",
+    unsanitized: `{{what}} needs sanitizeHtml(...) imported from '${SECURITY}' (Trusted Types are enforced).`,
     write: '{{what}} is never allowed: it writes unsanitized HTML.',
   },
   (context) => {
-    const sanitizers = new Set<string>((context.options[0] as { sanitizers?: string[] } | undefined)?.sanitizers ?? ['sanitizeHtml']);
-    const isSanitized = (n: Node | null | undefined): boolean => {
+    const custom = (context.options[0] as { sanitizers?: string[] } | undefined)?.sanitizers;
+    const sanitizers = new Set<string>(custom ?? []);
+    /** Whether `id` (a callee, or a member's object) is bound by an import of the SDK's /security: `imported` names the import. */
+    const importedFromSecurity = (id: ESTree.Identifier, imported: 'sanitizeHtml' | '*'): boolean => {
+      const def = findVariable(context, id as Node, id.name)?.defs[0];
+      if (def?.type !== 'ImportBinding') return false;
+      const decl = def.parent as ESTree.ImportDeclaration;
+      if (decl.source.value !== SECURITY) return false;
+      const spec = def.node;
+      if (imported === '*') return spec.type === 'ImportNamespaceSpecifier';
+      return spec.type === 'ImportSpecifier' && (spec.imported.type === 'Identifier' ? spec.imported.name : spec.imported.value) === 'sanitizeHtml';
+    };
+    const isSanitized = (node: Node | null | undefined): boolean => {
+      const n = unwrap(node);
       if (!n || n.type !== 'CallExpression') return false;
       const c = n.callee;
-      const name = c.type === 'Identifier' ? c.name : c.type === 'MemberExpression' ? memberName(c) : undefined;
-      return name !== undefined && sanitizers.has(name);
+      // A sanitizer named in the options is trusted by its name.
+      if (custom) {
+        const name = c.type === 'Identifier' ? c.name : c.type === 'MemberExpression' ? memberName(c) : undefined;
+        return name !== undefined && sanitizers.has(name);
+      }
+      // By default only the SDK's: sanitizeHtml(…) (or an alias) imported from /security, or security.sanitizeHtml(…) of its namespace.
+      if (c.type === 'Identifier') return importedFromSecurity(c, 'sanitizeHtml');
+      return c.type === 'MemberExpression' && memberName(c) === 'sanitizeHtml' && c.object.type === 'Identifier' && importedFromSecurity(c.object, '*');
     };
+    const report = (node: ESTree.Node, what: string) => context.report({ node, messageId: 'unsanitized', data: { what } });
     return {
+      // el.innerHTML = …, el.outerHTML = …, iframe.srcdoc = …
       AssignmentExpression(n) {
         if (n.left.type !== 'MemberExpression') return;
         const name = memberName(n.left);
-        if (name && HTML_PROPS.has(name) && !isSanitized(n.right as Node)) context.report({ node: n, messageId: 'unsanitized', data: { what: name } });
+        if (name && HTML_PROPS.has(name) && !isSanitized(n.right as Node)) report(n, name);
       },
       CallExpression(n) {
         if (n.callee.type !== 'MemberExpression') return;
         const name = memberName(n.callee);
-        if (name === 'insertAdjacentHTML' && !isSanitized(n.arguments[1] as Node)) context.report({ node: n, messageId: 'unsanitized', data: { what: name } });
+        if (!name) return;
+        const index = HTML_METHODS.get(name);
+        if (index !== undefined && !isSanitized(n.arguments[index] as Node | undefined)) report(n, name);
+        // new DOMParser().parseFromString(html, 'text/html'): its nodes keep their event handlers when adopted
+        if (name === 'parseFromString' && n.arguments.length >= 2) {
+          const type = staticString(n.arguments[1] as Node);
+          if (!(type !== undefined && XML_TYPES.has(type)) && !isSanitized(n.arguments[0] as Node)) report(n, 'DOMParser.parseFromString');
+        }
+        // el.setAttribute('srcdoc', html)
+        if (name === 'setAttribute' && staticString(n.arguments[0] as Node)?.toLowerCase() === 'srcdoc' && !isSanitized(n.arguments[1] as Node)) report(n, 'srcdoc');
         if ((name === 'write' || name === 'writeln') && n.callee.object.type === 'Identifier' && n.callee.object.name === 'document') {
           context.report({ node: n, messageId: 'write', data: { what: `document.${name}` } });
         }
       },
-      // JSX: dangerouslySetInnerHTML={{ __html: sanitizeHtml(x) }}
+      // JSX: dangerouslySetInnerHTML={{ __html: sanitizeHtml(x) }}, <iframe srcDoc={sanitizeHtml(x)} />
       JSXAttribute(node: Node) {
         const n = node as unknown as { name: { name?: unknown }; value?: { type: string; expression?: Node } | null };
-        if (n.name.name !== 'dangerouslySetInnerHTML') return;
         const expr = n.value?.type === 'JSXExpressionContainer' ? n.value.expression : undefined;
+        if (n.name.name === 'srcDoc') {
+          if (!isSanitized(expr)) report(node, 'srcDoc');
+          return;
+        }
+        if (n.name.name !== 'dangerouslySetInnerHTML') return;
+        const object = unwrap(expr);
         const html =
-          expr?.type === 'ObjectExpression'
-            ? expr.properties.find((p): p is ESTree.Property => p.type === 'Property' && propertyName(p.key as Node) === '__html')?.value
+          object?.type === 'ObjectExpression'
+            ? object.properties.find((p): p is ESTree.Property => p.type === 'Property' && propertyName(p.key as Node) === '__html')?.value
             : undefined;
-        if (!isSanitized(html as Node | undefined)) context.report({ node, messageId: 'unsanitized', data: { what: 'dangerouslySetInnerHTML' } });
+        if (!isSanitized(html as Node | undefined)) report(node, 'dangerouslySetInnerHTML');
       },
     } as Rule.RuleListener;
   },

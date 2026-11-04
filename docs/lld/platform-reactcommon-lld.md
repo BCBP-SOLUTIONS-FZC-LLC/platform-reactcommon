@@ -717,13 +717,13 @@ Shells and remotes built with webpack and Rspack interoperate: an Rspack shell p
 |---|---|
 | `no-sdk-root-import` | `import` / `export … from` / `import()` / `require()` of `@bcbp-solutions-fzc-llc/frontend-sdk` |
 | `no-sdk-deep-import` | any SDK specifier that is not a public subpath (or `package.json`) |
-| `no-identity-headers` | a forbidden header in a `headers: {}` object, `new Headers({})`, or `.set` / `.append` (list generated from the contracts) |
-| `no-raw-storage` | global `localStorage` / `sessionStorage` (also via `window`, `globalThis`, `self`) |
-| `no-unsafe-html` | `innerHTML` / `outerHTML` assignment, `insertAdjacentHTML`, or `dangerouslySetInnerHTML` without `sanitizeHtml(…)` (configurable); `document.write` |
+| `no-identity-headers` | a forbidden header (list generated from the contracts) as a key of a `headers: {}` object or `x.headers = {}`, in a `new Headers({})` or `new Headers([[name, v]])` (also `[[name, v]]` as `headers`), as the name in `.set` / `.append` (string or template without expressions), or in a computed assignment `h['x-user-id'] = v` |
+| `no-raw-storage` | global `localStorage` / `sessionStorage`, also via `window`, `globalThis`, `self`, chains of them (`window.self`), a `const` / `let` alias never reassigned (`const w = window; w.localStorage`) and destructuring (`const { localStorage } = window`) |
+| `no-unsafe-html` | without `sanitizeHtml(…)` imported from `@bcbp-solutions-fzc-llc/frontend-sdk/security` (named, aliased or through its namespace; the `sanitizers` option replaces it with names of your own): `innerHTML` / `outerHTML` / `srcdoc` assignment, `setAttribute('srcdoc', …)`, JSX `srcDoc`, `insertAdjacentHTML`, `setHTMLUnsafe`, `parseHTMLUnsafe`, `createContextualFragment`, `parseFromString` of any type but `text/xml` / `application/xml`, `dangerouslySetInnerHTML`; `document.write` / `writeln` always |
 | `no-runtime-css-in-js` | `@emotion/*`, `styled-components`, `@mui/*`, `@stitches/react`, `goober`, `styled-jsx`, `@vanilla-extract/dynamic` (written exceptions via `allow`) |
 | `api-route-template` | an `ApiClient`-style `get/post/put/patch/delete` whose path is a template literal with expressions or a `+` concatenation starting with `/` |
 
-`configs.recommended` turns all seven on as errors, plus `no-eval`, `no-implied-eval` and `no-new-func`.
+`configs.recommended` turns all seven on as errors, plus `no-eval`, `no-implied-eval` and `no-new-func`. Each rule's `meta.docs.url` is this section on GitHub (an absolute URL). The plugin is tested with ESLint 10 and, in CI, ESLint 9 (its peer range).
 
 ---
 
