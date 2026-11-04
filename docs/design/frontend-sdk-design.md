@@ -1168,7 +1168,10 @@ keeps `publicPath: 'auto'`: its chunks load relative to its `remoteEntry.js`.
 `index.html` pins the shell's entry, but everything those entries load later would run unchecked. The
 preset's `ChunkIntegrityPlugin` puts a map of chunk id → sha384 of every lazily loaded JS chunk into
 each runtime chunk (the shell's main bundle, a remote's `remoteEntry.js`), and webpack's script loader
-sets `script.integrity` from it. A chunk id the map lacks gets a well-formed hash that matches nothing,
+sets `script.integrity` from it. A second map covers every lazily loaded CSS file, and the CSS loader sets
+`link.integrity` from it: mini-css-extract-plugin and webpack's native CSS, `CssExtractRspackPlugin` and
+Rspack's native CSS (so Rsbuild's default). A build with lazily loaded CSS whose loader sets no integrity
+fails. `index.html`'s `<script>`s and `<link rel="stylesheet">`s are pinned the same way. A chunk id the map lacks gets a well-formed hash that matches nothing,
 so the load fails closed. The hashes are taken after minification and taken again after the final
 content hashing, which renames files and rewrites Terser's license banner. The map is then swapped for one
 of the same length, so no source-map column moves, and the build fails if any chunk no longer matches.

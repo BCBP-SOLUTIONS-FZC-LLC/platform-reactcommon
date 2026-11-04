@@ -18,18 +18,19 @@ Commands, CI, releases and the Docker suites. The README's *Local development*, 
 | `pnpm run test-smoke` | The served example builds (or `SMOKE_BASE_URL`) |
 | `pnpm run test-browser` (`test-browser-install` once) | Playwright × Chromium, Firefox, WebKit under the production CSP; builds the example remote with webpack and with Rspack for the SRI suite (~30 s) |
 | `pnpm run test-react-floor` | Typecheck, unit suite, build, examples on React 19.0.0 |
+| `pnpm run test-eslint-9` | The eslint-plugin's tests on ESLint 9 (its peer range's lower major); lockfile restored |
 | `pnpm run test-collector` | `examples/collector` in the Collector image (the version `docker-compose.yml` pins): 2 gateways + 2 aggregators |
 | `pnpm run stack-up` · `test-stack` · `stack-down [--purge]` | The integrated stack; `stack-up` builds the IAM images with `GO_PRIVATE_TOKEN` or `gh auth token` (a BuildKit secret, never written); ~16 min of tests |
 | `pnpm contracts:sync [--update-pins]` / `contracts:check` | Generated contracts from the pinned commits |
 | `pnpm metrics:parity` · `metrics:proposal` | SDK rules vs gincommon `metricslint`; the Tier 1 proposal judged by it |
 | `pnpm api` · `exports:sync` · `docs:sync` | Regenerate API reports, exports + SDK facts, generated docs + diagram blocks |
-| `pnpm publish:check` | After `.github/scripts/pack-packages.sh`: tarballs publishable, dist-tag |
+| `pnpm publish:check` | After `.github/scripts/pack-packages.sh`: tarballs publishable (scope, registry, repository, `engines.node >=22`, README in each), dist-tag |
 
 ## CI (`.github/workflows/`)
 
 | Workflow | Runs | Jobs |
 |---|---|---|
-| `ci.yml` | every PR (any base), pushes to `main` (not Markdown-only) | `validate-test`, `validate-quality`, `validate-contracts`, `package`; then `trivy`, `smoke` (after `validate-test` + `package`) and `interop`, `browser`, `react-floor`, `collector` (after `validate-test`) → `pr-summary` |
+| `ci.yml` | every PR (any base), pushes to `main` (not Markdown-only) | `validate-test`, `validate-quality`, `validate-contracts`, `package`; then `trivy`, `smoke` (after `validate-test` + `package`) and `interop`, `browser`, `react-floor`, `eslint-9`, `collector` (after `validate-test`) → `pr-summary` |
 | `changelog-check.yml` | PRs touching `packages/*/src`, `packages/*/package.json`, contracts, `subpaths.json` | changeset + CHANGELOG required; a release PR (changesets deleted, or moved into `.changeset/pre/`) needs only the CHANGELOG |
 | `release.yml` | `v*` tag (or dispatch from `main`) | `verify` → `ci.yml`'s gates at the tag except `browser` and `collector` → `npm-publish` → `publish` |
 | `stack-nightly.yml` | 01:30 UTC; dispatch with `upstream: pinned \| main` | checks out 7 backend repos, `stack-up`, `test-stack`; artifacts on failure; a failing scheduled run opens/updates the "Nightly stack run failing" issue |
@@ -37,6 +38,8 @@ Commands, CI, releases and the Docker suites. The README's *Local development*, 
 **Runners:** the repo is private → 7 GB RAM, 2 cores. The SDK build sets `--max-old-space-size=4096` (the DTS worker ran out of the ~2 GB default). Tests must not depend on speed: bound waits by real time, poll cross-page effects, record engine limits.
 
 **Secrets** (org secrets, no per-repo setup): `CI_REPO_READ_TOKEN` (private checkouts; `PLATFORM_REPOS_TOKEN` overrides), `GO_PRIVATE_TOKEN` (interop; the nightly's IAM image builds). Check `gh api repos/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/actions/organization-secrets` before calling a secret missing.
+
+**Dependabot** (`.github/dependabot.yml`): security updates only, for npm (the pnpm workspace) and GitHub Actions; version updates are off (`open-pull-requests-limit: 0`). Security updates also need the repository setting *Dependabot security updates*. `@opentelemetry/api` is held to `~1.10` and React to `^19`.
 
 ## Releasing
 

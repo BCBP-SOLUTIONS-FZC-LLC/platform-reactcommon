@@ -1,0 +1,42 @@
+# Dependabot: SECURITY updates only. Version updates stay disabled (as in platform-gincommon):
+# open-pull-requests-limit: 0 stops every scheduled version-update PR, while security updates (PRs for
+# a Dependabot alert, which have their own limit) still open. Security updates must also be enabled in
+# the repository's settings (Code security → Dependabot security updates); this file scopes them.
+#
+# npm covers the pnpm workspace (pnpm-lock.yaml at the root: packages/*, examples/*).
+# @opentelemetry/api must stay in ~1.10 (the shared-module range, design doc §C3) and react / react-dom
+# in the platformShared range (^19): the ignore rules hold for security updates too, so an advisory
+# fixed only outside those ranges is handled by hand (raise the range in a release).
+#
+# Re-enable version updates: raise open-pull-requests-limit (5 before) on the ecosystem.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    labels: [dependencies, security, javascript]
+    commit-message:
+      prefix: fix(deps)
+      prefix-development: chore(deps)
+    ignore:
+      - dependency-name: '@opentelemetry/api'
+        versions: ['>=1.11.0']
+      - dependency-name: react
+        update-types: [version-update:semver-major]
+      - dependency-name: react-dom
+        update-types: [version-update:semver-major]
+    groups:
+      opentelemetry-security:
+        applies-to: security-updates
+        patterns: ['@opentelemetry/*']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    labels: [dependencies, security, github-actions]
+    commit-message:
+      prefix: ci(deps)

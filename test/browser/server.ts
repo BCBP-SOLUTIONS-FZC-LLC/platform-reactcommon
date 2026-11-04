@@ -20,7 +20,7 @@ import { createServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { build } from 'esbuild';
-import { buildRemote } from './remote-build.ts';
+import { buildRemote, buildStyledRemote } from './remote-build.ts';
 // @ts-expect-error plain JS module
 import { securityHeaders } from '../../examples/cloudfront/csp.mjs';
 
@@ -155,6 +155,11 @@ export async function startServer(port = Number(process.env.BROWSER_TEST_PORT ??
     const dir = join(BUILD_DIR, bundler === 'webpack' ? 'remote' : 'remote-rspack');
     remotes.set(base, { dir, ...(await buildRemote(dir, bundler)) });
   }
+  // The styled test remote (lazily loaded CSS): /remotes/styled (webpack), /remotes/styled-rspack (Rspack).
+  for (const [base, bundler] of [['styled', 'webpack'], ['styled-rspack', 'rspack']] as const) {
+    const dir = join(BUILD_DIR, base);
+    remotes.set(base, { dir, ...(await buildStyledRemote(dir, bundler)) });
+  }
   const indexHtml = readFileSync(join(HERE, 'harness/index.html'));
   const headers: Record<string, string> = securityHeaders();
 
@@ -196,11 +201,14 @@ export async function startServer(port = Number(process.env.BROWSER_TEST_PORT ??
     if (method === 'GET' && path === '/harness.js.map') return page(res, 'application/json', harnessMap);
     if (method === 'GET' && path === '/favicon.ico') return send(res, 204, 'image/x-icon', '', headers);
     if (method === 'GET' && path === '/config/runtime.json') return json(res, 200, RUNTIME_CONFIG, { ...headers, 'cache-control': 'no-cache' });
-    // The tenders remote, from webpack and from Rspack (integrity.spec.ts): its entry's integrity, and its files as CloudFront serves them.
-    const remotePath = /^\/remotes\/(tenders(?:-rspack)?)\/(integrity|[\w.-]+\.js)$/.exec(path);
+    // The tenders and styled remotes, from webpack and from Rspack (integrity.spec.ts): the entry's integrity, and the files as CloudFront serves them.
+    const remotePath = /^\/remotes\/((?:tenders|styled)(?:-rspack)?)\/(integrity|[\w.-]+\.(?:js|css))$/.exec(path);
     const remote = remotePath && remotes.get(remotePath[1]!);
     if (method === 'GET' && remote && remotePath![2] === 'integrity') return json(res, 200, { entry: remote.entryIntegrity });
-    if (method === 'GET' && remote && existsSync(join(remote.dir, remotePath![2]!))) return page(res, 'text/javascript; charset=utf-8', readFileSync(join(remote.dir, remotePath![2]!)));
+    if (method === 'GET' && remote && existsSync(join(remote.dir, remotePath![2]!))) {
+      const type = remotePath![2]!.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8';
+      return page(res, type, readFileSync(join(remote.dir, remotePath![2]!)));
+    }
 
     // --- OTLP collectors -------------------------------------------------------------------------
     const otel = /^\/otel\/v1\/(traces|logs|metrics)$/.exec(path);

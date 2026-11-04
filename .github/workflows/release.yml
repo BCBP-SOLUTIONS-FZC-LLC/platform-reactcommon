@@ -281,11 +281,33 @@ jobs:
       - name: React 19.0.0
         run: pnpm run test-react-floor
 
+  # ── same as ci.yml: ESLint 9: the eslint-plugin's peer range is ^9.0.0 || ^10.0.0 ─────────
+  # Everything else runs the lockfile's ESLint 10; this forces ESLint 9 and runs the plugin's tests
+  # (RuleTester for every rule, configs.recommended through Linter).
+  eslint-9:
+    name: ESLint 9 (eslint-plugin)
+    runs-on: ubuntu-latest
+    needs: validate-test
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: eslint-plugin tests on ESLint 9
+        run: pnpm run test-eslint-9
+
   # ── release-only: GitHub Packages, the exact smoke-tested tarballs ────────
   npm-publish:
     name: npm publish (GitHub Packages)
     runs-on: ubuntu-latest
-    needs: [verify, validate-test, validate-quality, validate-contracts, package, trivy, smoke, interop, react-floor]
+    needs: [verify, validate-test, validate-quality, validate-contracts, package, trivy, smoke, interop, react-floor, eslint-9]
     timeout-minutes: 10
     environment: npm   # gated: required reviewers, or release tags only + a tag ruleset (VERSIONING.md)
     permissions:
@@ -340,7 +362,7 @@ jobs:
   publish:
     name: GitHub Release
     runs-on: ubuntu-latest
-    needs: [verify, validate-test, validate-quality, validate-contracts, package, trivy, smoke, interop, react-floor, npm-publish]
+    needs: [verify, validate-test, validate-quality, validate-contracts, package, trivy, smoke, interop, react-floor, eslint-9, npm-publish]
     timeout-minutes: 10
     permissions:
       contents: write

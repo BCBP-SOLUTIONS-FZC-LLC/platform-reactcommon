@@ -368,7 +368,7 @@ pnpm verify
 | `pnpm contracts:sync` / `contracts:check` | Regenerate / check `contracts/` (`--update-pins` moves the pins to the checkouts' HEAD) |
 | `pnpm docs:sync` / `docs:check` | Generated docs and the diagram blocks in ARCHITECTURE.md |
 | `pnpm metrics:parity` | The SDK's metric checks vs gincommon's `metricslint` |
-| `pnpm publish:check` | The packed tarballs (`dist-packages/`) are publishable to GitHub Packages: scope, registry, repository link, one version, no `workspace:` specifiers; `--dist-tag` prints the tag a release uses |
+| `pnpm publish:check` | The packed tarballs (`dist-packages/`) are publishable to GitHub Packages: scope, registry, repository link, `engines.node` `>=22`, a `README.md` in each tarball, one version, no `workspace:` specifiers; `--dist-tag` prints the tag a release uses |
 | `pnpm metrics:proposal` | The Tier 1 registry proposal merged into gincommon's registry, judged by `metricslint` (`registry`, `check -strict`, `refs` on `monitoring/`); `--emit <file>` writes the candidate `registry.json` |
 | `pnpm run rules-check` / `dashboards-check` | `promtool` check and unit tests for `monitoring/prometheus`, and the dashboards' PromQL syntax (Docker) |
 | `pnpm examples:check` | CSP and sharing checks on the example builds (after `pnpm build`) |
@@ -403,6 +403,7 @@ The same task names as platform-gincommon's Makefile, as `package.json` scripts.
 | `test-smoke` | `make test-smoke` | `test/smoke`: the example builds served as CloudFront serves them (after `pnpm build`), or a deployed shell with `SMOKE_BASE_URL` |
 | `test-browser` | (none) | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP (`test-browser-install` installs the browsers once) |
 | `test-react-floor` | (none) | The typecheck, unit suite, build and example checks on React 19.0.0, the floor of the peer range (CI job `react-floor`); restores the lockfile afterwards |
+| `test-eslint-9` | (none) | The eslint-plugin's tests (every rule, `configs.recommended`) on ESLint 9, the lower major of its peer range (CI job `eslint-9`); restores the lockfile afterwards |
 | `test-stack` | `stack-up` | `test/stack`: the example shell in the three browsers against Keycloak, Envoy with the real IAM services, the distribution on floci and an OTel Collector (`stack-up` / `stack-down` start and remove it) |
 | `test-smoke-package` | `make test-smoke-image` | Build, pack the tarballs and run CI's tarball smoke tests against them (needs npm registry access) |
 | `build` | `make build` | Packages, then the example builds |
@@ -556,7 +557,7 @@ Build-time constants (shell): `__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack
 | **HTML** | Only through `sanitizeHtml` (DOMPurify + Trusted Types); lint rule `no-unsafe-html` |
 | **Tenant isolation in the browser** | Storage namespaced by realm or `trial:<tenant_id>`; cleared on logout and workspace switch; nothing written before sign-in |
 | **Redirects** | Every `returnUrl` and `navigate` target passes `isSafeRedirect` |
-| **Remote code** | Entries only from the page's origin or exact allowed origins, checked twice; SRI on the entry when the manifest gives it, and on every lazily loaded chunk in production builds (`ChunkIntegrityPlugin`: the entry carries each chunk's sha384, a chunk without one fails closed); kill switch |
+| **Remote code** | Entries only from the page's origin or exact allowed origins, checked twice; SRI on the entry when the manifest gives it, and on every lazily loaded chunk, JS and CSS, in production builds (`ChunkIntegrityPlugin`: the entry carries each chunk's sha384, a chunk without one fails closed; lazily loaded CSS must come through mini-css-extract-plugin, `CssExtractRspackPlugin` or native CSS, or the build fails); the shell's `index.html` pins its scripts and stylesheets; kill switch |
 | **Telemetry** | Redacted with gincommon's rules (sensitive keys, JWT, `Bearer`, URL queries); consent-gated; the collector drops per-browser attributes |
 | **Supply chain** | Actions pinned to commit SHAs; Trivy on dependencies, secrets and config; `pnpm audit --prod`; CycloneDX SBOM; Cosign-signed release checksums. Vulnerability reporting and trust model: [SECURITY.md](SECURITY.md) |
 
@@ -616,7 +617,7 @@ SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as publi
 1. Open a release PR: `pnpm run version-packages` bumps all three packages, consumes the changesets and regenerates the SDK facts (`exports:sync`: the version remotes require); rename `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) to `## [X.Y.Z] - YYYY-MM-DD` (the version it set) and add a new empty `[Unreleased]`. Commit the result, run `pnpm install` if the lockfile changes, and merge.
 2. Tag the merge commit `vX.Y.Z` (the version it set) and push the tag. `release.yml` does the rest:
    1. **Verify.** The tag must be reachable from `origin/main` (and a manual dispatch must start from `main` or the tag), all package versions must equal the tag, and `CHANGELOG.md` must have its section (`## [X.Y.Z]`; a pre-release tag may use its base version's section).
-   2. **Gates.** The same gates as `ci.yml`, at the tag: tests, quality, contracts, package, Trivy, smoke, interop, React floor (not `browser` or `collector`).
+   2. **Gates.** The same gates as `ci.yml`, at the tag: tests, quality, contracts, package, Trivy, smoke, interop, React floor, ESLint 9 (not `browser` or `collector`).
    3. **npm-publish.** The tarballs go to GitHub Packages under the dist-tag `publish:check` derives (`alpha`, `rc`, `latest`), each with a build-provenance attestation. Only if publishing is gated (`.github/scripts/check-npm-environment.sh`): this private repository on GitHub Team has no environment reviewers, so the `npm` environment accepts only release tags and the "release tags" ruleset lets only admins create, move or delete `v*` tags; pushing the tag is the approval.
    4. **Publish.** Checksums over the tarballs and SBOM, a Cosign keyless `sign-blob` with verification, and the GitHub Release with that CHANGELOG section as its notes. A tag with a pre-release part is marked as a pre-release.
 
@@ -640,12 +641,12 @@ sha256sum --check --ignore-missing checksums.txt   # macOS: shasum -a 256 -c --i
 
 ## CI
 
-Seven workflow files and one shared setup action. Shell logic lives in `.github/scripts/` (shellcheck-clean), and every third-party action is pinned to a full commit SHA (checked in CI). Dependabot version updates are **disabled** (`.github/dependabot.yml.disabled`; re-enable with `git mv .github/dependabot.yml.disabled .github/dependabot.yml`).
+Seven workflow files and one shared setup action. Shell logic lives in `.github/scripts/` (shellcheck-clean), and every third-party action is pinned to a full commit SHA (checked in CI). Dependabot opens **security updates only** (`.github/dependabot.yml`: npm for the pnpm workspace, and GitHub Actions). Version updates stay **disabled**: `open-pull-requests-limit: 0` stops them and leaves security updates on (raise it to re-enable version updates). Security updates also need *Dependabot security updates* turned on in the repository settings. `@opentelemetry/api` stays within `~1.10` and React within `^19` (ignore rules), so an advisory fixed only outside those ranges is handled by hand.
 
 - **`ci.yml`:** the orchestrator, on every PR (any base) and pushes to `main`, skipping Markdown-only commits.
   1. In parallel: `validate-test`, `validate-quality`, `validate-contracts` and `package` (build + `pnpm pack` ×3).
   2. Then `trivy` (filesystem scan: runtime dependencies, secrets, config; CRITICAL/HIGH/UNKNOWN fails; SARIF; CycloneDX SBOM) and `smoke` (the tarballs installed into an empty consumer).
-  3. After `validate-test` alone (in parallel with step 2): `interop` (platform-interop-tests at a pinned SHA, pair 4 at this ref), `browser` (Playwright, three engines), `react-floor` (React 19.0.0) and `collector` (the reference Collector in its image).
+  3. After `validate-test` alone (in parallel with step 2): `interop` (platform-interop-tests at a pinned SHA, pair 4 at this ref), `browser` (Playwright, three engines), `react-floor` (React 19.0.0), `eslint-9` (the eslint-plugin's tests on ESLint 9) and `collector` (the reference Collector in its image).
   4. Finally `pr-summary` (one updated PR comment, also on failure).
 - **`validate-test.yml`** (reusable): a frozen install, then `pnpm test:coverage`, then `coverage-gate.sh` (**≥ 98%**), then the coverage report is uploaded.
 - **`validate-quality.yml`** (reusable), in order:

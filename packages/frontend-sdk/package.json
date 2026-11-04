@@ -10,9 +10,13 @@
   "description": "Shared TypeScript SDK for React micro-frontends: contract-compatible with platform-gincommon and platform-fastapicommon.",
   "type": "module",
   "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
   "files": [
     "dist",
-    "contracts"
+    "contracts",
+    "README.md"
   ],
   "exports": {
     ".": {

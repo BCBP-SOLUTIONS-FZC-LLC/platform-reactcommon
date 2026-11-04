@@ -10,8 +10,12 @@
   "description": "ESLint rules for the platform's shell and remotes: SDK subpath imports, no identity headers, storage and HTML through the SDK, no runtime CSS-in-JS, route templates (design doc).",
   "type": "module",
   "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "exports": {
     ".": {

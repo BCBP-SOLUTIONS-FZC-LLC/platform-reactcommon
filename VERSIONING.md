@@ -50,6 +50,8 @@ The shell provides the SDK to every remote as a **strict singleton** shared unde
   3. A MAJOR release narrows the range to the new major and drops the old one.
 - **History.** Until `1.0.0-alpha.1` the range was `^18.3.0 || ^19.0.0`, but nothing ran on React 18, and the reference shell and remote already needed 19 (form actions). It was narrowed during the alpha, when narrowing costs nothing: no frontend is deployed, and the only one in development is on 19.
 
+**ESLint:** `@bcbp-solutions-fzc-llc/eslint-plugin`'s peer range is `^9.0.0 || ^10.0.0`. CI runs ESLint 10 (the lockfile's), and the `eslint-9` job reruns the plugin's tests on ESLint 9 (`pnpm run test-eslint-9`).
+
 ### Guarantees
 
 - **Pre-release `1.0.0-alpha.N` (current).** The repository is in changesets pre mode (`alpha`), so every release is `1.0.0-alpha.N`, whatever the bump:
@@ -122,7 +124,7 @@ The same tarballs are attached to the GitHub Release, with Cosign-signed `checks
 
 `release.yml`'s `npm-publish` job publishes, after every gate has passed on the tag:
 
-1. **What ships:** the tarballs the `package` job packed once, which `smoke` tested and `publish:check` validated (scope, registry, repository link, one version, no `workspace:` specifiers). `SHA256SUMS`, written when they were packed, is checked before anything is published.
+1. **What ships:** the tarballs the `package` job packed once, which `smoke` tested and `publish:check` validated (scope, registry, repository link, `engines.node` `>=22`, a `README.md` in each tarball, one version, no `workspace:` specifiers). `SHA256SUMS`, written when they were packed, is checked before anything is published.
 2. **Provenance:** GitHub Packages has no npm provenance, so the job attaches a build-provenance attestation per tarball (`actions/attest-build-provenance`, Sigstore).
 3. **Publish:** `npm publish` per tarball with the job's `GITHUB_TOKEN` (`packages: write`) under the dist-tag `publish:check` derived. A version already in the registry is skipped if its integrity equals the tarball's (a re-run after a later failure) and refused otherwise: versions are never overwritten. Afterwards the registry's integrity must equal the tarball's.
 4. **Then the GitHub Release** (`publish`), as before. The irreversible registry step comes first, as platform-fastapicommon's PyPI publish does.
