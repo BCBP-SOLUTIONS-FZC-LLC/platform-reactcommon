@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-alpha.3] - 2026-11-04
+
 ### Fixed
 
 - `/testing`: `createTestPlatform()` scopes `storage()` to its signed-in workspace, as a real sign-in does; before, every `set()` was dropped ("no workspace is signed in") and `get()` returned `undefined`. A trial workspace takes `user.tenantId`, else `context.tenantId`. The new option `storageNamespace: 'anon'` tests the signed-out case. Reported by mfe-dashboard.
@@ -232,6 +234,7 @@ Fixed before the first release, after a security and production-readiness review
 - `/i18n`: a namespace registered during a locale change loads the new locale; `/logging`: `Map` and `Set` keep their contents.
 - `@bcbp-solutions-fzc-llc/eslint-plugin`: `no-identity-headers` sees computed `['headers']`; the import rules see template-literal `require` / `import()`.
 
-[Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.2...HEAD
+[Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.3...HEAD
+[1.0.0-alpha.3]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.2...v1.0.0-alpha.3
 [1.0.0-alpha.2]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.1...v1.0.0-alpha.2
 [1.0.0-alpha.1]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/releases/tag/v1.0.0-alpha.1
