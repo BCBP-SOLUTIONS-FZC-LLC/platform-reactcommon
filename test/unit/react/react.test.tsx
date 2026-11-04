@@ -583,10 +583,10 @@ describe('MFEErrorBoundary', () => {
 describe('RemoteBoundary', () => {
   function installRemote(get: (m: string) => Promise<() => unknown>) {
     getRuntime().manifest = { tenders: { entry: '/remotes/tenders/1.0.0/remoteEntry.js', version: '1.0.0', ownerDomain: 'tender_management' } };
-    (globalThis as Record<string, unknown>).tenders = { init: async () => {}, get };
+    (globalThis as Record<string, unknown>).__platform_mfe_tenders = { init: async () => {}, get };
   }
   afterEach(() => {
-    delete (globalThis as Record<string, unknown>).tenders;
+    delete (globalThis as Record<string, unknown>).__platform_mfe_tenders;
   });
 
   it('loads the remote module lazily and renders its default export with props', async () => {
@@ -841,10 +841,10 @@ describe('hooks: edge cases', () => {
 describe('RemoteBoundary: module shapes', () => {
   function installRemote(factory: () => unknown) {
     getRuntime().manifest = { tenders: { entry: '/remotes/tenders/1.0.0/remoteEntry.js', version: '1.0.0', ownerDomain: 'tender_management' } };
-    (globalThis as Record<string, unknown>).tenders = { init: async () => {}, get: async () => factory };
+    (globalThis as Record<string, unknown>).__platform_mfe_tenders = { init: async () => {}, get: async () => factory };
   }
   afterEach(() => {
-    delete (globalThis as Record<string, unknown>).tenders;
+    delete (globalThis as Record<string, unknown>).__platform_mfe_tenders;
   });
 
   it('renders a module that is itself the component', async () => {

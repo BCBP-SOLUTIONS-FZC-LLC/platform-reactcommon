@@ -72,16 +72,16 @@ describe('logout', () => {
 
     storage('tenders').set('filter', 'open');
     storage('tenders', { area: 'session' }).set('draft', '{"title":"Bridge"}');
-    expect(w.page.local.getItem('tenant-acme:tenders:filter')).not.toBeNull();
-    expect(w.page.session.getItem('tenant-acme:tenders:draft')).not.toBeNull();
+    expect(w.page.local.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:filter')).not.toBeNull();
+    expect(w.page.session.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:draft')).not.toBeNull();
     w.net.on('GET /api/me', (req) => Response.json({ authorized: req.headers.has('authorization') }));
     expect((await createApiClient().get('/me')).data).toEqual({ authorized: true });
 
     await w.idp.logout();
 
     expect(getSession()).toEqual({ status: 'anonymous', workspace: ACME, reason: 'signed-out' });
-    expect(w.page.local.getItem('tenant-acme:tenders:filter')).toBeNull();
-    expect(w.page.session.getItem('tenant-acme:tenders:draft')).toBeNull();
+    expect(w.page.local.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:filter')).toBeNull();
+    expect(w.page.session.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:draft')).toBeNull();
     expect(storage('tenders').get('filter')).toBeUndefined();
     expect(FakeBroadcastChannel.sent).toEqual([{ type: 'logout' }]);
     await Promise.resolve(); // the channel delivers asynchronously

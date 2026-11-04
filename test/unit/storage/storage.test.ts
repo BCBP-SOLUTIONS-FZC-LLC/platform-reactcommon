@@ -42,7 +42,7 @@ describe('storage', () => {
   it('namespaces keys as <ns>:<appId>:<key> and round-trips JSON', () => {
     const s = storage('tenders');
     s.set('filters', { status: 'open', page: 2 });
-    expect(local.getItem('tenant-acme:tenders:filters')).toBe('{"status":"open","page":2}');
+    expect(local.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:filters')).toBe('{"status":"open","page":2}');
     expect(s.get<{ page: number }>('filters')?.page).toBe(2);
     s.remove('filters');
     expect(s.get('filters')).toBeUndefined();
@@ -56,7 +56,7 @@ describe('storage', () => {
 
   it('uses sessionStorage for the session area (drafts across a step-up redirect)', () => {
     storage('tenders', { area: 'session' }).set('draft:edit-1', { title: 'x' });
-    expect(session.getItem('tenant-acme:tenders:draft:edit-1')).toBe('{"title":"x"}');
+    expect(session.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:draft:edit-1')).toBe('{"title":"x"}');
     expect(local.length).toBe(0);
   });
 
@@ -93,8 +93,8 @@ describe('storage', () => {
     const s = storage('tenders');
     s.set('a', 1);
     s.set('a', undefined);
-    expect(local.getItem('tenant-acme:tenders:a')).toBeNull();
-    local.setItem('tenant-acme:tenders:b', '{oops');
+    expect(local.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:a')).toBeNull();
+    local.setItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:b', '{oops');
     expect(s.get('b')).toBeUndefined();
   });
 
@@ -113,13 +113,13 @@ describe('storage', () => {
 
   it('a write that fails when storage is full is read back for the page, and keeps the last saved value for a reload', () => {
     storage('tenders').set('draft', 'v1');
-    expect(local.getItem('tenant-acme:tenders:draft')).toBe('"v1"');
+    expect(local.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:draft')).toBe('"v1"');
     local.failWrites = true; // QuotaExceededError from here on
     storage('tenders').set('draft', 'v2');
     expect(storage('tenders').get('draft')).toBe('v2');
     // A fresh handle in the same page (what a remount sees) reads the new value too.
     expect(storage('tenders').get('draft')).toBe('v2');
-    expect(local.getItem('tenant-acme:tenders:draft')).toBe('"v1"'); // what a reload gets: never neither value
+    expect(local.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:draft')).toBe('"v1"'); // what a reload gets: never neither value
     // remove() and clear() still drop the page-only value.
     storage('tenders').remove('draft');
     expect(storage('tenders').get('draft')).toBeUndefined();
@@ -143,8 +143,8 @@ describe('storage', () => {
     storage('tenders').set('a', 5);
     getRuntime().storageNamespace = 'tenant-acme';
     storage('tenders').clear();
-    expect([...Array(local.length).keys()].map((i) => local.key(i)).sort()).toEqual(['tenant-acme:iam-admin:a', 'tenant-globex:tenders:a']);
-    expect(session.getItem('tenant-acme:tenders:a')).toBe('4');
+    expect([...Array(local.length).keys()].map((i) => local.key(i)).sort()).toEqual(['@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:iam-admin:a', '@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-globex:tenders:a']);
+    expect(session.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:a')).toBe('4');
   });
 });
 
@@ -157,9 +157,11 @@ describe('clearAllAppStorage', () => {
     local.setItem('@bcbp-solutions-fzc-llc/frontend-sdk:workspaces', '[]');
     local.setItem('other-lib:setting', 'x');
     local.setItem('i18nextLng', 'ar');
+    // Shaped like the old unprefixed `<ns>:<appId>:<key>`, which clearAllAppStorage used to remove (review: storage key prefix).
+    local.setItem('react-query:cache:v1', '{}');
     clearAllAppStorage();
     expect([...Array(local.length).keys()].map((i) => local.key(i)).sort()).toEqual(
-      ['@bcbp-solutions-fzc-llc/frontend-sdk:workspaces', SESSION_ID_STORAGE_KEY, 'i18nextLng', 'other-lib:setting'].sort(),
+      ['@bcbp-solutions-fzc-llc/frontend-sdk:workspaces', SESSION_ID_STORAGE_KEY, 'i18nextLng', 'other-lib:setting', 'react-query:cache:v1'].sort(),
     );
     expect(session.length).toBe(0);
   });

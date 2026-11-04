@@ -41,7 +41,8 @@ Import a subpath (`@bcbp-solutions-fzc-llc/frontend-sdk/http`), never the root (
 |---|---|
 | `platformWebpackConfig({ role, name?, exposes?, mode })` | The webpack config for a shell (`publicPath: '/'`, `/assets`) or a remote (`remoteEntry.js`, `publicPath: 'auto'`); Trusted Types `platform-webpack`; no `eval`; hidden source maps; content hashes |
 | `platformShared`, `sharedFor('shell' \| 'remote')` | Module Federation shared config: strict singletons for React, react-dom, `@opentelemetry/api`, every SDK subpath but `/testing`; remotes never bundle the SDK |
-| `containerName(remote)` | The container-global naming rule |
+| `containerName(remote)` | The container-global naming rule: `__platform_mfe_<name>`, `-` as `_` |
+| `SdkVersionPlugin` | In every preset: fails the build when the installed SDK is not the preset's version |
 | `ProvideSdkPlugin` | Shell: provides every SDK subpath lazily |
 | `ChunkIntegrityPlugin`, `integrityOf`, `INTEGRITY_PLACEHOLDER`, `MISSING_INTEGRITY` | Production: sha384 for every lazy chunk, fail-closed (`MISSING_INTEGRITY`); pins the HTML's scripts |
 
@@ -52,7 +53,7 @@ No api-extractor report for this package; its surface is `src/index.ts`. LLD §1
 | Entry | Export | Purpose |
 |---|---|---|
 | `@bcbp-solutions-fzc-llc/webpack-preset/rspack` | `platformRspackConfig(options)` | The same settings as `platformWebpackConfig` for Rspack 2, with `ModuleFederationPluginV1` (webpack-compatible protocol) |
-| | `ProvideSdkRspackPlugin`, `GlobalThisOnlyPlugin` | The shell's SDK provider; the runtime without the `Function('return this')` fallback |
+| | `ProvideSdkRspackPlugin`, `GlobalThisOnlyPlugin`, `SdkVersionPlugin` | The shell's SDK provider; the runtime without the `Function('return this')` fallback |
 | | `containerName`, `platformShared`, `sharedFor`, `integrityOf`, `MISSING_INTEGRITY`, `INTEGRITY_PLACEHOLDER`, `type PresetOptions`, `type SharedConfig` | As in the main entry |
 | `@bcbp-solutions-fzc-llc/webpack-preset/rsbuild` | `pluginPlatform({ role, name?, exposes? })` | Rsbuild 2 plugin: the Rspack preset (with the Rspack inside `@rsbuild/core`) in Rsbuild's mode; refuses Rsbuild's `moduleFederation` option |
 | | `type PlatformPluginOptions`, `PLUGIN_PLATFORM_NAME` (`'platform-preset'`) | The plugin's options (`PresetOptions` without `mode`); its Rsbuild plugin name |

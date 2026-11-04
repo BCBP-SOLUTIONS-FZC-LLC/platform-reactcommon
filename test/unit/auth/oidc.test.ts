@@ -541,7 +541,7 @@ describe('logout', () => {
     await tabA.logout({ global: false });
     expect(tabA.getState()).toEqual({ status: 'anonymous', workspace: ACME, reason: 'signed-out' });
     expect(await tabA.getAccessToken()).toBeUndefined();
-    expect(shared.getItem('tenant-acme:tenders:filter')).toBeNull();
+    expect(shared.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:filter')).toBeNull();
     expect(shared.getItem(WORKSPACE_CACHE_KEY)).toBe(cached); // the next login needs it
     expect(shared.getItem(SESSION_ID_STORAGE_KEY)).not.toBe(sid);
     expect(shared.getItem(SIGNED_OUT_KEY)).not.toBeNull();
@@ -627,7 +627,7 @@ describe('shared device', () => {
     // Idle expiry, then someone else signs in with prompt=login in the same realm.
     const { state } = await signIn(new FakePage('/', shared), ACME, { claims: { sub: 'user-2', name: 'Bob' } });
     expect(state).toMatchObject({ status: 'authenticated', user: { sub: 'user-2' } });
-    expect(shared.getItem('tenant-acme:tenders:filter')).toBeNull();
+    expect(shared.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:filter')).toBeNull();
     expect(storage('tenders').get('filter')).toBeUndefined();
     // Only a hash is kept, never the sub.
     expect(shared.getItem(LAST_USER_KEY)).toMatch(/^[0-9a-f]{64}$/);
@@ -651,7 +651,7 @@ describe('shared device', () => {
 
     // Someone else signs in on this browser: the first user's storage goes.
     await signIn(new FakePage('/', page.local), ACME, { claims: { sub: 'user-2', name: 'Bob' } });
-    expect(page.local.getItem('tenant-acme:tenders:filter')).toBeNull();
+    expect(page.local.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:filter')).toBeNull();
     expect(storage('tenders').get('filter')).toBeUndefined();
   });
 
@@ -665,7 +665,7 @@ describe('shared device', () => {
       return getItem(k);
     });
     await signIn(new FakePage('/', shared));
-    expect(shared.getItem('tenant-acme:tenders:filter')).toBeNull();
+    expect(shared.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:filter')).toBeNull();
   });
 });
 
@@ -681,7 +681,7 @@ describe('switchWorkspace', () => {
     tabA.beforeRedirect((r) => reasons.push(r.reason));
     await tabA.switchWorkspace(GLOBEX);
     expect(await tabA.getAccessToken()).toBeUndefined();
-    expect(shared.getItem('tenant-acme:tenders:filter')).toBeNull();
+    expect(shared.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-acme:tenders:filter')).toBeNull();
     expect(shared.getItem(SIGNED_OUT_KEY)).toBeNull();
     expect(reasons).toEqual(['switch']);
     expect(new URL(a.assigned.at(-1)!).pathname).toContain('/realms/tenant-globex/');

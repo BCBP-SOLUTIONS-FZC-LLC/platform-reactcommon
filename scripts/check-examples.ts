@@ -39,7 +39,7 @@ for (const [name, b] of [['shell', shell], ['remote-tenders', remote]] as const)
   check(b.files.some((f) => f.endsWith('.js.map')), `${name}: no source maps emitted`);
 }
 check(remote.files.includes('remoteEntry.js'), 'remote-tenders: no remoteEntry.js');
-check(/\bvar tenders\b/.test(readFileSync(join(remoteDir, 'remoteEntry.js'), 'utf8')), 'remote-tenders: remoteEntry.js does not define window.tenders');
+check(/\bvar __platform_mfe_tenders\b/.test(readFileSync(join(remoteDir, 'remoteEntry.js'), 'utf8')), 'remote-tenders: remoteEntry.js does not define window.__platform_mfe_tenders');
 check(!remote.js.includes('@bcbp-solutions-fzc-llc/frontend-sdk:session-id'), 'remote-tenders: bundles SDK code (it must come from the shell)');
 // The remote's JSX must come from the shell's React (another major's elements fail to render).
 check(/"react\/jsx-runtime"/.test(readFileSync(join(remoteDir, 'remoteEntry.js'), 'utf8')), 'remote-tenders: does not consume react/jsx-runtime from the shared scope');

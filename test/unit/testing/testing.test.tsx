@@ -185,7 +185,7 @@ describe('createTestPlatform storage', () => {
     storage('app2').set('theme', 'dark');
     expect(storage('app2').get('theme')).toBe('dark');
     expect(getRuntime().storageNamespace).toBe('tenant-test');
-    expect(localStorage.getItem('tenant-test:app2:theme')).not.toBeNull();
+    expect(localStorage.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-test:app2:theme')).not.toBeNull();
   });
 
   it('scopes a trial workspace to the tenant: user.tenantId, else the session context\'s', () => {

@@ -105,7 +105,7 @@ pnpm add -D @bcbp-solutions-fzc-llc/webpack-preset@1.0.0-alpha.3 @bcbp-solutions
 |-----------|----------|
 | Exact `X.Y.Z-alpha.N` | During the alpha: breaking changes bump `N` |
 | `^X.Y.Z` | From `1.0.0` (strict SemVer) |
-| The same version for all three packages | Always: they're released together, and `@bcbp-solutions-fzc-llc/webpack-preset` / `@bcbp-solutions-fzc-llc/eslint-plugin` embed facts about the SDK of the same version (its subpaths, the share range, the forbidden headers) |
+| The same version for all three packages | Always: they're released together, and `@bcbp-solutions-fzc-llc/webpack-preset` / `@bcbp-solutions-fzc-llc/eslint-plugin` embed facts about the SDK of the same version (its subpaths, the share range, the forbidden headers); the preset's `SdkVersionPlugin` fails a build whose installed SDK differs |
 
 Dist-tags: a pre-release is published under its identifier (`alpha`, `rc`), and a stable release under `latest`. So `pnpm add @bcbp-solutions-fzc-llc/frontend-sdk` never installs a pre-release by accident.
 

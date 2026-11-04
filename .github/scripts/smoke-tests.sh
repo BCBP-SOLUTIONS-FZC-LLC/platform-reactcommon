@@ -55,7 +55,7 @@ const shared = Object.keys(preset.platformShared);
 for (const s of subpaths.filter((x) => x !== 'testing')) {
   if (!shared.includes(`@bcbp-solutions-fzc-llc/frontend-sdk/${s}`)) fail(`platformShared lacks @bcbp-solutions-fzc-llc/frontend-sdk/${s}`);
 }
-if (preset.containerName('iam-admin') !== 'iam_admin') fail('containerName rule changed');
+if (preset.containerName('iam-admin') !== '__platform_mfe_iam_admin') fail('containerName rule changed');
 
 // 2b. A shell built with the preset provides every shared SDK subpath, not only the one it imports
 // (a remote's SDK has no fallback: docs/e2e/integrated-deployment-report.md, Issue 2).
@@ -80,7 +80,7 @@ const rspackPreset = await import('@bcbp-solutions-fzc-llc/webpack-preset/rspack
 const rsbuildPreset = await import('@bcbp-solutions-fzc-llc/webpack-preset/rsbuild');
 if (typeof rspackPreset.platformRspackConfig !== 'function') fail('/rspack does not export platformRspackConfig');
 if (typeof rsbuildPreset.pluginPlatform !== 'function') fail('/rsbuild does not export pluginPlatform');
-if (rspackPreset.platformRspackConfig({ role: 'remote', name: 'iam-admin', exposes: {}, mode: 'production' }).output.uniqueName !== 'iam_admin') fail('/rspack config lost the container name');
+if (rspackPreset.platformRspackConfig({ role: 'remote', name: 'iam-admin', exposes: {}, mode: 'production' }).output.uniqueName !== '__platform_mfe_iam_admin') fail('/rspack config lost the container name');
 const presetDir = 'node_modules/@bcbp-solutions-fzc-llc/webpack-preset/dist';
 const bareImports = (file, seen = new Set()) => {
   if (seen.has(file)) return [];

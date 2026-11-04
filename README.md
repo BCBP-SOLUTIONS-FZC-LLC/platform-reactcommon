@@ -95,7 +95,7 @@ The 17 subpaths fall into seven functional areas, each with its own page in [`do
 | `/mfe` | `loadManifest`, `loadRemote`, `RemoteDisabledError`, `RemoteLoadError`, `isChunkLoadError`, `reloadOnceForChunkError`, `startVersionPolling`, `subscribeAppUpdate` |
 | `/flags` | `getFlag`, `setFlagProvider`, `runtimeConfigFlagProvider`, `sessionContextFlagProvider`, `isRemoteKilled` |
 | `/nav` | `navigate(appId, path)`, `registerNavigator`, `isSafeRedirect` |
-| `@bcbp-solutions-fzc-llc/webpack-preset` | webpack 5: `platformWebpackConfig({ role, name, exposes, mode })`, `platformShared`, `sharedFor(role)`, `containerName(remote)`, `ProvideSdkPlugin` (added to the shell: every SDK subpath in the share scope), `ChunkIntegrityPlugin`. **Rspack:** `/rspack` → `platformRspackConfig(…)` (same settings, Rspack's v1-compatible Module Federation). **Rsbuild:** `/rsbuild` → `pluginPlatform({ role, name, exposes })` |
+| `@bcbp-solutions-fzc-llc/webpack-preset` | webpack 5: `platformWebpackConfig({ role, name, exposes, mode })`, `platformShared`, `sharedFor(role)`, `containerName(remote)` (`__platform_mfe_<name>`), `ProvideSdkPlugin` (added to the shell: every SDK subpath in the share scope), `SdkVersionPlugin` (the installed SDK must be the preset's version), `ChunkIntegrityPlugin`. **Rspack:** `/rspack` → `platformRspackConfig(…)` (same settings, Rspack's v1-compatible Module Federation). **Rsbuild:** `/rsbuild` → `pluginPlatform({ role, name, exposes })` |
 
 ### UI support — `/i18n`, `/security`
 

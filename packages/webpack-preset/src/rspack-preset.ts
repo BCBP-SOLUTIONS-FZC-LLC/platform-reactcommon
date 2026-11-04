@@ -6,6 +6,7 @@
 import { readFileSync } from 'node:fs';
 import type { Compiler, RspackOptions, RspackPluginInstance, rspack as Rspack } from '@rspack/core';
 import { ChunkIntegrityPlugin } from './integrity.ts';
+import { SdkVersionPlugin } from './sdk-version.ts';
 import { SDK_PACKAGE, SHARED_SDK_SUBPATHS, baseConfig, checkOptions, federationOptions, sdkVersionAt, type PresetOptions } from './shared.ts';
 
 const readJson = (path: string): { name?: string; version?: string } | undefined => {
@@ -78,8 +79,8 @@ export class GlobalThisOnlyPlugin implements RspackPluginInstance {
 /**
  * The platform's Rspack settings (built with the given Rspack) for a shell or remote, to merge into the app's own config (the app adds
  * entry, loaders, HTML and dev server), as platformWebpackConfig does for webpack: Module Federation with
- * sharedFor(role) (v1 protocol), for the shell the SDK provider, the globalThis-only runtime, and in
- * production the ChunkIntegrityPlugin.
+ * sharedFor(role) (v1 protocol), for the shell the SDK provider, the SDK version check, the globalThis-only
+ * runtime, and in production the ChunkIntegrityPlugin.
  */
 export function rspackPresetWith(rspack: typeof Rspack, o: PresetOptions): RspackOptions {
   checkOptions(o);
@@ -88,6 +89,7 @@ export function rspackPresetWith(rspack: typeof Rspack, o: PresetOptions): Rspac
     plugins: [
       new rspack.container.ModuleFederationPluginV1(federationOptions(o) as ConstructorParameters<typeof rspack.container.ModuleFederationPluginV1>[0]),
       ...(o.role === 'shell' ? [new ProvideSdkRspackPlugin()] : []),
+      new SdkVersionPlugin() as unknown as RspackPluginInstance,
       new GlobalThisOnlyPlugin(),
       // The same plugin as webpack's: Rspack's JS API offers the hooks it uses (see integrity.ts).
       ...(o.mode === 'production' ? [new ChunkIntegrityPlugin() as unknown as RspackPluginInstance] : []),

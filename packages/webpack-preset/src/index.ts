@@ -9,10 +9,12 @@
  */
 import webpack, { type Compilation, type Compiler, type Configuration } from 'webpack';
 import { ChunkIntegrityPlugin } from './integrity.ts';
+import { SdkVersionPlugin } from './sdk-version.ts';
 import { SDK_PACKAGE, SHARED_SDK_SUBPATHS, baseConfig, checkOptions, federationOptions, type PresetOptions } from './shared.ts';
 
 export { ChunkIntegrityPlugin, INTEGRITY_PLACEHOLDER, MISSING_INTEGRITY, integrityOf } from './integrity.ts';
 export { containerName, platformShared, sharedFor, type PresetOptions, type SharedConfig } from './shared.ts';
+export { SdkVersionPlugin } from './sdk-version.ts';
 
 /**
  * Makes the shell provide every shared SDK subpath, not only those its own code imports. Webpack provides a
@@ -74,8 +76,8 @@ export class ProvideSdkPlugin {
 /**
  * The platform's webpack settings for a shell or remote, to merge into the app's own config (the app adds
  * entry, loaders and dev server). Adds the ModuleFederationPlugin with sharedFor(role), for the shell
- * the ProvideSdkPlugin (every SDK subpath in the share scope), and in production the
- * ChunkIntegrityPlugin (integrity on every lazily loaded chunk).
+ * the ProvideSdkPlugin (every SDK subpath in the share scope), the SdkVersionPlugin (the installed SDK is
+ * this preset's version), and in production the ChunkIntegrityPlugin (integrity on every lazily loaded chunk).
  */
 export function platformWebpackConfig(o: PresetOptions): Configuration {
   checkOptions(o);
@@ -85,6 +87,7 @@ export function platformWebpackConfig(o: PresetOptions): Configuration {
     plugins: [
       new webpack.container.ModuleFederationPlugin(mf as ConstructorParameters<typeof webpack.container.ModuleFederationPlugin>[0]),
       ...(o.role === 'shell' ? [new ProvideSdkPlugin()] : []),
+      new SdkVersionPlugin(),
       ...(o.mode === 'production' ? [new ChunkIntegrityPlugin()] : []),
     ],
   };

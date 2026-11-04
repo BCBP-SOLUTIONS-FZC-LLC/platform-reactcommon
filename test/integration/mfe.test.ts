@@ -35,11 +35,11 @@ beforeEach(async () => {
   injected = [];
   shareScopes = [];
   // The one seam: the entry <script>. Running it defines the container global, as webpack's
-  // remoteEntry.js does (window.tenders = { init, get }).
+  // remoteEntry.js does (window.__platform_mfe_tenders = { init, get }).
   setMfeInternalsForTests({
     injectScript: async (url) => {
       injected.push(url);
-      (globalThis as Record<string, unknown>).tenders = {
+      (globalThis as Record<string, unknown>).__platform_mfe_tenders = {
         init: (scope: unknown) => void shareScopes.push(scope),
         get: async (module: string) => {
           if (module !== './Main') throw new Error(`Module "${module}" does not exist in container.`);
@@ -52,7 +52,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  delete (globalThis as Record<string, unknown>).tenders;
+  delete (globalThis as Record<string, unknown>).__platform_mfe_tenders;
   await endWorld();
 });
 
