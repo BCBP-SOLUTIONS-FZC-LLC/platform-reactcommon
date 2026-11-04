@@ -405,7 +405,7 @@ The order is fixed by design doc §C2 and drawn in ARCHITECTURE.md § Shell boot
 Every record carries the envelope `trace_id`, `span_id` (active span), `request_id` (when given), `session_id`, `mfe` (`shell` by default) and `page_route` (a registered template or `unknown`). Caller attributes of the same name are dropped. Attributes go through redaction:
 - sensitive keys become `[REDACTED]`;
 - JWT and `Bearer` patterns are masked;
-- URL query strings and fragments are removed (from the message and every string, as from span attributes);
+- URL query strings and fragments are removed, after an absolute URL or a `/`-rooted path (from the message and every string, as from span attributes);
 - stacks are cut to 4 KiB;
 - a record's attributes are capped at about 8 KiB (`[TRUNCATED]` past it), so one record always fits the unload budget.
 
@@ -556,7 +556,7 @@ See ARCHITECTURE.md § Concurrency model. All shared mutable state is on the run
 | Silent restore | Loop guard (one per tab) |
 | Reload on chunk error | Per-version sessionStorage key |
 | POST retries | Only with `retry: { unsafe: true }`; every POST carries an `Idempotency-Key` |
-| Refresh-token use | Single-flight; never re-sent after an ambiguous failure; re-sent after 429, 502, 503, 504 (not processed), with backoff, while the access token is valid |
+| Refresh-token use | Single-flight; never re-sent after an ambiguous failure; re-sent after 429 or 503 with `Retry-After` (refused unprocessed), with backoff, while the access token is valid; 502, 504 and a bare 503 are ambiguous |
 
 ### 9.3 Failure scenarios
 
@@ -632,7 +632,7 @@ CSP violations after bootstrap are logged by `installGlobalErrorHandlers` (direc
 | `/auth` | error | `silent sign-in could not start` | restore redirect could not be prepared |
 | `/auth` | error | `trial ID token has no valid tenant_id: storage stays anonymous` | trial token without `tenant_id` |
 | `/auth` | warn (essential) | `token refresh outcome unknown: restoring the session` · `token refresh failed: restoring the session` | ambiguous refresh outcome |
-| `/auth` | warn (essential) | `token endpoint unavailable: retrying the refresh` | 429, 502, 503, 504 on refresh; `status`, `retry_in_ms` |
+| `/auth` | warn (essential) | `token endpoint unavailable: retrying the refresh` | 429, or 503 with `Retry-After`, on refresh; `status`, `retry_in_ms` |
 | `/auth` | error | `token refresh answer rejected: restoring the session` · `token refresh failed` | invalid refresh answer; unexpected exception |
 | `/auth` | warn (essential) / info | `session ended` | `invalid_grant`: warn when Keycloak ended a live session (`server_ended: true`), info when the refresh token's lifetime is unknown (`server_ended: false`) |
 | `/auth` | info | `token refresh cancelled by a navigation away` | the refresh request failed after `beforeunload`/`pagehide` |

@@ -139,7 +139,7 @@ const OVERSIZED_SKIP_MAX = 8;
  */
 export function newestThatFit<T>(queue: readonly T[], maxBytes: number, sizeOf: (items: T[]) => number): { batch: T[]; bytes: number; rest: T[] } {
   const skipped: T[] = [];
-  for (let end = queue.length; end > 0 && skipped.length <= OVERSIZED_SKIP_MAX; end--) {
+  for (let end = queue.length; end > 0 && skipped.length < OVERSIZED_SKIP_MAX; end--) {
     const fits = (n: number) => sizeOf(queue.slice(end - n, end)) <= maxBytes;
     let lo = 0;
     let hi = 1;

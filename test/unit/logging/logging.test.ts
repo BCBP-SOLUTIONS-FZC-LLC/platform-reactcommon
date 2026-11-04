@@ -225,6 +225,8 @@ describe('redaction (sanitizeFields, then strings, then JWT/Bearer, then the mes
       url: 'https://s3.example/bucket/o.pdf?X-Amz-Signature=deadbeef#page=2',
       nested: { links: ['see (https://a.example/p?token=t) now', 'ws://h.example/s#frag'] },
       plain: 'a?b#c is not a URL',
+      path: 'GET /realms/r/protocol/openid-connect/auth?code=abc&state=xyz',
+      ratio: '1/2?',
     });
     const [r] = await sent();
     expect(r!.body).toBe('callback https://idp.example/realms/r/cb failed');
@@ -232,6 +234,8 @@ describe('redaction (sanitizeFields, then strings, then JWT/Bearer, then the mes
       url: 'https://s3.example/bucket/o.pdf',
       nested: { links: ['see (https://a.example/p) now', 'ws://h.example/s'] },
       plain: 'a?b#c is not a URL',
+      path: 'GET /realms/r/protocol/openid-connect/auth',
+      ratio: '1/2?',
     });
   });
 

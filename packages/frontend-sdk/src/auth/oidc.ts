@@ -46,12 +46,15 @@ const REFRESH_JITTER_MS = 10_000;
 const LEAVING_GRACE_MS = 10_000;
 const TOKEN_TIMEOUT_MS = 15_000;
 /**
- * Answers that mean the token endpoint did not process the refresh (rate limited, or a gateway in front of
- * an IdP that is down or restarting), so the refresh token was not used: it is kept and the refresh
- * retried, from REFRESH_RETRY_MS doubling up to REFRESH_RETRY_MAX_MS (or Retry-After), while the access
- * token stays valid. A 500 stays ambiguous (Keycloak may have rotated the token before failing).
+ * Whether the token endpoint deliberately refused the refresh without processing it, so the refresh token
+ * was not used: 429, or 503 with Retry-After (Keycloak or its gateway shedding load). It is kept and the
+ * refresh retried, from REFRESH_RETRY_MS doubling up to REFRESH_RETRY_MAX_MS (or Retry-After), while the
+ * access token stays valid. A 500, 502, 504 or bare 503 stays ambiguous: a gateway may answer it after
+ * Keycloak rotated the token, and resending the old one is refresh-token reuse, which ends the session.
  */
-const UNAVAILABLE_STATUSES = new Set([429, 502, 503, 504]);
+function refusedUnprocessed(res: Response): boolean {
+  return res.status === 429 || (res.status === 503 && res.headers.has('retry-after'));
+}
 const REFRESH_RETRY_MS = 2_000;
 const REFRESH_RETRY_MAX_MS = 30_000;
 const ACTIVITY_WRITE_MS = 5_000;
@@ -278,8 +281,10 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   let stopActivity: (() => void) | undefined;
   let stopOnline: (() => void) | undefined;
   let lastActivityWrite = 0;
-  /** Refreshes retried in a row after an unavailable token endpoint (UNAVAILABLE_STATUSES). */
+  /** Refreshes retried in a row after the token endpoint refused one (refusedUnprocessed). */
   let unavailableRetries = 0;
+  /** No refresh request before this time (the retry's backoff or Retry-After): getAccessToken and a 401 wait too. */
+  let retryNotBefore = 0;
   const listeners = new Set<(s: SessionState) => void>();
   const redirectListeners = new Set<(r: { reason: Reason }) => void>();
 
@@ -337,6 +342,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   function dropTokens(): void {
     tokens = undefined;
     unavailableRetries = 0;
+    retryNotBefore = 0;
     stopTimers();
   }
 
@@ -614,6 +620,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       expire({ serverEnded: false, idle: false });
       return false;
     }
+    if (internals.now() < retryNotBefore) return false; // backing off: the scheduled retry sends it
     if (!isOnline()) {
       // Failed before sending: the token was never used, so keep it and try again once online.
       stopOnline?.();
@@ -657,6 +664,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
         return false;
       }
       unavailableRetries = 0;
+      retryNotBefore = 0;
       scheduleRefresh();
       setState({ status: 'authenticated', user: user!, workspace: w, expiresAt: tokens.expiresAt });
       return true;
@@ -670,12 +678,13 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       expire({ serverEnded, idle: false });
       return false;
     }
-    if (UNAVAILABLE_STATUSES.has(res.status)) {
+    if (refusedUnprocessed(res)) {
       // Every tab of every user would otherwise drop its tokens and redirect to an IdP that is down.
       const backoff = Math.min(REFRESH_RETRY_MAX_MS, REFRESH_RETRY_MS * 2 ** unavailableRetries) * (0.5 + internals.random() / 2);
       const wait = Math.max(backoff, retryAfterMs(res, REFRESH_RETRY_MAX_MS) ?? 0);
       if (internals.now() + wait < t.expiresAt) {
         unavailableRetries++;
+        retryNotBefore = internals.now() + wait;
         log().warn('token endpoint unavailable: retrying the refresh', { status: res.status, retry_in_ms: Math.round(wait), essential: true });
         clearTimeout(refreshTimer);
         refreshTimer = setTimeout(() => void refresh(), wait);

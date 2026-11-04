@@ -125,7 +125,7 @@ interface Lineage {
   claims: Record<string, unknown>;
 }
 
-type Failure = 'network-after-send' | 'network-before-send' | 'server-error' | 'invalid_grant' | 'bad-id-token';
+type Failure = 'network-after-send' | 'network-before-send' | 'server-error' | 'timeout-after-rotate' | 'unavailable-after-rotate' | 'invalid_grant' | 'bad-id-token';
 
 /** Keycloak at the HTTP level: /auth (via approve()), /token (fetch). */
 export class FakeKeycloak {
@@ -232,7 +232,10 @@ export class FakeKeycloak {
       answer = json(400, { error: 'unsupported_grant_type' });
     }
     if (failure === 'network-after-send') throw new TypeError('Failed to fetch'); // the server already rotated
-    if (failure === 'server-error') return json(500, { error: 'server_error' }); // after rotating: ambiguous (a 502/503 is retried, never ambiguous)
+    if (failure === 'server-error') return json(502, { error: 'bad_gateway' }); // after rotating: ambiguous, never retried with the old token
+    // A gateway giving up (504), or an Envoy-style reset (503, no Retry-After), after Keycloak rotated: ambiguous too.
+    if (failure === 'timeout-after-rotate') return new Response('upstream request timeout', { status: 504 });
+    if (failure === 'unavailable-after-rotate') return new Response('upstream connect error or disconnect/reset before headers', { status: 503 });
     if (failure === 'bad-id-token' && answer.ok) {
       const b = (await answer.json()) as Record<string, unknown>;
       return json(200, { ...b, id_token: jwt({ iss: 'https://evil.example', aud: CLIENT, sub: 'user-1', iat: 0, exp: 0 }) });

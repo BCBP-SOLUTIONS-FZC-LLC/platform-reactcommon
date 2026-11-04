@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT_CONTEXT } from '@opentelemetry/api';
 import { JsonTraceSerializer } from '@opentelemetry/otlp-transformer';
+import { keepaliveLeft } from '../../../packages/frontend-sdk/src/internal/unload.ts';
 import { SamplingDecision, type ReadableSpan, type SpanExporter } from '@opentelemetry/sdk-trace';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeConfigSchema, setRuntimeConfig } from '../../../packages/frontend-sdk/src/config/index.ts';
@@ -366,6 +367,8 @@ describe('export queue', () => {
     expect(JsonTraceSerializer.serializeRequest(first)!.byteLength).toBeLessThanOrEqual(KEEPALIVE_MAX_BYTES);
     expect(first.length).toBeGreaterThan(10);
     expect(first.map((x) => x.name)).toEqual(names(300 - first.length, 300));
+    // The rest goes through the exporter, which may use keepalive: the ledger leaves pagehide nothing of it (review: two ledgers).
+    expect(keepaliveLeft()).toBe(0);
     await vi.waitFor(() => expect(spans()).toHaveLength(300)); // the rest still arrives while the page stays
     expect(limited.rejected()).toBe(0);
     expect(tracingStats()).toMatchObject({ exported: 300, exportFailures: 0, droppedOnUnload: 0 });
