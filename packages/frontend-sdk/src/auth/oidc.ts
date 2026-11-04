@@ -107,7 +107,7 @@ interface TokenResponse {
  * A top-level form POST to `url`: the fields travel in the body, never in the URL, so nothing lands in the
  * browser's history or an access log. CSP form-action must allow the IdP origin (examples/cloudfront/csp.mjs).
  */
-function postNavigate(url: string, fields: Record<string, string>): void {
+export function postNavigate(url: string, fields: Record<string, string>): void {
   const doc = globalThis.document;
   const form = doc.createElement('form');
   form.method = 'post';

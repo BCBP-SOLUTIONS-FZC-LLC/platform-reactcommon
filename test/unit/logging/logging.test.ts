@@ -272,6 +272,15 @@ describe('redaction (sanitizeFields, then strings, then JWT/Bearer, then the mes
     expect(Object.values(attrsOf(r!)).filter((v) => v === '[TRUNCATED]')).toHaveLength(1);
   });
 
+  it('caps nested objects too: past the budget a nested key is [TRUNCATED] and the walk stops', async () => {
+    start();
+    getLogger().info('nested', { rows: Array.from({ length: 100 }, (_, i) => ({ [`field_${i}`]: 'y'.repeat(200), more: 'z' })) });
+    const [r] = await sent();
+    const json = JSON.stringify(attrsOf(r!));
+    expect(json.length).toBeLessThan(ATTRIBUTES_MAX_BYTES + 2_000);
+    expect(json).toContain('[TRUNCATED]');
+  });
+
   it('catches a JWT cut short by the 256-byte limit', () => {
     const long = `${'x'.repeat(200)} ${JWT}`;
     expect(cleanString(long)).not.toContain('eyJ');

@@ -267,6 +267,29 @@ describe('edge cases', () => {
     }
   });
 
+  it('stops retrying a catalog after three tries, and never retries one for a locale no longer shown', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const calls: string[] = [];
+      registerNamespace('down', async (locale) => {
+        calls.push(locale);
+        throw new Error('503');
+      });
+      await initializeI18n({ defaultLocale: 'en', supported: ['en', 'ar'], detect: () => 'ar' });
+      await setLocale('en'); // 'ar' is no longer shown: its retries stop
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(calls.filter((l) => l === 'en').length).toBe(5); // as the fallback, again by setLocale('en'), then three retries
+      expect(calls.filter((l) => l === 'ar').length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the Intl format cache bounded', () => {
+    for (let i = 0; i < 450; i++) formatNumber(i, { minimumFractionDigits: i % 21, maximumFractionDigits: 20, currencyDisplay: 'code', minimumIntegerDigits: (i % 21) + 1 });
+    expect(formatNumber(1.5, { minimumFractionDigits: 1 })).toBe('1.5');
+  });
+
   it('warns only in local and dev environments', async () => {
     initializeCore({ serviceName: 'web-app', domain: 'tender_management', environment: 'prod' });
     registerNamespace('broken', async () => { throw new Error('404'); });

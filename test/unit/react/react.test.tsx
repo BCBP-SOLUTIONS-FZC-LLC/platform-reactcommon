@@ -569,6 +569,32 @@ describe('MFEErrorBoundary', () => {
     expect(renders).toBe(once);
   });
 
+  it('treats added, removed or changed reset keys as a change', async () => {
+    let fail = true;
+    function Child() {
+      if (fail) throw new Error('boom');
+      return <p>ok</p>;
+    }
+    const view = (keys?: unknown[]) => (
+      <MFEErrorBoundary mfe="tenders" {...(keys ? { resetKeys: keys } : {})}>
+        <Child />
+      </MFEErrorBoundary>
+    );
+    const r = await render(view());
+    await settle();
+    fail = false;
+    await r.rerender(view(['a'])); // none → some
+    await settle();
+    expect(r.container.textContent).toBe('ok');
+    fail = true;
+    await r.rerender(view(['a', 'b']));
+    await settle();
+    fail = false;
+    await r.rerender(view(['a', 'c'])); // same length, another value
+    await settle();
+    expect(r.container.textContent).toBe('ok');
+  });
+
   it('keeps the error while the reset keys stay the same, and clears it for another mfe', async () => {
     let fail = true;
     function Child() {
@@ -701,6 +727,49 @@ describe('installGlobalErrorHandlers', () => {
       { source: 'unhandled_error', mfe: 'shell' },
       { source: 'unhandled_rejection', mfe: 'shell' },
     ]);
+  });
+
+  it('rate-limits repeated CSP violations too', async () => {
+    const off = installGlobalErrorHandlers();
+    for (let i = 0; i < 30; i++) {
+      const csp = new Event('securitypolicyviolation') as Event & Record<string, unknown>;
+      Object.assign(csp, { violatedDirective: 'img-src', blockedURI: 'https://tracker.example/p.gif', disposition: 'enforce' });
+      window.dispatchEvent(csp);
+    }
+    off();
+    await settle();
+    expect(platform.logs.filter((l) => l.body === 'content security policy violation')).toHaveLength(10);
+  });
+
+  it('useStepUp().needed turns true when the MFA window lapses while the page stays open (review 2)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      let lapsed = false;
+      const c = controllableIdp({ status: 'authenticated', user: { sub: 'u' }, workspace: ACME, expiresAt: 0 });
+      c.idp.needsStepUp.mockImplementation(() => lapsed);
+      initializeAuth(c.idp);
+      const shell: ShellContextValue = {
+        context: { tenantId: 't', slug: 'acme', roles: [], departments: [], featureFlags: [], readOnly: false, mfaFreshnessSeconds: 300 },
+        locale: 'en',
+        switchWorkspace: async () => {},
+      };
+      let needed: boolean | undefined;
+      function View() {
+        needed = useStepUp().needed;
+        return null;
+      }
+      await render(
+        <PlatformProvider shell={shell}>
+          <View />
+        </PlatformProvider>,
+      );
+      expect(needed).toBe(false);
+      lapsed = true;
+      await settle(() => vi.advanceTimersByTime(15_000));
+      expect(needed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rate-limits a storm of the same error, counts what it dropped, and still counts every one in the metric (review 2)', async () => {
