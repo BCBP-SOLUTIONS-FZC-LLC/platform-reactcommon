@@ -564,6 +564,16 @@ describe('export queue', () => {
     expect(stats.droppedNoConsent).toBe(1);
   });
 
+  it('consent withdrawn while spans are queued: they are dropped, not exported (review: consent purge)', async () => {
+    start();
+    getTracer('t').startSpan('queued').end();
+    consent([]);
+    const stats = tracingStats()!;
+    await shutdownTracing();
+    expect(spans()).toEqual([]);
+    expect(stats.droppedNoConsent).toBe(1);
+  });
+
   it('drops the oldest spans when the queue is full', async () => {
     setTracingInternalsForTests({ queue: { maxQueueSize: 3, maxExportBatchSize: 100, scheduledDelayMillis: 60_000 } });
     start();
@@ -646,6 +656,17 @@ describe('spans', () => {
     expect(span.attributes).toEqual({ note: 'got [REDACTED]', header: 'Bearer [REDACTED]' });
     expect(span.status).toEqual({ code: 2, message: 'token [REDACTED] rejected' });
     expect(span.events[0]!.attributes).toMatchObject({ 'exception.message': 'token [REDACTED] rejected' });
+  });
+
+  it('remove URL query strings and fragments from attribute values and error messages, as logs do (review: redaction)', async () => {
+    start();
+    const s = getTracer('t').startSpan('op', { link: 'https://s3.example/o?X-Amz-Signature=zz' });
+    s.recordError(new Error('GET https://idp.example/cb?code=abc#x failed'));
+    s.end();
+    await shutdownTracing();
+    const span = spans()[0]!;
+    expect(span.attributes).toEqual({ link: 'https://s3.example/o' });
+    expect(span.status).toEqual({ code: 2, message: 'GET https://idp.example/cb failed' });
   });
 });
 

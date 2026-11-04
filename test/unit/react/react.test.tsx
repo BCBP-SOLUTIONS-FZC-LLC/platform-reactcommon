@@ -523,6 +523,46 @@ describe('MFEErrorBoundary', () => {
     expect(answer!.querySelector('code')).toBeNull();
   });
 
+  it('clears the error when a reset key changes, as for another tender on the same route (review: boundary reset)', async () => {
+    function Tender({ id }: { id: string }) {
+      if (id === '1') throw new Error('tender 1 is broken');
+      return <p>{`tender ${id}`}</p>;
+    }
+    const view = (id: string) => (
+      <MFEErrorBoundary mfe="tenders" resetKeys={[id]}>
+        <Tender id={id} />
+      </MFEErrorBoundary>
+    );
+    const r = await render(view('1'));
+    await settle();
+    expect(r.container.querySelector('[role=alert]')).not.toBeNull();
+    await r.rerender(view('2'));
+    await settle();
+    expect(r.container.textContent).toBe('tender 2');
+  });
+
+  it('keeps the error while the reset keys stay the same, and clears it for another mfe', async () => {
+    let fail = true;
+    function Child() {
+      if (fail) throw new Error('boom');
+      return <p>ok</p>;
+    }
+    const view = (mfe: string) => (
+      <MFEErrorBoundary mfe={mfe} resetKeys={['same']}>
+        <Child />
+      </MFEErrorBoundary>
+    );
+    const r = await render(view('tenders'));
+    await settle();
+    fail = false;
+    await r.rerender(view('tenders'));
+    await settle();
+    expect(r.container.querySelector('[role=alert]')).not.toBeNull(); // nothing changed: retry is the user's
+    await r.rerender(view('bids'));
+    await settle();
+    expect(r.container.textContent).toBe('ok');
+  });
+
   it('a chunk-load error reloads the page once', async () => {
     const reload = vi.fn();
     vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
@@ -569,6 +609,20 @@ describe('RemoteBoundary', () => {
     await settle(() => r.container.querySelector('button')!.click());
     await settle();
     expect(r.container.textContent).toBe('loaded');
+  });
+
+  it('a failed module is replaced when the boundary is given another module (review: boundary reset)', async () => {
+    installRemote(async (m) => {
+      if (m === './Broken') throw new Error('module missing');
+      return () => ({ default: () => <p>{`loaded ${m}`}</p> });
+    });
+    const r = await render(<RemoteBoundary remote="tenders" module="./Broken" />);
+    await settle();
+    expect(r.container.querySelector('[role=alert]')).not.toBeNull();
+    await r.rerender(<RemoteBoundary remote="tenders" module="./EditTender" />);
+    await settle();
+    await settle();
+    expect(r.container.textContent).toBe('loaded ./EditTender');
   });
 
   it('a killed remote says it is unavailable', async () => {

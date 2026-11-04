@@ -232,7 +232,7 @@ export class FakeKeycloak {
       answer = json(400, { error: 'unsupported_grant_type' });
     }
     if (failure === 'network-after-send') throw new TypeError('Failed to fetch'); // the server already rotated
-    if (failure === 'server-error') return json(502, { error: 'bad_gateway' });
+    if (failure === 'server-error') return json(500, { error: 'server_error' }); // after rotating: ambiguous (a 502/503 is retried, never ambiguous)
     if (failure === 'bad-id-token' && answer.ok) {
       const b = (await answer.json()) as Record<string, unknown>;
       return json(200, { ...b, id_token: jwt({ iss: 'https://evil.example', aud: CLIENT, sub: 'user-1', iat: 0, exp: 0 }) });

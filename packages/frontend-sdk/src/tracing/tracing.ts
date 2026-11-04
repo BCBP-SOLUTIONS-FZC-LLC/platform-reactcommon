@@ -16,7 +16,7 @@ import { StackContextManager, TracerProvider, type SpanExporter } from '@opentel
 import { tryGetConfig } from '../config/index.ts';
 import { NotInitializedError, getIdentity, isSensitiveKey, sanitizeString, scrubSecrets } from '../core/index.ts';
 import { getRuntime } from '../internal/runtime.ts';
-import { collectorUrl, isExactOrigin } from '../internal/urls.ts';
+import { collectorUrl, isExactOrigin, stripUrlQueries } from '../internal/urls.ts';
 import { DEFAULT_QUEUE, DropOldestBatchSpanProcessor, EXPORTER_CONCURRENCY, type QueueOptions, type TracingStats } from './processor.ts';
 import { platformSampler } from './sampler.ts';
 import { onUnload } from '../internal/unload.ts';
@@ -136,9 +136,9 @@ export function tracingStats(): Readonly<TracingStats> | undefined {
   return state()?.stats;
 }
 
-/** As a logged string: control characters removed, 256 bytes, JWT and Bearer credentials scrubbed. */
+/** As a logged string: URL queries and fragments removed, control characters removed, 256 bytes, JWT and Bearer credentials scrubbed. */
 function cleanString(s: string): string {
-  return scrubSecrets(sanitizeString(s));
+  return scrubSecrets(sanitizeString(stripUrlQueries(s)));
 }
 
 function safeAttribute(k: string, v: string | number | boolean): string | number | boolean {

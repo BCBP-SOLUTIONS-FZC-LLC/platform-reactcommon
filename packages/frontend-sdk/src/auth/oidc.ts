@@ -6,6 +6,7 @@ import { getLogger } from '../logging/index.ts';
 import { clearAllAppStorage, workspaceNamespace } from '../storage/index.ts';
 import { isOnline, subscribeOnline } from '../internal/online.ts';
 import { isSafeRedirect } from '../internal/redirect.ts';
+import { retryAfterMs } from '../internal/retry-after.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { rotateSessionId } from '../internal/session.ts';
 import type { IdentityProvider, SessionState, SessionUser, Workspace, WorkspaceResolver } from './types.ts';
@@ -44,6 +45,15 @@ const REFRESH_JITTER_MS = 10_000;
 /** How long a page whose refresh a navigation away cancelled waits before restoring, in case it stays. */
 const LEAVING_GRACE_MS = 10_000;
 const TOKEN_TIMEOUT_MS = 15_000;
+/**
+ * Answers that mean the token endpoint did not process the refresh (rate limited, or a gateway in front of
+ * an IdP that is down or restarting), so the refresh token was not used: it is kept and the refresh
+ * retried, from REFRESH_RETRY_MS doubling up to REFRESH_RETRY_MAX_MS (or Retry-After), while the access
+ * token stays valid. A 500 stays ambiguous (Keycloak may have rotated the token before failing).
+ */
+const UNAVAILABLE_STATUSES = new Set([429, 502, 503, 504]);
+const REFRESH_RETRY_MS = 2_000;
+const REFRESH_RETRY_MAX_MS = 30_000;
 const ACTIVITY_WRITE_MS = 5_000;
 const IDLE_CHECK_MS = 15_000;
 const SILENT_ERRORS = new Set(['login_required', 'interaction_required', 'consent_required']);
@@ -268,6 +278,8 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   let stopActivity: (() => void) | undefined;
   let stopOnline: (() => void) | undefined;
   let lastActivityWrite = 0;
+  /** Refreshes retried in a row after an unavailable token endpoint (UNAVAILABLE_STATUSES). */
+  let unavailableRetries = 0;
   const listeners = new Set<(s: SessionState) => void>();
   const redirectListeners = new Set<(r: { reason: Reason }) => void>();
 
@@ -324,6 +336,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
 
   function dropTokens(): void {
     tokens = undefined;
+    unavailableRetries = 0;
     stopTimers();
   }
 
@@ -643,6 +656,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
         restoreLineage();
         return false;
       }
+      unavailableRetries = 0;
       scheduleRefresh();
       setState({ status: 'authenticated', user: user!, workspace: w, expiresAt: tokens.expiresAt });
       return true;
@@ -655,6 +669,18 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       else log().info('session ended', { server_ended: false });
       expire({ serverEnded, idle: false });
       return false;
+    }
+    if (UNAVAILABLE_STATUSES.has(res.status)) {
+      // Every tab of every user would otherwise drop its tokens and redirect to an IdP that is down.
+      const backoff = Math.min(REFRESH_RETRY_MAX_MS, REFRESH_RETRY_MS * 2 ** unavailableRetries) * (0.5 + internals.random() / 2);
+      const wait = Math.max(backoff, retryAfterMs(res, REFRESH_RETRY_MAX_MS) ?? 0);
+      if (internals.now() + wait < t.expiresAt) {
+        unavailableRetries++;
+        log().warn('token endpoint unavailable: retrying the refresh', { status: res.status, retry_in_ms: Math.round(wait), essential: true });
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(() => void refresh(), wait);
+        return false;
+      }
     }
     log().warn('token refresh failed: restoring the session', { status: res.status, error_code: typeof body?.error === 'string' ? body.error : undefined, essential: true });
     restoreLineage();

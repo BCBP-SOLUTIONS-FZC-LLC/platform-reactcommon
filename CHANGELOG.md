@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `/react`: `MFEErrorBoundary` takes `resetKeys`. The boundary clears its error when `mfe` or any reset key changes (say the route's id), as retry does; `RemoteBoundary` does so when `remote` or `module` changes. Before, a boundary that stayed mounted kept showing the previous tender's error after navigating to another.
+
+### Fixed
+
+- `/auth`: a refresh answered 429, 502, 503 or 504 (Keycloak rate limiting, restarting or down behind its gateway) keeps the tokens and retries with backoff (2 s doubling to 30 s, with jitter, or `Retry-After`) while the access token stays valid; it restores the session (`prompt=none`) only when the token would expire first. Before, every tab dropped its tokens and redirected to an IdP that was down, losing unsaved work. A 500 stays ambiguous (Keycloak may have rotated the token) and restores as before. Logged as `token endpoint unavailable: retrying the refresh` (warn, essential).
+- `/logging`: a record's attributes are capped at about 8 KiB (`[TRUNCATED]` past it); a record too big for the unload beacon on its own is skipped instead of cancelling the beacon for every record. Before, `logger.error('…', { ids: bigArray })` as the newest record meant nothing was sent on `pagehide`.
+- `/logging`, `/tracing`: what is left after the hide or `pagehide` beacon goes through the OTLP exporter, which sends with `keepalive` while the browser allows; its estimated size now counts against the page's keepalive budget, so a later beacon is not refused by the browser (known browser bug 1, through the exporter).
+- `/logging`, `/tracing`: withdrawing `telemetry` consent drops the spans and the info, debug and non-essential warning records already queued (counted in `droppedNoConsent`), before any send or beacon. Before, up to 2,048 spans and 1,000 records collected under consent were still sent.
+- `/logging`, `/tracing`: URL query strings and fragments are removed from every logged string (message and attributes) and span attribute, not only from stacks, as LLD §7.2 states (an OIDC callback's `code` and `state`, a pre-signed URL's signature).
+
 ## [1.0.0-alpha.3] - 2026-11-04
 
 ### Fixed

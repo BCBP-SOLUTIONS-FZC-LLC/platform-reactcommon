@@ -69,6 +69,13 @@ interface BoundaryProps {
   children: ReactNode;
   fallback?: ((e: ErrorInfoView) => ReactNode) | undefined;
   onRetry?: (() => void) | undefined;
+  resetKeys?: readonly unknown[] | undefined;
+}
+
+function keysChanged(a: readonly unknown[] | undefined, b: readonly unknown[] | undefined): boolean {
+  if (a === b) return false;
+  if (!a || !b || a.length !== b.length) return true;
+  return a.some((k, i) => !Object.is(k, b[i]));
 }
 
 class Boundary extends Component<BoundaryProps, { error: { e: unknown } | undefined }> {
@@ -94,6 +101,11 @@ class Boundary extends Component<BoundaryProps, { error: { e: unknown } | undefi
     else log.error('remote failed to render', attrs);
   }
 
+  override componentDidUpdate(prev: BoundaryProps): void {
+    // What the boundary shows changed (another tender, another remote): the old error is not this one's.
+    if (this.state.error && (prev.mfe !== this.props.mfe || keysChanged(prev.resetKeys, this.props.resetKeys))) this.setState({ error: undefined });
+  }
+
   private retry = (): void => {
     this.props.onRetry?.();
     this.setState({ error: undefined });
@@ -107,10 +119,13 @@ class Boundary extends Component<BoundaryProps, { error: { e: unknown } | undefi
   }
 }
 
-/** Isolates a remote: its render errors are logged with `mfe` and replaced by `fallback`. Sets the MFE scope. */
-export function MFEErrorBoundary(p: { mfe: string; children: ReactNode; fallback?: (e: ErrorInfoView) => ReactNode }): JSX.Element {
+/**
+ * Isolates a remote: its render errors are logged with `mfe` and replaced by `fallback`. Sets the MFE scope.
+ * The error is cleared when `mfe` or any of `resetKeys` changes (say the route's id), as by retry.
+ */
+export function MFEErrorBoundary(p: { mfe: string; children: ReactNode; fallback?: (e: ErrorInfoView) => ReactNode; resetKeys?: readonly unknown[] }): JSX.Element {
   return (
-    <Boundary mfe={p.mfe} fallback={p.fallback}>
+    <Boundary mfe={p.mfe} fallback={p.fallback} resetKeys={p.resetKeys}>
       {p.children}
     </Boundary>
   );
@@ -119,7 +134,7 @@ export function MFEErrorBoundary(p: { mfe: string; children: ReactNode; fallback
 /**
  * Loads `module` from remote `remote` lazily (loadRemote: kill switch, timeout, retries), suspends with
  * `fallback`, and isolates it in an MFEErrorBoundary. The module's default export (or the module itself)
- * is the component; `props` are passed to it. Retry loads again.
+ * is the component; `props` are passed to it. Retry loads again, as does another `remote` or `module`.
  */
 export function RemoteBoundary(p: { remote: string; module: `./${string}`; fallback?: ReactNode; props?: Record<string, unknown> }): JSX.Element {
   const [attempt, retry] = useReducer((n: number) => n + 1, 0);
@@ -137,7 +152,7 @@ export function RemoteBoundary(p: { remote: string; module: `./${string}`; fallb
     [p.remote, p.module, attempt],
   );
   return (
-    <Boundary mfe={p.remote} onRetry={retry}>
+    <Boundary mfe={p.remote} onRetry={retry} resetKeys={[p.module]}>
       <Suspense fallback={p.fallback ?? null}>
         <Remote {...(p.props ?? {})} />
       </Suspense>

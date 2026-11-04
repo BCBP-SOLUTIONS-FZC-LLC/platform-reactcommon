@@ -2,15 +2,21 @@
 // (drops the oldest when full, at most two sends in flight) and out through the OTLP exporter
 // (fetch keepalive). When the page is hidden or unloading, everything queued is sent with
 // navigator.sendBeacon; what the browser refuses goes back to the queue for fetch.
-import type { Context } from '@opentelemetry/api';
+import { createContextKey, type Context } from '@opentelemetry/api';
 import { JsonLogsSerializer } from '@opentelemetry/otlp-transformer';
 import type { LogRecordExporter, LogRecordProcessor, ReadWriteLogRecord, ReadableLogRecord } from '@opentelemetry/sdk-logs';
-import { Batcher, exportWith, type BatcherStats } from '../internal/batcher.ts';
+import { hasConsent } from '../core/index.ts';
+import { Batcher, exportWith, leftoverKeepaliveBytes, newestThatFit, type BatcherStats } from '../internal/batcher.ts';
 
 export interface LoggingStats extends BatcherStats {
   /** Beacons the browser accepted on page hide. */
   beacons: number;
+  /** Records dropped without telemetry consent: when logged, or queued before it was withdrawn. */
+  droppedNoConsent: number;
 }
+
+/** On a record's emit context: the record needs telemetry consent to leave the page (logging.ts). */
+export const NEEDS_CONSENT = createContextKey('@bcbp-solutions-fzc-llc/frontend-sdk needs telemetry consent');
 
 export interface LogQueueOptions {
   maxQueueSize: number;
@@ -23,6 +29,8 @@ const BEACON_MAX_BYTES = 60 * 1024;
 
 export class DropOldestLogProcessor implements LogRecordProcessor {
   private readonly batcher: Batcher<ReadableLogRecord>;
+  /** Records queued under consent that need it (info, debug, non-essential warnings). */
+  private readonly needsConsent = new WeakSet<ReadableLogRecord>();
 
   constructor(
     private readonly exporter: LogRecordExporter,
@@ -35,10 +43,18 @@ export class DropOldestLogProcessor implements LogRecordProcessor {
       batchSize: opts.batchSize,
       delayMs: opts.flushMs,
       maxInFlight: 2,
+      // Consent withdrawn after they were queued: the records that needed it are not sent either.
+      purge: (records) => {
+        if (records.length === 0 || hasConsent('telemetry')) return records;
+        const kept = records.filter((r) => !this.needsConsent.has(r));
+        stats.droppedNoConsent += records.length - kept.length;
+        return kept;
+      },
     });
   }
 
-  onEmit(record: ReadWriteLogRecord, _context?: Context): void {
+  onEmit(record: ReadWriteLogRecord, context?: Context): void {
+    if (context?.getValue(NEEDS_CONSENT) === true) this.needsConsent.add(record);
     this.batcher.add(record);
   }
 
@@ -67,28 +83,25 @@ export class DropOldestLogProcessor implements LogRecordProcessor {
 
   /**
    * Page unloading (pagehide, through src/internal/unload.ts), first in the page's keepalive budget:
-   * the newest queued records that fit `budget` go in one beacon; the rest, and anything the browser
-   * refuses, go back to the queue for fetch. Returns the bytes the beacon took.
+   * the newest queued records that fit `budget` go in one beacon (a record too big for it on its own is
+   * skipped, never blocking the others); the rest, and anything the browser refuses, go back to the queue
+   * for fetch. Returns the bytes the beacon took, plus what the exporter may still send with keepalive for
+   * the rest (the browser's budget is the same, so the later senders must leave it).
    */
   drainOnUnload(budget: number, deferRest = false): number {
     const queue = this.batcher.takeAll();
     const max = Math.min(budget, BEACON_MAX_BYTES);
-    const size = (n: number) => {
+    const sizeOf = (records: ReadableLogRecord[]) => {
       try {
-        return JsonLogsSerializer.serializeRequest(queue.slice(queue.length - n))?.byteLength ?? Infinity;
+        return JsonLogsSerializer.serializeRequest(records)?.byteLength ?? Infinity;
       } catch {
         return Infinity;
       }
     };
-    let lo = 0;
-    let hi = queue.length;
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2);
-      if (size(mid) <= max) lo = mid;
-      else hi = mid - 1;
-    }
-    const batch = queue.slice(queue.length - lo);
-    const rest = [...queue.slice(0, queue.length - lo), ...this.beacon(batch)];
+    const { batch, bytes, rest: unsent } = newestThatFit(queue, max, sizeOf);
+    const refused = this.beacon(batch);
+    const rest = [...unsent, ...refused];
+    const sent = refused.length === 0 ? bytes : 0;
     if (rest.length > 0) {
       this.batcher.requeue(rest);
       // Hidden: the rest goes a task later, after the metrics interval took its share of the keepalive
@@ -97,7 +110,7 @@ export class DropOldestLogProcessor implements LogRecordProcessor {
       if (deferRest) setTimeout(() => void this.batcher.flush(), 0);
       else void this.batcher.flush();
     }
-    return rest.length === queue.length || lo === 0 ? 0 : size(lo);
+    return sent + leftoverKeepaliveBytes(rest.length, batch.length, bytes, budget - sent);
   }
 
   /**

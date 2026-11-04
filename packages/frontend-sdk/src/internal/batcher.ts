@@ -10,7 +10,7 @@ export function exportWith<T>(exporter: { export(items: T[], cb: (r: { code: num
   return (batch: T[]) => new Promise<boolean>((resolve) => exporter.export(batch, (r) => resolve(r.code === 0)));
 }
 
-export interface BatcherOptions {
+export interface BatcherOptions<T = unknown> {
   /** Items kept while sends are busy; beyond it the oldest are dropped. */
   maxQueueSize: number;
   /** Items per send; a full batch is sent at once (if a send slot is free). */
@@ -19,6 +19,11 @@ export interface BatcherOptions {
   delayMs: number;
   /** Concurrent sends. */
   maxInFlight: number;
+  /**
+   * Run on the queue before every send and by takeAll: returns the items still allowed to leave (say,
+   * consent was withdrawn since they were queued), counting the rest itself.
+   */
+  purge?: (items: T[]) => T[];
 }
 
 export interface BatcherStats {
@@ -36,7 +41,7 @@ export class Batcher<T> {
     /** Sends one batch; resolves true on success. A throw or rejection counts as a failure. */
     private readonly send: (batch: T[]) => Promise<boolean>,
     readonly stats: BatcherStats,
-    private readonly opts: BatcherOptions,
+    private readonly opts: BatcherOptions<T>,
   ) {}
 
   get size(): number {
@@ -56,7 +61,8 @@ export class Batcher<T> {
   /** Removes and returns everything queued (e.g. to send it by beacon on page hide). */
   takeAll(): T[] {
     this.clearTimer();
-    return this.queue.splice(0);
+    const items = this.queue.splice(0);
+    return this.opts.purge ? this.opts.purge(items) : items;
   }
 
   /** Puts items back at the front, e.g. what a beacon could not take. */
@@ -92,6 +98,7 @@ export class Batcher<T> {
 
   /** Starts sends while slots are free: full batches only, or partial ones too when `all`. */
   private pump(all: boolean): void {
+    if (this.opts.purge) this.queue = this.opts.purge(this.queue);
     while (
       this.inFlight.size < this.opts.maxInFlight &&
       this.queue.length > 0 &&
@@ -118,4 +125,50 @@ export class Batcher<T> {
     if (ok) this.stats.exported += batch.length;
     else this.stats.exportFailures++;
   }
+}
+
+/** How many oversized newest items newestThatFit skips before it gives up (each skip costs one probe). */
+const OVERSIZED_SKIP_MAX = 8;
+
+/**
+ * The newest items of `queue` (oldest first) whose serialised body (`sizeOf`, Infinity when it cannot be
+ * serialised) fits `maxBytes`, for the page's keepalive budget. The run grows by doubling, then a binary
+ * search: each probe serialises at most about twice the budget, not the whole queue. A newest item that
+ * alone exceeds `maxBytes` is skipped (up to OVERSIZED_SKIP_MAX), so one oversized record never leaves the
+ * budget unused and the records before it unsent. `rest` is everything not in `batch`, oldest first.
+ */
+export function newestThatFit<T>(queue: readonly T[], maxBytes: number, sizeOf: (items: T[]) => number): { batch: T[]; bytes: number; rest: T[] } {
+  const skipped: T[] = [];
+  for (let end = queue.length; end > 0 && skipped.length <= OVERSIZED_SKIP_MAX; end--) {
+    const fits = (n: number) => sizeOf(queue.slice(end - n, end)) <= maxBytes;
+    let lo = 0;
+    let hi = 1;
+    while (hi <= end && fits(hi)) {
+      lo = hi;
+      hi *= 2;
+    }
+    hi = Math.min(hi - 1, end);
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (fits(mid)) lo = mid;
+      else hi = mid - 1;
+    }
+    if (lo > 0) {
+      const batch = queue.slice(end - lo, end);
+      return { batch, bytes: sizeOf(batch), rest: [...queue.slice(0, end - lo), ...skipped] };
+    }
+    skipped.unshift(queue[end - 1]!); // the newest alone is over the budget
+  }
+  return { batch: [], bytes: 0, rest: [...queue] };
+}
+
+/**
+ * The keepalive bytes the exporter may still take for `count` items sent after a beacon of `batch` items
+ * and `bytes` (it sends with keepalive while its own count allows: the browser's budget is the same).
+ * Estimated from the beacon's average, so nothing more is serialised; at most `budget`.
+ */
+export function leftoverKeepaliveBytes(count: number, batch: number, bytes: number, budget: number): number {
+  if (count === 0 || budget <= 0) return 0;
+  const average = batch > 0 ? bytes / batch : budget;
+  return Math.min(budget, Math.ceil(average * count));
 }

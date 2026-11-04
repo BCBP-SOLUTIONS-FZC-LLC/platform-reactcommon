@@ -35,6 +35,7 @@ export function MFEErrorBoundary(p: {
     mfe: string;
     children: ReactNode;
     fallback?: (e: ErrorInfoView) => ReactNode;
+    resetKeys?: readonly unknown[];
 }): JSX.Element;
 
 // @public

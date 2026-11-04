@@ -16,6 +16,7 @@ import {
 } from '../problem/index.ts';
 import { bindTraceContext, getTracer, injectTraceHeaders, type Span } from '../tracing/index.ts';
 import { isOnline } from '../internal/online.ts';
+import { retryAfterMs } from '../internal/retry-after.ts';
 
 export { FORBIDDEN_REQUEST_HEADERS };
 
@@ -140,16 +141,6 @@ function encodeBody(body: unknown, headers: Headers): BodyInit | undefined {
   }
   if (!headers.has('content-type')) headers.set('content-type', 'application/json');
   return JSON.stringify(body);
-}
-
-/** Retry-After in ms (seconds or an HTTP-date), capped; undefined when absent or unparsable. */
-function retryAfterMs(res: Response): number | undefined {
-  const v = res.headers.get('retry-after');
-  if (!v) return undefined;
-  const seconds = Number(v);
-  const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(v) - Date.now();
-  if (!Number.isFinite(ms)) return undefined;
-  return Math.min(Math.max(ms, 0), RETRY_AFTER_CAP_MS);
 }
 
 /** min(cap, base·2^n) with full jitter. */
@@ -385,7 +376,7 @@ async function execute<T>(call: Call): Promise<ApiResponse<T>> {
       }
 
       if (RETRY_STATUSES.has(res.status) && retryable && n < retries) {
-        const wait = retryAfterMs(res) ?? backoffMs(n);
+        const wait = retryAfterMs(res, RETRY_AFTER_CAP_MS) ?? backoffMs(n);
         await res.body?.cancel().catch(() => {});
         await sleep(wait, call.o.signal);
         continue;

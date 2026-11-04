@@ -19,7 +19,7 @@ The flows a change most often touches, in order. Authoritative detail: [LLD §8]
 ## Refresh and Restore
 
 - Timer at `expiresAt − min(60 s, lifetime/3) ± jitter`, `getAccessToken()` near expiry, or `/http`'s 401 path. Single-flight per tab; a replaced refresh token is never resent.
-- `invalid_grant` → `expired`. Anything ambiguous (may have reached Keycloak) → drop the lineage, wait for `online`, `prompt=none` restore. Cancelled by a navigation away → wait 10 s first (an unloading page never gets there).
+- `invalid_grant` → `expired`. 429, 502, 503, 504 (the token endpoint did not process it) → keep the tokens, retry with backoff (2 s doubling to 30 s, or `Retry-After`) while the access token is valid. Anything ambiguous (may have reached Keycloak, a 500) → drop the lineage, wait for `online`, `prompt=none` restore. Cancelled by a navigation away → wait 10 s first (an unloading page never gets there).
 - Each tab keeps its own lineage in one Keycloak session; nothing about tokens crosses tabs.
 
 ## Sign-out (global by default)

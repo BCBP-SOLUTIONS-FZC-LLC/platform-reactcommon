@@ -25,3 +25,12 @@ export function collectorUrl(otlpBaseUrl: string, signal: 'traces' | 'logs' | 'm
   const base = globalThis.location?.href ?? 'http://localhost/';
   return new URL(`${otlpBaseUrl.replace(/\/$/, '')}/v1/${signal}`, base).href;
 }
+
+// An absolute URL in free text, then its query string and/or fragment (an OIDC callback's code and state,
+// a pre-signed URL's signature): up to whitespace, a quote, '<', '>' or ')'.
+const URL_QUERY = /\b((?:https?|wss?|blob|file):\/\/[^\s?#"'<>)]*)[?#][^\s"'<>)]*/gi;
+
+/** Removes the query string and fragment of every absolute URL in `s` (logged text and span attributes). */
+export function stripUrlQueries(s: string): string {
+  return s.replace(URL_QUERY, '$1');
+}

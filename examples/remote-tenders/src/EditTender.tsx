@@ -46,5 +46,5 @@ function EditTenderForm({ id }: { id: string }) {
 }
 
 export default function EditTender(props: { id: string }) {
-  return <MFEErrorBoundary mfe="tenders"><EditTenderForm {...props} /></MFEErrorBoundary>;
+  return <MFEErrorBoundary mfe="tenders" resetKeys={[props.id]}><EditTenderForm {...props} /></MFEErrorBoundary>;
 }
