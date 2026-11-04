@@ -18,6 +18,7 @@ Commands, CI, releases and the Docker suites. The README's *Local development*, 
 | `pnpm run test-smoke` | The served example builds (or `SMOKE_BASE_URL`) |
 | `pnpm run test-browser` (`test-browser-install` once) | Playwright × Chromium, Firefox, WebKit under the production CSP; builds the example remote with webpack and with Rspack for the SRI suite (~30 s) |
 | `pnpm run test-react-floor` | Typecheck, unit suite, build, examples on React 19.0.0 |
+| `pnpm run test-eslint-9` | The eslint-plugin's tests on ESLint 9 (its peer range's lower major); lockfile restored |
 | `pnpm run test-collector` | `examples/collector` in the Collector image (the version `docker-compose.yml` pins): 2 gateways + 2 aggregators |
 | `pnpm run stack-up` · `test-stack` · `stack-down [--purge]` | The integrated stack; `stack-up` builds the IAM images with `GO_PRIVATE_TOKEN` or `gh auth token` (a BuildKit secret, never written); ~16 min of tests |
 | `pnpm contracts:sync [--update-pins]` / `contracts:check` | Generated contracts from the pinned commits |
@@ -29,7 +30,7 @@ Commands, CI, releases and the Docker suites. The README's *Local development*, 
 
 | Workflow | Runs | Jobs |
 |---|---|---|
-| `ci.yml` | every PR (any base), pushes to `main` (not Markdown-only) | `validate-test`, `validate-quality`, `validate-contracts`, `package`; then `trivy`, `smoke` (after `validate-test` + `package`) and `interop`, `browser`, `react-floor`, `collector` (after `validate-test`) → `pr-summary` |
+| `ci.yml` | every PR (any base), pushes to `main` (not Markdown-only) | `validate-test`, `validate-quality`, `validate-contracts`, `package`; then `trivy`, `smoke` (after `validate-test` + `package`) and `interop`, `browser`, `react-floor`, `eslint-9`, `collector` (after `validate-test`) → `pr-summary` |
 | `changelog-check.yml` | PRs touching `packages/*/src`, `packages/*/package.json`, contracts, `subpaths.json` | changeset + CHANGELOG required; a release PR (changesets deleted, or moved into `.changeset/pre/`) needs only the CHANGELOG |
 | `release.yml` | `v*` tag (or dispatch from `main`) | `verify` → `ci.yml`'s gates at the tag except `browser` and `collector` → `npm-publish` → `publish` |
 | `stack-nightly.yml` | 01:30 UTC; dispatch with `upstream: pinned \| main` | checks out 7 backend repos, `stack-up`, `test-stack`; artifacts on failure; a failing scheduled run opens/updates the "Nightly stack run failing" issue |

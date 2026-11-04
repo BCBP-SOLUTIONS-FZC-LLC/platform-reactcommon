@@ -13,7 +13,8 @@
 # Parallel flow:
 #
 #   validate-test ──────┬──► interop, browser (Playwright: Chromium, Firefox, WebKit), react-floor (React 19.0.0),
-#                       │    collector (the reference Collector config in the Collector image)
+#                       │    eslint-9 (the eslint-plugin's tests on ESLint 9), collector (the reference Collector
+#                       │    config in the Collector image)
 #   package ────────────┼──► trivy ──────┐
 #                       └──► smoke ──────┤──► pr-summary (PR events only)
 #   validate-quality ────────────────────┤
@@ -279,6 +280,27 @@ jobs:
       - name: React 19.0.0
         run: pnpm run test-react-floor
 
+  # ── ESLint 9: the eslint-plugin's peer range is ^9.0.0 || ^10.0.0 ─────────
+  # Everything else runs the lockfile's ESLint 10; this forces ESLint 9 and runs the plugin's tests
+  # (RuleTester for every rule, configs.recommended through Linter).
+  eslint-9:
+    name: ESLint 9 (eslint-plugin)
+    runs-on: ubuntu-latest
+    needs: validate-test
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: eslint-plugin tests on ESLint 9
+        run: pnpm run test-eslint-9
+
   # ── cross-language compatibility (platform-interop-tests) ─────────────────
   interop:
     name: Cross-language compatibility
@@ -296,7 +318,7 @@ jobs:
   pr-summary:
     name: PR summary
     runs-on: ubuntu-latest
-    needs: [validate-test, validate-quality, validate-contracts, package, trivy, smoke, browser, react-floor, collector, interop]
+    needs: [validate-test, validate-quality, validate-contracts, package, trivy, smoke, browser, react-floor, eslint-9, collector, interop]
     # always(): post the result on failure too, so an earlier "ready to merge" comment is
     # replaced instead of left standing after a failing push.
     if: always() && github.event_name == 'pull_request'

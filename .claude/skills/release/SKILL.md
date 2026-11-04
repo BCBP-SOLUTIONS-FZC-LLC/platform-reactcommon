@@ -62,7 +62,7 @@ git push origin v$ARGUMENTS      # "Bypassed rule violations … creations being
 
 ## 6. Watch `release.yml`
 
-`gh run list --workflow release.yml --limit 1`, then follow the run to the end. Expected: `verify` → the gates (test, quality, contracts, package, Trivy, smoke, interop, react-floor) → `npm publish (GitHub Packages)` → `GitHub Release`. In the npm-publish log:
+`gh run list --workflow release.yml --limit 1`, then follow the run to the end. Expected: `verify` → the gates (test, quality, contracts, package, Trivy, smoke, interop, react-floor, eslint-9) → `npm publish (GitHub Packages)` → `GitHub Release`. In the npm-publish log:
 
 - `✔ environment 'npm' accepts only release tags, and ruleset 'release tags' … restricts who may create, move or delete them` (a warning that the token cannot see the bypass list is expected);
 - `✔ @bcbp-solutions-fzc-llc/<pkg>@$ARGUMENTS published under dist-tag <tag>; registry integrity matches` for all three.

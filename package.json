@@ -44,6 +44,7 @@
     "test-smoke": "vitest run --config vitest.smoke.config.ts",
     "test-browser": "playwright test",
     "test-react-floor": "bash .github/scripts/react-floor.sh",
+    "test-eslint-9": "bash .github/scripts/eslint-9.sh",
     "test-browser-install": "playwright install chromium firefox webkit",
     "stack-up": "bash test/stack/scripts/stack-up.sh",
     "stack-down": "bash test/stack/scripts/stack-down.sh",

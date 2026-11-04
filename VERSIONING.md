@@ -50,6 +50,8 @@ The shell provides the SDK to every remote as a **strict singleton** shared unde
   3. A MAJOR release narrows the range to the new major and drops the old one.
 - **History.** Until `1.0.0-alpha.1` the range was `^18.3.0 || ^19.0.0`, but nothing ran on React 18, and the reference shell and remote already needed 19 (form actions). It was narrowed during the alpha, when narrowing costs nothing: no frontend is deployed, and the only one in development is on 19.
 
+**ESLint:** `@bcbp-solutions-fzc-llc/eslint-plugin`'s peer range is `^9.0.0 || ^10.0.0`. CI runs ESLint 10 (the lockfile's), and the `eslint-9` job reruns the plugin's tests on ESLint 9 (`pnpm run test-eslint-9`).
+
 ### Guarantees
 
 - **Pre-release `1.0.0-alpha.N` (current).** The repository is in changesets pre mode (`alpha`), so every release is `1.0.0-alpha.N`, whatever the bump:

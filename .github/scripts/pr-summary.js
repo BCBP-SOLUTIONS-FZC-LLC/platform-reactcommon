@@ -23,6 +23,7 @@ const rows = [
   ['Smoke tests (packed tarballs)', 'smoke'],
   ['Browser tests (Chromium · Firefox · WebKit)', 'browser'],
   ['React floor (19.0.0): types · unit tests · build', 'react-floor'],
+  ['ESLint 9: eslint-plugin tests', 'eslint-9'],
   ['Collector config: delta → cumulative · allowlists', 'collector'],
   ['Cross-language compatibility', 'interop'],
 ];
