@@ -101,9 +101,13 @@ class Boundary extends Component<BoundaryProps, { error: { e: unknown } | undefi
     else log.error('remote failed to render', attrs);
   }
 
-  override componentDidUpdate(prev: BoundaryProps): void {
+  override componentDidUpdate(prev: BoundaryProps, prevState: { error: { e: unknown } | undefined }): void {
     // What the boundary shows changed (another tender, another remote): the old error is not this one's.
-    if (this.state.error && (prev.mfe !== this.props.mfe || keysChanged(prev.resetKeys, this.props.resetKeys))) this.setState({ error: undefined });
+    // Only an error from before this update: one caught in it is the new content's own (a reset would
+    // render it again and catch and log it twice).
+    if (prevState.error && this.state.error === prevState.error && (prev.mfe !== this.props.mfe || keysChanged(prev.resetKeys, this.props.resetKeys))) {
+      this.setState({ error: undefined });
+    }
   }
 
   private retry = (): void => {

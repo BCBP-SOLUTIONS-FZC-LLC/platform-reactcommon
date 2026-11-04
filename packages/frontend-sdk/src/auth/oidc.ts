@@ -56,6 +56,8 @@ function refusedUnprocessed(res: Response): boolean {
   return res.status === 429 || (res.status === 503 && res.headers.has('retry-after'));
 }
 const REFRESH_RETRY_MS = 2_000;
+/** getAccessToken refreshes a token this close to expiry rather than hand it out. */
+const ACCESS_TOKEN_LEAD_MS = 5_000;
 const REFRESH_RETRY_MAX_MS = 30_000;
 const ACTIVITY_WRITE_MS = 5_000;
 const IDLE_CHECK_MS = 15_000;
@@ -283,8 +285,6 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   let lastActivityWrite = 0;
   /** Refreshes retried in a row after the token endpoint refused one (refusedUnprocessed). */
   let unavailableRetries = 0;
-  /** No refresh request before this time (the retry's backoff or Retry-After): getAccessToken and a 401 wait too. */
-  let retryNotBefore = 0;
   const listeners = new Set<(s: SessionState) => void>();
   const redirectListeners = new Set<(r: { reason: Reason }) => void>();
 
@@ -342,7 +342,6 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   function dropTokens(): void {
     tokens = undefined;
     unavailableRetries = 0;
-    retryNotBefore = 0;
     stopTimers();
   }
 
@@ -620,7 +619,6 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       expire({ serverEnded: false, idle: false });
       return false;
     }
-    if (internals.now() < retryNotBefore) return false; // backing off: the scheduled retry sends it
     if (!isOnline()) {
       // Failed before sending: the token was never used, so keep it and try again once online.
       stopOnline?.();
@@ -664,7 +662,6 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
         return false;
       }
       unavailableRetries = 0;
-      retryNotBefore = 0;
       scheduleRefresh();
       setState({ status: 'authenticated', user: user!, workspace: w, expiresAt: tokens.expiresAt });
       return true;
@@ -682,13 +679,15 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       // Every tab of every user would otherwise drop its tokens and redirect to an IdP that is down.
       const backoff = Math.min(REFRESH_RETRY_MAX_MS, REFRESH_RETRY_MS * 2 ** unavailableRetries) * (0.5 + internals.random() / 2);
       const wait = Math.max(backoff, retryAfterMs(res, REFRESH_RETRY_MAX_MS) ?? 0);
-      if (internals.now() + wait < t.expiresAt) {
+      // The retry must answer before getAccessToken stops handing the token out.
+      if (internals.now() + wait < t.expiresAt - ACCESS_TOKEN_LEAD_MS) {
         unavailableRetries++;
-        retryNotBefore = internals.now() + wait;
         log().warn('token endpoint unavailable: retrying the refresh', { status: res.status, retry_in_ms: Math.round(wait), essential: true });
-        clearTimeout(refreshTimer);
-        refreshTimer = setTimeout(() => void refresh(), wait);
-        return false;
+        // Waited inside this refresh, so getAccessToken and a 401 meanwhile join it (single-flight) and get
+        // the retry's answer, instead of sending more requests or failing at once.
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        if (tokens !== t) return false; // logged out or switched meanwhile
+        return doRefresh();
       }
     }
     log().warn('token refresh failed: restoring the session', { status: res.status, error_code: typeof body?.error === 'string' ? body.error : undefined, essential: true });
@@ -828,7 +827,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     async getAccessToken() {
       if (!tokens || restoring) return undefined;
       // Expired (or about to): join the tab's single refresh rather than send a dead token.
-      if (internals.now() >= tokens.expiresAt - 5_000) await refresh();
+      if (internals.now() >= tokens.expiresAt - ACCESS_TOKEN_LEAD_MS) await refresh();
       return restoring ? undefined : tokens?.access;
     },
 

@@ -35,6 +35,7 @@ import {
   type ShellContextValue,
 } from '../../../packages/frontend-sdk/src/react/index.ts';
 import { createTestPlatform, mockApi, mockProblem } from '../../../packages/frontend-sdk/src/testing/index.ts';
+import { reloadOnceForChunkError } from '../../../packages/frontend-sdk/src/mfe/index.ts';
 import { cleanup, render, settle } from '../../fixtures/render.tsx';
 
 let platform: ReturnType<typeof createTestPlatform>;
@@ -541,6 +542,33 @@ describe('MFEErrorBoundary', () => {
     expect(r.container.textContent).toBe('tender 2');
   });
 
+  it('a reset key change whose new content throws is caught and logged once, not reset into a second catch (review 2)', async () => {
+    let renders = 0;
+    function Tender({ id }: { id: string }) {
+      if (id === '9') {
+        renders++;
+        throw new Error('tender 9 is broken');
+      }
+      return <p>{`tender ${id}`}</p>;
+    }
+    const view = (id: string) => (
+      <MFEErrorBoundary mfe="tenders" resetKeys={[id]}>
+        <Tender id={id} />
+      </MFEErrorBoundary>
+    );
+    const r = await render(view('1'));
+    await settle();
+    await r.rerender(view('9'));
+    await settle();
+    expect(r.container.querySelector('[role=alert]')).not.toBeNull();
+    expect(platform.logs.filter((l) => l.body === 'remote failed to render')).toHaveLength(1);
+    const once = renders;
+    await r.rerender(view('8'));
+    await settle();
+    expect(r.container.textContent).toBe('tender 8');
+    expect(renders).toBe(once);
+  });
+
   it('keeps the error while the reset keys stay the same, and clears it for another mfe', async () => {
     let fail = true;
     function Child() {
@@ -806,6 +834,26 @@ describe('hooks: edge cases', () => {
     expect(r.container.textContent).toBe('second');
   });
 
+  it('useApi never shows the previous deps\' data or error for new deps, not even for one render (review 2)', async () => {
+    const seen: string[] = [];
+    const pending: Record<string, (v: string) => void> = {};
+    function View({ id }: { id: string }) {
+      const r = useApi(() => new Promise<string>((resolve) => (pending[id] = resolve)), [id]);
+      seen.push(`${id}:${r.loading}:${r.data ?? '-'}`);
+      return <p>{r.loading ? 'loading' : r.data}</p>;
+    }
+    const r = await render(<View id="42" />);
+    await settle(() => pending['42']!('tender 42'));
+    expect(r.container.textContent).toBe('tender 42');
+    seen.length = 0;
+    await r.rerender(<View id="43" />);
+    await settle();
+    expect(seen.filter((x) => x.startsWith('43:')).every((x) => x === '43:true:-')).toBe(true);
+    expect(r.container.textContent).toBe('loading');
+    await settle(() => pending['43']!('tender 43'));
+    expect(r.container.textContent).toBe('tender 43');
+  });
+
   it('useApi keeps the previous data while reloading', async () => {
     let n = 0;
     let resolveNext: ((v: number) => void) | undefined;
@@ -835,6 +883,28 @@ describe('hooks: edge cases', () => {
     await render(<View />);
     update!.reload();
     expect(reloadPage).toHaveBeenCalledOnce();
+  });
+
+  it('useBeforeAuthRedirect saves before an SDK reload too: app update and chunk error (review 2)', async () => {
+    const order: string[] = [];
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload: () => order.push('reload') } as Location);
+    let update: ReturnType<typeof useAppUpdate> | undefined;
+    function Editor() {
+      useBeforeAuthRedirect(() => order.push('save'));
+      update = useAppUpdate();
+      return null;
+    }
+    const r = await render(<Editor />);
+    update!.reload();
+    expect(order).toEqual(['save', 'reload']);
+    order.length = 0;
+    sessionStorage.clear(); // the once-per-version guard an earlier test set
+    expect(reloadOnceForChunkError(Object.assign(new Error('Loading chunk 7 failed'), { name: 'ChunkLoadError' }))).toBe(true);
+    expect(order).toEqual(['save', 'reload']);
+    order.length = 0;
+    await r.unmount();
+    update!.reload();
+    expect(order).toEqual(['reload']); // unsubscribed on unmount
   });
 });
 

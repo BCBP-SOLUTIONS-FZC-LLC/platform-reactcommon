@@ -20,7 +20,13 @@ const trustedTypesFactory = (): TrustedTypePolicyFactory | undefined =>
 // strict CSP would block anyway (inline styles), so a sanitised fragment cannot trigger reports.
 const FORBID_TAGS = ['style', 'form', 'input', 'button', 'textarea', 'select', 'option', 'iframe', 'frame', 'object', 'embed', 'svg', 'math', 'template', 'base', 'link', 'meta'];
 const FORBID_ATTR = ['style', 'srcset', 'action', 'formaction', 'target'];
-const SAFE_LINK = /^(?:https?:|mailto:|\/(?!\/))/i;
+const SAFE_LINK = /^(?:https?:|mailto:|\/(?![/\\]))/i;
+// Browsers drop tabs and newlines from a URL and read '\' as '/': '/\evil.example' or '/\t/evil.example' is
+// another origin. A link or image URL with any of them is removed (internal/redirect.ts refuses the same).
+const UNSAFE_URL = /[\p{Cc}\s\\\u2028\u2029]/u;
+// Images only from the page's own paths or inline data, as CSP img-src 'self' data: allows: any other
+// source would be blocked and reported as a violation for every hostile image.
+const SAFE_IMAGE = /^(?:\/(?![/\\])|data:image\/(?:png|gif|jpe?g|webp|avif);)/i;
 
 let purifier: DOMPurify | undefined;
 
@@ -29,8 +35,16 @@ function getPurifier(): DOMPurify | undefined {
   if (typeof globalThis.window === 'undefined') return undefined;
   const p = createDOMPurify(globalThis.window);
   if (!p.isSupported) return undefined;
-  // Links that stay: no opener, no referrer.
   p.addHook('afterSanitizeAttributes', (node) => {
+    for (const attr of ['href', 'src']) {
+      const v = node.getAttribute(attr);
+      if (v !== null && UNSAFE_URL.test(v)) node.removeAttribute(attr);
+    }
+    if (node.tagName === 'IMG') {
+      const src = node.getAttribute('src');
+      if (src !== null && !SAFE_IMAGE.test(src)) node.removeAttribute('src');
+    }
+    // Links that stay: no opener, no referrer.
     if (node.tagName === 'A' && node.hasAttribute('href')) node.setAttribute('rel', 'noopener noreferrer');
   });
   purifier = p;

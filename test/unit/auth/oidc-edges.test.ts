@@ -294,21 +294,23 @@ describe('refresh edge cases', () => {
       const calls = tokenCalls();
       kc.fetch.mockImplementationOnce(async () => refusal());
       kc.fetch.mockImplementationOnce(async () => refusal());
-      expect(await idp.refresh()).toBe(false);
+      const first = idp.refresh();
+      await flush(() => tokenCalls() === calls + 1);
       expect(await idp.getAccessToken()).toBe(before); // still usable while the IdP refuses
       expect(warns).toHaveBeenCalledWith(expect.stringContaining('token endpoint unavailable'), expect.objectContaining({ retry_in_ms: 1500 }));
-      expect(await idp.refresh()).toBe(false); // a 401 or getAccessToken meanwhile waits for the backoff too
-      expect(tokenCalls()).toBe(calls + 1);
+      // A 401 meanwhile joins the refresh in flight (single-flight): no extra request, the retry's answer.
+      const joined = idp.refresh();
       await vi.advanceTimersByTimeAsync(1499);
       expect(tokenCalls()).toBe(calls + 1);
       await vi.advanceTimersByTimeAsync(1); // 2 s × (0.5 + random/2)
       await flush(() => tokenCalls() === calls + 2);
       expect(warns).toHaveBeenLastCalledWith(expect.stringContaining('token endpoint unavailable'), expect.objectContaining({ retry_in_ms: 3000 })); // doubled
       await vi.advanceTimersByTimeAsync(3000);
-      await flush(() => refreshes().length === 1);
-      await flush(() => idp.getState().status === 'authenticated');
+      expect(await first).toBe(true); // the third attempt rotated the tokens
+      expect(await joined).toBe(true);
       expect(tokenCalls()).toBe(calls + 3);
-      expect(await idp.getAccessToken()).not.toBe(before); // the third attempt rotated the tokens
+      expect(refreshes()).toHaveLength(1);
+      expect(await idp.getAccessToken()).not.toBe(before);
       expect(page.assigned).toEqual([]);
       expect(kc.reuseDetected).toBe(0);
     });
@@ -318,21 +320,35 @@ describe('refresh edge cases', () => {
       const { idp } = await signIn(page);
       const calls = tokenCalls();
       kc.fetch.mockImplementationOnce(async () => new Response('', { status: 503, headers: { 'retry-after': '20' } }));
-      await idp.refresh();
+      const result = idp.refresh();
+      await flush(() => tokenCalls() === calls + 1);
       expect(warns).toHaveBeenCalledWith(expect.stringContaining('token endpoint unavailable'), expect.objectContaining({ retry_in_ms: 20_000 }));
       await vi.advanceTimersByTimeAsync(19_999);
       expect(tokenCalls()).toBe(calls + 1);
       await vi.advanceTimersByTimeAsync(1);
-      await flush(() => refreshes().length === 1);
+      expect(await result).toBe(true);
       expect(tokenCalls()).toBe(calls + 2);
       expect(page.assigned).toEqual([]);
     });
 
-    it('restores the session when the access token would expire before the next attempt', async () => {
+    it('a logout during the backoff ends the retry without another request', async () => {
+      const page = new FakePage('/');
+      const { idp } = await signIn(page);
+      const calls = tokenCalls();
+      kc.fetch.mockImplementationOnce(async () => new Response('', { status: 429 }));
+      const result = idp.refresh();
+      await flush(() => tokenCalls() === calls + 1);
+      await idp.logout({ global: false });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(await result).toBe(false);
+      expect(tokenCalls()).toBe(calls + 1);
+    });
+
+    it('restores the session when the retry could not answer 5 s before the token expires', async () => {
       const page = new FakePage('/');
       const { idp, state } = await signIn(page);
       const expiresAt = (state as { expiresAt: number }).expiresAt;
-      vi.setSystemTime(expiresAt - 1000);
+      vi.setSystemTime(expiresAt - 6_000); // a 1.5 s backoff would land inside getAccessToken's 5 s lead
       kc.fetch.mockImplementationOnce(async () => new Response('', { status: 429 }));
       expect(await idp.refresh()).toBe(false);
       await flush(() => page.assigned.length > 0);

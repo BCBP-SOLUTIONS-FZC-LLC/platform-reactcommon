@@ -15,6 +15,7 @@ import { runtimeLocale, directionOf } from '../internal/locale.ts';
 import { isOnline, subscribeOnline } from '../internal/online.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { MfeContext, ShellContext, type ShellContextValue } from './context.ts';
+import { onBeforeReload, reloadPage } from '../internal/reload.ts';
 
 function identityProvider(): IdentityProvider | undefined {
   return getRuntime().identityProvider as IdentityProvider | undefined;
@@ -70,13 +71,21 @@ export function useSessionContext(): SessionContext | undefined {
 }
 
 /**
- * Runs `save` synchronously before any SDK-started top-level redirect (step-up, lineage restore, login,
- * switch), e.g. to keep a draft in storage(appId, { area: 'session' }). Unsubscribed on unmount.
+ * Runs `save` synchronously before any SDK-started top-level navigation: an auth redirect (step-up, lineage
+ * restore, login, switch) or a reload (a chunk-load error after a deploy, useAppUpdate().reload), e.g. to
+ * keep a draft in storage(appId, { area: 'session' }). Unsubscribed on unmount.
  */
 export function useBeforeAuthRedirect(save: () => void): void {
   const latest = useRef(save);
   latest.current = save;
-  useEffect(() => identityProvider()?.beforeRedirect(() => latest.current()) ?? undefined, []);
+  useEffect(() => {
+    const stopRedirect = identityProvider()?.beforeRedirect(() => latest.current());
+    const stopReload = onBeforeReload(() => latest.current());
+    return () => {
+      stopRedirect?.();
+      stopReload();
+    };
+  }, []);
 }
 
 /** SessionContext.readOnly, or a DENY_TENANT_READ_ONLY answer seen on this page. */
@@ -167,7 +176,8 @@ function isApiError(e: unknown): e is ApiError {
 
 /**
  * Runs `fn` on mount and whenever `deps` change, aborting the previous run (and on unmount). An
- * ApiError is returned as `error`; anything else is thrown to the nearest error boundary.
+ * ApiError is returned as `error`; anything else is thrown to the nearest error boundary. `reload()`
+ * keeps the current data while it loads; new `deps` never show the previous deps' data or error.
  */
 export function useApi<T>(
   fn: (api: ApiClient, signal: AbortSignal) => Promise<T>,
@@ -175,31 +185,36 @@ export function useApi<T>(
 ): { data?: T; error?: ApiError; loading: boolean; reload(): void } {
   const api = useApiClient();
   const [attempt, reload] = useReducer((n: number) => n + 1, 0);
-  const [state, setState] = useState<{ data?: T; error?: ApiError; thrown?: { e: unknown }; loading: boolean }>({ loading: true });
+  // A new object whenever the caller's deps (or the client) change: the state below belongs to one of them.
+  const generation = useMemo(() => ({}), [api, ...deps]);
+  const [state, setState] = useState<{ for?: object; data?: T; error?: ApiError; thrown?: { e: unknown }; loading: boolean }>({ loading: true });
   const latest = useRef(fn);
   latest.current = fn;
 
   useEffect(() => {
     const ctrl = new AbortController();
-    setState((s) => ({ ...(s.data !== undefined ? { data: s.data } : {}), loading: true }));
+    // Same deps (a reload): keep the data while loading. Other deps: start empty.
+    const kept = (s: typeof state) => (s.for === generation && s.data !== undefined ? { data: s.data } : {});
+    setState((s) => ({ for: generation, ...kept(s), loading: true }));
     latest.current(api, ctrl.signal).then(
       (data) => {
-        if (!ctrl.signal.aborted) setState({ data, loading: false });
+        if (!ctrl.signal.aborted) setState({ for: generation, data, loading: false });
       },
       (e: unknown) => {
         // Only this run's own abort is silent. An AbortedError from elsewhere ends the load like any error.
         if (ctrl.signal.aborted) return;
         if (e instanceof AbortedError) {
-          setState((s) => ({ ...(s.data !== undefined ? { data: s.data } : {}), loading: false }));
+          setState((s) => ({ for: generation, ...kept(s), loading: false }));
           return;
         }
-        setState(isApiError(e) ? { error: e, loading: false } : { thrown: { e }, loading: false });
+        setState(isApiError(e) ? { for: generation, error: e, loading: false } : { for: generation, thrown: { e }, loading: false });
       },
     );
     return () => ctrl.abort();
-    // deps are the caller's, as with useEffect
-  }, [api, attempt, ...deps]);
+  }, [generation, attempt]); // the caller's deps and the client are in generation
 
+  // Rendered with new deps before their effect ran: what is shown is still the old deps' result.
+  if (state.for !== generation) return { loading: true, reload };
   if (state.thrown) throw state.thrown.e;
   return {
     ...(state.data !== undefined ? { data: state.data } : {}),
@@ -224,7 +239,7 @@ export function useOnlineStatus(): boolean {
 export function useAppUpdate(): { available: boolean; reload(): void } {
   const [available, setAvailable] = useState(false);
   useEffect(() => subscribeAppUpdate(() => setAvailable(true)), []);
-  const reload = useCallback(() => globalThis.location?.reload(), []);
+  const reload = useCallback(() => reloadPage(), []); // useBeforeAuthRedirect's listeners run first
   return { available, reload };
 }
 

@@ -138,7 +138,7 @@ export function tracingStats(): Readonly<TracingStats> | undefined {
 
 /** As a logged string: URL queries and fragments removed, control characters removed, 256 bytes, JWT and Bearer credentials scrubbed. */
 function cleanString(s: string): string {
-  return scrubSecrets(sanitizeString(stripUrlQueries(s)));
+  return scrubSecrets(stripUrlQueries(sanitizeString(s))); // cut to 256 bytes first: the strip is then cheap
 }
 
 function safeAttribute(k: string, v: string | number | boolean): string | number | boolean {

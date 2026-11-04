@@ -2,6 +2,7 @@
 // once per version, and /version.json polling tells the shell an update is available.
 import { getIdentity } from '../core/index.ts';
 import { tryGetConfig } from '../config/index.ts';
+import { reloadPage } from '../internal/reload.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { getLogger } from '../logging/index.ts';
 import { RemoteLoadError } from './remote.ts';
@@ -64,7 +65,7 @@ export function reloadOnceForChunkError(e: unknown): boolean {
   // Essential: a deploy that removed the running build's chunks must be visible without telemetry
   // consent. The reload's pagehide sends it by beacon.
   getLogger().warn('chunk load failed: reloading', { error: e, version, essential: true });
-  globalThis.location?.reload();
+  reloadPage(); // useBeforeAuthRedirect's listeners keep their drafts first
   return true;
 }
 

@@ -249,6 +249,29 @@ describe('redaction (sanitizeFields, then strings, then JWT/Bearer, then the mes
     expect(attrs.after).toBe('[TRUNCATED]');
   });
 
+  it('strips queries after scheme-less hosts and relative paths, keeps prose, and stays linear (review 2)', () => {
+    expect(cleanString('bucket.s3.amazonaws.com/k.pdf?X-Amz-Signature=abc')).toBe('bucket.s3.amazonaws.com/k.pdf');
+    expect(cleanString('GET api/tenders?token=x failed')).toBe('GET api/tenders failed');
+    expect(cleanString('Did you mean /help? Try')).toBe('Did you mean /help? Try');
+    const started = performance.now();
+    cleanString('/'.repeat(1_000_000));
+    cleanString(`data:image/png;base64,${'ab+/'.repeat(250_000)}`);
+    expect(performance.now() - started).toBeLessThan(200); // was ~1.5 s for 40 000 slashes
+  });
+
+  it('counts errors and keys against the attribute cap, and stops at it (review 2)', async () => {
+    start();
+    const stack = `Error: x\n${'    at f (https://a.example/b.js:1:1)\n'.repeat(120)}`;
+    getLogger().error('many', {
+      errs: Array.from({ length: 200 }, () => Object.assign(new Error('x'), { stack })),
+      ...Object.fromEntries(Array.from({ length: 20_000 }, (_, i) => [`k${i}`, 'v'])),
+      ['x'.repeat(100_000)]: 'long key',
+    });
+    const [r] = await sent();
+    expect(JSON.stringify(attrsOf(r!)).length).toBeLessThan(ATTRIBUTES_MAX_BYTES + 6_000); // was 853 KB / 433 KB
+    expect(Object.values(attrsOf(r!)).filter((v) => v === '[TRUNCATED]')).toHaveLength(1);
+  });
+
   it('catches a JWT cut short by the 256-byte limit', () => {
     const long = `${'x'.repeat(200)} ${JWT}`;
     expect(cleanString(long)).not.toContain('eyJ');
