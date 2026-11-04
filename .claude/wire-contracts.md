@@ -53,7 +53,7 @@ Every API error is an RFC 9457 problem decoded as gincommon's client does (`cont
 - Log envelope: `trace_id`, `span_id`, `request_id`, `session_id`, `mfe`, `page_route`; redaction as gincommon (sensitive keys, JWT/Bearer, URL query). Event catalogue: LLD §11.1.
 - Metrics: **delta** temporality; const labels `domain`, `service`, `environment`; names `<domain>_*` (Tier 2, registry), `<domain>_<service>_*` (Tier 3), `platform_web_*` (Tier 1, proposed, not emitted yet). Registry: `contracts/metric-registry.json`; Tier 1 proposal: `monitoring/registry/platform-web.proposal.json`.
 - On hide/close: `sendBeacon` / fetch `keepalive` within one 60 KiB page budget (LLD §7.5).
-- The reference Collector (`examples/collector`) accepts only `platform_web_*` or a registered `<domain>_*` name matching the `domain` label with a `_total`/`_seconds`/`_bytes` suffix, and label values from the registry and the proposal; `examples/collector/test` keeps those lists equal to the registry.
+- The reference Collector (`examples/collector`) accepts only `platform_web_*` or a registered `<domain>_*` name matching the `domain` label with a `_total`/`_seconds`/`_bytes` suffix, label keys from the registry and the proposal (any other key is removed, so a Tier 3 label must be registered), label values from the registry and the proposal, and `page_route` up to 64 characters (longer → `unknown`); it keeps only the four resource attributes above. `examples/collector/test` keeps those lists equal to the registry. Mimir's per-tenant series limits are the backstop (`examples/collector/README.md`).
 
 ## CSP
 

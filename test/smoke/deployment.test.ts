@@ -157,7 +157,7 @@ describe(`web distribution smoke (${mode})`, () => {
       expectSecurityHeaders(r);
     });
 
-    it.each(['/t/acme/tenders', '/t/acme/tenders/42/edit', '/auth/callback'])('the deep link %s is index.html (SPA rewrite)', async (path) => {
+    it.each(['/t/acme/tenders', '/t/acme/tenders/42/edit', '/auth/callback', '/t/acme/tenders/RFQ-2026.01'])('the deep link %s is index.html (SPA rewrite)', async (path) => {
       const [index, r] = [await get('/'), await get(path)];
       expect(r.status, where(r)).toBe(200);
       expect(contentType(r), where(r, 'Content-Type')).toMatch(/^text\/html\b/i);

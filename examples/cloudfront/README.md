@@ -7,7 +7,7 @@ platform's infrastructure repository owns the distribution; it takes these files
 |---|---|
 | `csp.mjs` | The response headers, from one source: `buildCsp({ idpOrigin, remoteOrigins, apiOrigins })`, `securityHeaders()` |
 | `response-headers-policy.json` | A CloudFront `ResponseHeadersPolicyConfig` with those headers (tests keep it equal to `csp.mjs` and to the design doc) |
-| `spa-rewrite.js` | CloudFront Function (`cloudfront-js-2.0`, viewer request) for the **Default (\*)** behavior: extension-less paths → `/index.html` |
+| `spa-rewrite.js` | CloudFront Function (`cloudfront-js-2.0`, viewer request) for the **Default (\*)** behavior: every path → `/index.html` unless its last segment ends in a static-asset extension (`.js`, `.css`, `.png`, `.woff2`, `.txt`, …; the list is in the file). `/users/john.doe` and `/tenders/RFQ-2026.01` are routes |
 | `csp-report/handler.mjs` | Lambda (function URL, payload 2.0) behind `/csp-report`: CSP reports → OTLP logs to the Collector |
 
 ## Behaviors, in precedence order
@@ -22,7 +22,7 @@ platform's infrastructure repository owns the distribution; it takes these files
 | `/remotes/manifest.json` | S3 | as above | — | security headers | Written after every remote has uploaded |
 | `/remotes/*` | S3 | CachingOptimized | — | security headers | `/remotes/<name>/<version>/…`, never overwritten; objects carry `Cache-Control: public, max-age=31536000, immutable` (see *Deploy order*) |
 | `/assets/*` | S3 | CachingOptimized, immutable | — | security headers | Content-hashed |
-| `Default (*)` | S3 | `no-cache` | — | security headers | `spa-rewrite.js` on viewer request. **No** custom 403/404 → `index.html` error responses: they would turn `/api/*` 404s into HTML |
+| `Default (*)` | S3 | `no-cache` | — | security headers | `spa-rewrite.js` on viewer request (a dot alone does not make a file: only a static-asset extension skips the rewrite). **No** custom 403/404 → `index.html` error responses: they would turn `/api/*` 404s into HTML |
 
 ## Deploy order
 
@@ -30,9 +30,21 @@ platform's infrastructure repository owns the distribution; it takes these files
    overwrite a version.
 2. Write `/remotes/manifest.json`:
    `{ "tenders": { "entry": "/remotes/tenders/<version>/remoteEntry.js", "version": "<version>", "ownerDomain": "tender_management", "integrity": "sha384-…" } }`.
-   The `integrity` (sha384 of the uploaded `remoteEntry.js`) is the root of the chain of trust: `remoteEntry.js` carries the sha384 of each of the remote's chunks (`@bcbp-solutions-fzc-llc/webpack-preset`'s `ChunkIntegrityPlugin`), and the browser refuses a chunk that doesn't match. Never rewrite a file after the build (no minify-on-upload, no injected banners), or every load of it fails. A remote on **another origin** must also send `Access-Control-Allow-Origin` for the shell's origin on its `.js` files: an integrity-checked cross-origin script is fetched with CORS.
+   The `integrity` (sha384 of the uploaded `remoteEntry.js`) is the root of the chain of trust: `remoteEntry.js` carries the sha384 of each of the remote's chunks (`@bcbp-solutions-fzc-llc/webpack-preset`'s `ChunkIntegrityPlugin`), and the browser refuses a chunk that doesn't match. Never rewrite a file after the build (no minify-on-upload, no injected banners), or every load of it fails. A remote on **another origin** needs the headers in [*A remote on another origin*](#a-remote-on-another-origin).
 3. Upload the shell (`examples/shell/dist`): hashed files first, `index.html` last.
 4. Write `/version.json` (`{ "version": "<shell build version>" }`), which tells open tabs an update exists.
+
+### A remote on another origin
+
+A remote served from another origin (its own distribution or a CDN) is loaded by the shell's page cross-origin: integrity-checked scripts and stylesheets and every font are fetched in CORS mode, and images in no-cors mode, where `securityHeaders()`'s `Cross-Origin-Resource-Policy: same-origin` would block them. So the remote sends, on **all** of its assets (`.js`, `.css`, fonts, images, `.json`), not only the `.js`:
+
+| Header | Value |
+|---|---|
+| `Access-Control-Allow-Origin` | the shell's origin (e.g. `https://app.bcbpsolutions.com`), never `*` with credentials |
+| `Vary` | `Origin` (when the value depends on the request's origin) |
+| `Cross-Origin-Resource-Policy` | `cross-origin` |
+
+On CloudFront this is a response headers policy on the remote's behavior with a CORS config (`AccessControlAllowOrigins` = the shell's origin, `AccessControlAllowMethods` = `GET`, `HEAD`, `OriginOverride` true) and a custom header `Cross-Origin-Resource-Policy: cross-origin`; the cache policy forwards `Origin`. Without CORS a chunk, stylesheet or font fails to load; with the shell's `same-origin` CORP the browser blocks the remote's images. Add the remote's origin to `buildCsp({ remoteOrigins })` and to runtime.json `remotes.allowedOrigins` too.
 
 **`Cache-Control` is set on every object at upload.** A CloudFront cache policy sets only the *edge* TTL:
 it never adds a `Cache-Control` header to the viewer response. Without object metadata browsers fall back

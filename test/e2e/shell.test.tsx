@@ -245,6 +245,35 @@ describe('the reference shell', () => {
     expect($('input[name=title]')!.getAttribute('aria-invalid')).toBe('true');
   });
 
+  it('a session context that fails at boot is retried: the page starts deny-all, then the subject gets its roles (review 2)', async () => {
+    let down = true;
+    net.on('GET /api/v1/me/session-context', () =>
+      down ? mockProblem(PlatformProblemTypes.ServiceUnavailable) : Response.json({ tenant_id: TENANT, slug: 'acme', roles: ['preparator'], feature_flags: [], read_only: false }));
+    await load('/t/acme/tenders/1/edit');
+    await until(() => page.assigned.length > 0);
+    await approveLogin();
+    await until(() => $<HTMLInputElement>('input[name=title]') !== null);
+    expect($<HTMLInputElement>('input[name=title]')!.disabled).toBe(true); // deny-all without the context
+
+    down = false;
+    await until(() => $<HTMLInputElement>('input[name=title]')?.disabled === false);
+    expect(page.url.pathname).toBe('/t/acme/tenders/1/edit');
+  });
+
+  it('the session context retries are bounded: 3 more tries, then the page stays deny-all', async () => {
+    net.on('GET /api/v1/me/session-context', () => mockProblem(PlatformProblemTypes.ServiceUnavailable));
+    await load('/t/acme/tenders/1/edit');
+    await until(() => page.assigned.length > 0);
+    await approveLogin();
+    await until(() => $<HTMLInputElement>('input[name=title]') !== null);
+    const first = net.sent('/api/v1/me/session-context').length; // one ApiClient call, with its own quick retries
+    // 3 shell retries (after 1 s, 2 s, 4 s), each one ApiClient call; then no more.
+    await act(async () => void (await vi.advanceTimersByTimeAsync(60_000)));
+    await flush();
+    expect(net.sent('/api/v1/me/session-context')).toHaveLength(first * 4);
+    expect($<HTMLInputElement>('input[name=title]')!.disabled).toBe(true);
+  });
+
   it('a remote that fails to load shows its RemoteBoundary fallback; the shell keeps running and Try again recovers', async () => {
     exposeModule = async () => {
       throw new Error('the remote deploy is broken: ./EditTender answered 500');

@@ -9,7 +9,7 @@ The flows a change most often touches, in order. Authoritative detail: [LLD §8]
 3. `initializeTracing`, `initializeLogging`, `initializeMetrics` (all to `cfg.telemetry.otlpBaseUrl`, same origin), `installGlobalErrorHandlers()`, `startWebVitals()`, `setFlagProvider(runtimeConfigFlagProvider())`.
 4. `createOidcProvider(cfg.auth, workspaceResolver)` → `setTokenSource(initializeAuth(idp))` → `await idp.init()`. `init()` may redirect once (`prompt=none`) and never settle.
 5. Anonymous: choose a workspace and `idp.login(...)`, unless the reason is `signed-out` (show "You are signed out") or `device-clock` (show "Check your device's clock"): never an automatic login there.
-6. Authenticated: P-35 session context → `setAuthorizer`, `setAuthzSubject`, session flags; `rememberWorkspace`; `initializeI18n`; `loadManifest`; `startVersionPolling`; render `<PlatformProvider shell={{ …, signOut: (o) => idp.logout(o) }}>`.
+6. Authenticated: P-35 session context → `setAuthorizer`, `setAuthzSubject`, session flags; `rememberWorkspace`; `initializeI18n`; `loadManifest`; `startVersionPolling`; render `<ShellRoot>` (a `PlatformProvider` whose `locale` follows `setLocale` and whose `context` follows the session-context store; `signOut: (o) => idp.logout(o)`). If P-35 failed, the page renders deny-all and retries a transient failure (network, timeout, 429, 5xx) 3 times after 1 s, 2 s, 4 s; on success it sets the subject, flags and workspace and re-renders. A sign-out stops the retries.
 7. On `anonymous / signed-out` later (here or another tab): unmount the app, show the signed-out screen.
 
 ## Sign-in (Authorization Code + PKCE S256)

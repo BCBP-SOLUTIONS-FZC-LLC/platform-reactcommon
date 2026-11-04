@@ -12,7 +12,7 @@ import { setAuthorizer, setAuthzSubject, roleMapAuthorizer } from '@bcbp-solutio
 import { initializeI18n } from '@bcbp-solutions-fzc-llc/frontend-sdk/i18n';
 import { loadManifest, startVersionPolling } from '@bcbp-solutions-fzc-llc/frontend-sdk/mfe';
 import { installTrustedTypesPolicy } from '@bcbp-solutions-fzc-llc/frontend-sdk/security';
-import { PlatformProvider, installGlobalErrorHandlers } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
+import { installGlobalErrorHandlers } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
 import { createRoot, type Root } from 'react-dom/client';
 import { cmp } from './consent';
 import { permissions } from './permissions';
@@ -20,6 +20,8 @@ import { workspaceResolver, sessionContextSource } from './iam';   // PUB-1 and 
 import { askForWorkspace, showWorkspaceNotFound } from './IdentifierFirst'; // FE spec A2 screen; resolves via workspaceResolver
 import { showDeviceClock, showSessionEnded, showSignedOut, showWrongWorkspace } from './SessionScreens'; // shell-owned screens
 import { App } from './App';
+import { ShellRoot } from './ShellRoot';
+import { createStore, retrySessionContext } from './session-context';
 
 export async function bootstrap(): Promise<void> {
   installTrustedTypesPolicy();
@@ -63,6 +65,7 @@ export async function bootstrap(): Promise<void> {
   // Expiry happens only during use. Never redirect on our own; the user clicks "Sign in" in the dialog.
   // A server-ended session (e.g. trial → paid) re-resolves the workspace; a natural expiry reuses the cache.
   let app: Root | undefined;
+  const contextRetry = new AbortController();
   idp.subscribe((s) => {
     if (s.status === 'expired') showSessionEnded(s, () =>
       signInAgain({ idp, state: s, resolver: workspaceResolver, cfg: cfg.auth, ask: askForWorkspace }));
@@ -70,6 +73,7 @@ export async function bootstrap(): Promise<void> {
     // app, so the previous user's data is not left under the dialog on a shared device. The next sign-in
     // asks for credentials (prompt=login).
     if (s.status === 'anonymous' && s.reason === 'signed-out') {
+      contextRetry.abort();
       app?.unmount();
       app = undefined;
       showSignedOut(() =>
@@ -78,28 +82,47 @@ export async function bootstrap(): Promise<void> {
   });
 
   // Roles, plan and flags are not in the token (§0 row 10). Without them: deny-all, platform flags only.
-  const context = await sessionContextSource.load().catch((e) => {
-    getLogger().warn('session context unavailable', { error: e }); return undefined; });
   setAuthorizer(roleMapAuthorizer(permissions));
-  setAuthzSubject(context && { roles: context.roles, tenantId: context.tenantId });
-  if (context) setFlagProvider(sessionContextFlagProvider(context));
-  // Cache the workspace with its slug (trial tokens carry none) and move the URL to /t/<slug>/.
-  if (context) rememberWorkspace({ ...session.workspace, slug: context.slug });
+  const context = createStore(await sessionContextSource.load().catch((e) => {
+    getLogger().warn('session context unavailable', { error: e }); return undefined; }));
+  const applyContext = () => {
+    const c = context.get();
+    setAuthzSubject(c && { roles: c.roles, tenantId: c.tenantId });
+    if (!c) return;
+    setFlagProvider(sessionContextFlagProvider(c));
+    // Cache the workspace with its slug (trial tokens carry none) and move the URL to /t/<slug>/.
+    rememberWorkspace({ ...session.workspace, slug: c.slug });
+  };
+  applyContext();
   await initializeI18n({ defaultLocale: cfg.i18n.defaultLocale, supported: cfg.i18n.supportedLocales });
   await loadManifest().catch((e) => getLogger().error('manifest load failed', { error: e }));
   startVersionPolling();
 
   app = createRoot(document.getElementById('root')!);
+  // The provider reads the locale (setLocale) and the session context (the retry below) live.
   app.render(
-    <PlatformProvider shell={{ user: session.user, workspace: session.workspace, context,
-                               locale: document.documentElement.lang,
-                               switchWorkspace: async (id) => {
-                                 const w = await workspaceResolver.resolve(id);
-                                 if (!w) { showWorkspaceNotFound(); return; }  // generic message, never says which input failed
-                                 await idp.switchWorkspace(w);
-                               },
-                               signOut: (o) => idp.logout(o) }}>
+    <ShellRoot context={context}
+               shell={{ user: session.user, workspace: session.workspace,
+                        switchWorkspace: async (id) => {
+                          const w = await workspaceResolver.resolve(id);
+                          if (!w) { showWorkspaceNotFound(); return; }  // generic message, never says which input failed
+                          await idp.switchWorkspace(w);
+                        },
+                        signOut: (o) => idp.logout(o) }}>
       <App />
-    </PlatformProvider>,
+    </ShellRoot>,
   );
+
+  // A transient failure (network, timeout, 429, 5xx) is retried 3 times (1 s, 2 s, 4 s); on success the
+  // subject, flags and provider get the context. A sign-out stops the retries.
+  if (!context.get()) {
+    const retried = await retrySessionContext((signal) => sessionContextSource.load(signal), {
+      signal: contextRetry.signal,
+      onError: (e, attempt) => getLogger().warn('session context unavailable', { error: e, attempt }),
+    });
+    if (retried && !contextRetry.signal.aborted) {
+      context.set(retried);
+      applyContext();
+    }
+  }
 }
