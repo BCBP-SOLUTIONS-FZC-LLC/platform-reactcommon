@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Packages | `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin` (one version, changesets `fixed`) |
-| Version | `1.0.0-alpha.5` (tag `v1.0.0-alpha.5`, 2026-11-05, GitHub Packages, dist-tag `alpha`; optional `auth.signInUrl`, shell first, §14.2), after `1.0.0-alpha.1` (the first release) and `1.0.0-alpha.2` on 2026-11-03, `1.0.0-alpha.3` on 2026-11-04 and `1.0.0-alpha.4` on 2026-11-05 (breaking); `1.0.0-alpha.N` until the first end-to-end environment |
+| Version | `1.0.0-alpha.6` (tag `v1.0.0-alpha.6`, 2026-11-05, GitHub Packages, dist-tag `alpha`; optional `runtime.json` `environment`, `formatDate` calendar dates, console warnings while logging is off; not breaking, shell first, §14.2), after `1.0.0-alpha.1` (the first release) and `1.0.0-alpha.2` on 2026-11-03, `1.0.0-alpha.3` on 2026-11-04, `1.0.0-alpha.4` (breaking) and `1.0.0-alpha.5` on 2026-11-05; `1.0.0-alpha.N` until the first end-to-end environment |
 | Runtime | Evergreen browsers (ES2022, Trusted Types where supported); build tooling on Node ≥ 22 |
 | Peers | `react` / `react-dom` `^19.0.0` (one major; floor tested in CI), `@opentelemetry/api` `~1.10.0`, `webpack` `^5.100.0`, `@rspack/core` `^2.2.0`, `@rsbuild/core` `^2.2.0` (the preset's bundler peers, each optional: an app installs the one it builds with; `/rsbuild` uses the Rspack inside `@rsbuild/core`), `eslint` `^9 \|\| ^10` |
 | Design record | [`docs/design/frontend-sdk-design.md`](../design/frontend-sdk-design.md) (decisions, public API per subpath, contracts, backend changes) |
@@ -23,6 +23,7 @@
 | 1.5 | 2026-11-05 | `[Unreleased]`: `formatDate` takes calendar dates and RFC 3339 strings (§8.10); `warn` and `error` reach the console in every environment while logging is not running (§7.2) |
 | 1.6 | 2026-11-06 | `[Unreleased]`: optional `environment` in `runtime.json`; bootstrap steps 2–3 load the config before the identity, so one shell build serves every environment (§5.2, §6.2, §12.1, §12.2) |
 | 1.7 | 2026-11-06 | Aligned with `main` plus the runtime-environment branch: open items for the deploy-time `environment` check, the cold-start P-35 503 (integrated report Issue 12, reopened) and the measured bundle size (§15); API reports written with LF (§14.1) |
+| 1.8 | 2026-11-06 | `1.0.0-alpha.6` released (tag `v1.0.0-alpha.6`, PRs #54, #55): version line, §14.1, §14.2 |
 
 ### Table of Contents
 
@@ -761,12 +762,13 @@ The packages are released together with one version (changesets `fixed`):
 4. `npm-publish` publishes the three tarballs to **GitHub Packages** (`@bcbp-solutions-fzc-llc/*`, dist-tag from `publish:check`: `alpha`, `rc` or `latest`), with a build-provenance attestation each. It runs in the `npm` environment and refuses to publish unless publishing is gated (`.github/scripts/check-npm-environment.sh`): required reviewers, or (this private repository on GitHub Team) the environment accepts only release tags and an active tag ruleset limits creating, moving and deleting `v*` tags to admins and named teams. A version already published with the same integrity is skipped; a different one is refused.
 5. It publishes a GitHub Release with the three tarballs, a CycloneDX SBOM, and `checksums.txt` with a Cosign keyless signature bundle. Pre-release tags (`v1.0.0-alpha.N`) are marked as pre-releases.
 
-The first release is `v1.0.0-alpha.1` (2026-11-03); `v1.0.0-alpha.4` (2026-11-05; PRs #41–#46) had breaking changes; the latest is `v1.0.0-alpha.5` (2026-11-05; PR #50). Changesets v3's pre mode moves consumed changesets into `.changeset/pre/`; `changelog-check.yml` recognises that as a release PR.
+The first release is `v1.0.0-alpha.1` (2026-11-03); `v1.0.0-alpha.4` (2026-11-05; PRs #41–#46) had breaking changes; `v1.0.0-alpha.5` (2026-11-05; PR #50); the latest is `v1.0.0-alpha.6` (2026-11-05; PRs #54, #55). Changesets v3's pre mode moves consumed changesets into `.changeset/pre/`; `changelog-check.yml` recognises that as a release PR.
 
 ### 14.2 Compatibility
 - **During the alpha:** breaking changes bump `N` and are listed in the CHANGELOG. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`. Two pre-release SDK copies share the runtime only at the same version (§6.1).
 - **`alpha.4`:** the shell and every remote upgrade together. The container global is `__platform_mfe_<name>` (a remote built with an older preset defines the old one, which the new `loadRemote` does not read); the shell's CSP `form-action` must allow the IdP origin; `/storage` values under the old keys are not read; a Tier 3 metric with more than 8 labels fails registration; `no-raw-storage` and `no-unsafe-html` report more.
 - **`alpha.5`:** not breaking (optional `auth.signInUrl`). The shell upgrades first: a remote built against `alpha.5` requires `^1.0.0-alpha.5`. A `runtime.json` sets `auth.signInUrl` only once its page runs `alpha.5`.
+- **`alpha.6`:** not breaking (optional `environment`, `formatDate` strings, console warnings while logging is off). The shell upgrades first: a remote built against `alpha.6` requires `^1.0.0-alpha.6`. A `runtime.json` sets `environment` only once its page runs `alpha.6`; the shell can then drop its build-time environment.
 - **From `1.0.0`:** SemVer is strict. A remote built for another major fails share negotiation, and that failure stays inside its boundary.
 
 ### 14.3 Testing
