@@ -23,8 +23,9 @@ Untrusted HTML always goes through `sanitizeHtml(html)` (`@bcbp-solutions-fzc-ll
 
 ## Guarantees
 
-- **Fallbacks:** a missing message falls back to the default locale, then to the key; never to a crash.
+- **Fallbacks:** a missing message falls back to the default locale, then to the key; never to a crash. A catalog that does not answer within 10 s counts as failed and is retried (2 s, 4 s, 8 s) while its locale is shown.
 - **Error text:** API errors get localized text by problem type (`problemMessage`), falling back to the server's title.
+- **Links and images:** `sanitizeHtml` removes URLs with a backslash, whitespace or control character; images and media keep only same-origin paths and `data:image/*`.
 - **HTML:** sanitized HTML is a `TrustedHTML` value where the browser supports Trusted Types, so `require-trusted-types-for 'script'` holds.
 
 Design doc: §C1 `/i18n`, `/security`, §C3 (CSP).

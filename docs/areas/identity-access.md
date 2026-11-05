@@ -20,6 +20,7 @@ The shell wires sign-in (design doc §C2 step 7) and implements two ports over t
 - **Callbacks:** a code is exchanged at most once. The callback must match its PKCE record and Keycloak's `iss`, and the ID token's claims are checked.
 - **Refresh across tabs:** each tab refreshes only its own token lineage, one refresh at a time, and never resends a refresh token Keycloak may already have replaced.
 - **Expiry:** a session that ends is reported (`expired`), never silently re-signed in. After a logout, nothing signs the user in automatically.
+- **Sign-out:** global by default (a form POST ends the Keycloak session; the shell's CSP `form-action` must allow the IdP origin). Every tab, expired and loading ones included, drops the user's storage namespace, permissions, flags and read-only mark.
 - **Tenant isolation in storage:** one tenant never reads another's stored data on a shared browser.
 - **Permissions are hints:** the gateway authorizes every request.
 

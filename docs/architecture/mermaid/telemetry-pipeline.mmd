@@ -9,7 +9,7 @@ graph LR
         redact["redaction: sensitive keys → [REDACTED] · JWT / Bearer patterns<br/>URL query + fragment dropped · stack ≤ 4 KiB<br/>sanitizeString: control chars, U+2028/2029"]
         consent{"consent"}
         sample["ParentBased + Go's TraceIDRatioBased<br/>(sampleRatio, default 0.1)"]
-        checks["registration checks = metricslint rules<br/>Tier 3 label values ≤ 100 → __other__"]
+        checks["registration checks = metricslint rules<br/>Tier 3: ≤ 8 labels · label values ≤ 100 → __other__"]
     end
 
     subgraph queues["Bounded queues (drop oldest, ≤ 2 sends in flight)"]
@@ -32,6 +32,6 @@ graph LR
     tq --> otel
     mq --> otel
     lq & tq & mq -.-> unload -.-> otel
-    otel --> gw["Collector gateway (examples/collector/gateway.yaml)<br/>drops per-browser attributes · name + label allowlists<br/>routes each metric stream to one aggregator"]
+    otel --> gw["Collector gateway (examples/collector/gateway.yaml)<br/>drops per-browser attributes (metrics: every resource attribute)<br/>name + label-key + label-value allowlists (Tier 3 ≤ 8 keys)<br/>routes each metric stream to one aggregator"]
     gw -->|"metrics"| agg["Collector aggregator (aggregator.yaml)<br/>arrival-time stamp · delta → cumulative → Mimir"]
     gw -->|"traces · logs"| backends["Tempo · Loki"]

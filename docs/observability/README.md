@@ -85,6 +85,7 @@ drafts.add(1, { outcome: 'ok' });
 - `_seconds` or `_bytes` on histograms;
 - no prohibited labels (`user_id`, `tenant_id`, `request_id`, `trace_id`, `ip`, `path`, …) or suffixes (`_id`, `_email`, `_ip`, `_uuid`, `_token`);
 - registry label values;
+- on a Tier 3 metric, snake_case label names, at most 8 besides `domain`, `service` and `environment` (the reference Collector keeps no more);
 - known bucket presets;
 - no reuse of a legacy name.
 
@@ -120,8 +121,11 @@ Recorded through an internal instrument port by `/http`, `/mfe` and `/react`, so
 Every other attribute is redacted with gincommon's rules (`contracts/redaction.json`):
 - sensitive keys become `[REDACTED]`;
 - JWT and `Bearer` values are masked;
-- URL query strings and fragments are removed;
-- control characters are stripped.
+- URL query strings and fragments are removed, in the message and every attribute (and in span attributes and names);
+- control characters are stripped;
+- a record's attributes are capped at about 8 KiB (one `[TRUNCATED]` marker past it).
+
+Uncaught errors and unhandled rejections (`installGlobalErrorHandlers`) are rate-limited: 10 per signature and 60 per page a minute; the next line sent carries `suppressed`.
 
 The SDK's own log events are listed in the [LLD §11.1](../lld/platform-reactcommon-lld.md#111-log-event-catalogue).
 
@@ -139,7 +143,7 @@ The `ParentBased` sampler uses **Go's `TraceIDRatioBased` algorithm** for roots 
 | `telemetry` | all logs at or above `telemetry.logLevel`, spans, metrics |
 | `analytics` | nothing in the SDK today (reserved for product analytics) |
 
-`setConsentProvider(cmp)` runs before any exporter. Without it, only `essential` is granted. Withheld spans are counted and dropped, and a withheld metrics interval is discarded (delta, so nothing piles up).
+`setConsentProvider(cmp)` runs before any exporter. Without it, only `essential` is granted. Withheld spans are counted and dropped, and a withheld metrics interval is discarded (delta, so nothing piles up). Withdrawing `telemetry` drops what is already queued under it (spans, and info, debug and non-essential warn records; counted in `droppedNoConsent`) before any send or beacon.
 
 ## CI enforcement
 

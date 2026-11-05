@@ -22,7 +22,7 @@ Build time: [`@bcbp-solutions-fzc-llc/eslint-plugin`](../../packages/eslint-plug
 ```tsx
 export default function EditTender({ id }: { id: string }) {
   return (
-    <MFEErrorBoundary mfe="tenders">
+    <MFEErrorBoundary mfe="tenders" resetKeys={[id]}>
       <EditTenderForm id={id} />
     </MFEErrorBoundary>
   );
@@ -49,8 +49,8 @@ expect(p.logs).toEqual([]);
 ## Guarantees
 
 - **Hooks follow the SDK's state:** session, permissions, flags and locale changes re-render.
-- **`useApi`** cancels its request on unmount and when its inputs change.
-- **One remote's render error** stays in its boundary, logged with that remote's name, and offers "Try again". After a deploy, a chunk-load error reloads once.
-- **`/testing` runs the real SDK,** with fakes only at the edges (exporters, network, identity provider).
+- **`useApi`** cancels its request on unmount and when its inputs change, and never returns the previous inputs' data or error for new ones.
+- **One remote's render error** stays in its boundary, logged with that remote's name, and offers "Try again"; it clears when its `resetKeys` (say the route's id) change. After a deploy, a chunk-load error reloads once, after the `useBeforeAuthRedirect` listeners keep drafts.
+- **`/testing` runs the real SDK,** with fakes only at the edges (exporters, network, identity provider); its shell's `signOut` is recorded in `signOuts`, and a new platform stops the previous one.
 
 Design doc: §C1 `/react`, `/testing`, §C4 (examples).

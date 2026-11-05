@@ -12,7 +12,8 @@ What makes one shell and many independently deployed remotes behave as one app: 
 
 Build time: [`@bcbp-solutions-fzc-llc/webpack-preset`](../../packages/webpack-preset) gives every app the same Module Federation setup, with webpack 5, Rspack (`/rspack`) or Rsbuild (`/rsbuild`); apps built with either interoperate:
 - **Shared modules:** React, the OTel API and the SDK as strict singletons.
-- **Remotes never bundle the SDK:** they take it from the shell.
+- **Remotes never bundle the SDK:** they take it from the shell. A remote's container global is `__platform_mfe_<name>`, and `SdkVersionPlugin` fails a build whose installed SDK is not the preset's version.
+- **SRI on lazy chunks:** every lazily loaded JS and CSS chunk carries its sha384 (production).
 - **CSP-safe output:** Trusted Types, no `eval`, hidden source maps.
 
 ## How it's used
@@ -21,7 +22,7 @@ The shell loads the manifest once (`loadManifest()`) and starts `startVersionPol
 
 ## Guarantees
 
-- **Containment:** one remote's failure (disabled, not found, timeout, version clash) stays in its own boundary; the shell and other remotes keep working.
+- **Containment:** one remote's failure (disabled, not found, timeout of the whole attempt, version clash) stays in its own boundary; the shell and other remotes keep working.
 - **Entry origins:** a remote entry is loaded only from the page's origin or an exact allowed origin, checked again right before the script is added.
 - **No reload loops:** a deploy causes at most one reload per version.
 - **Kill switch:** any remote can be switched off without a deploy (runtime config or flag).

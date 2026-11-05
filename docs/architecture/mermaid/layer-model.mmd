@@ -5,7 +5,7 @@ graph TD
     end
 
     subgraph tooling["Build-time packages"]
-        preset["@bcbp-solutions-fzc-llc/webpack-preset<br/>platformShared · sharedFor · containerName<br/>platformWebpackConfig (Trusted Types, no eval, hidden maps)"]
+        preset["@bcbp-solutions-fzc-llc/webpack-preset<br/>platformShared · sharedFor · containerName (__platform_mfe_name)<br/>platformWebpackConfig (Trusted Types, no eval, hidden maps)<br/>SdkVersionPlugin · ChunkIntegrityPlugin (JS + CSS SRI)"]
         eslint["@bcbp-solutions-fzc-llc/eslint-plugin<br/>7 rules + configs.recommended"]
     end
 
@@ -16,7 +16,7 @@ graph TD
         L2["L2  /tracing  ·  /logging  ·  /metrics  (the only OpenTelemetry users)"]
         L1["L1  /config (runtime.json, zod)  ·  /security (DOMPurify, Trusted Types)  ·  /storage"]
         L0["L0  /core (identity, consent, session id, sanitize)  ·  /problem (RFC 9457)  ·  /authz (pure)"]
-        internal["src/internal  —  PlatformRuntime registry · runtime events · instrument port<br/>batcher · online · redirect · locale · generated contracts (not exported)"]
+        internal["src/internal  —  PlatformRuntime registry · runtime events · instrument port<br/>batcher · unload · reload · online · redirect · retry-after · urls · locale · generated contracts (not exported)"]
     end
 
     subgraph contracts["Generated contracts  —  packages/frontend-sdk/contracts/"]

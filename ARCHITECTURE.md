@@ -45,7 +45,7 @@ graph TD
     end
 
     subgraph tooling["Build-time packages"]
-        preset["@bcbp-solutions-fzc-llc/webpack-preset<br/>platformShared · sharedFor · containerName<br/>platformWebpackConfig (Trusted Types, no eval, hidden maps)"]
+        preset["@bcbp-solutions-fzc-llc/webpack-preset<br/>platformShared · sharedFor · containerName (__platform_mfe_name)<br/>platformWebpackConfig (Trusted Types, no eval, hidden maps)<br/>SdkVersionPlugin · ChunkIntegrityPlugin (JS + CSS SRI)"]
         eslint["@bcbp-solutions-fzc-llc/eslint-plugin<br/>7 rules + configs.recommended"]
     end
 
@@ -56,7 +56,7 @@ graph TD
         L2["L2  /tracing  ·  /logging  ·  /metrics  (the only OpenTelemetry users)"]
         L1["L1  /config (runtime.json, zod)  ·  /security (DOMPurify, Trusted Types)  ·  /storage"]
         L0["L0  /core (identity, consent, session id, sanitize)  ·  /problem (RFC 9457)  ·  /authz (pure)"]
-        internal["src/internal  —  PlatformRuntime registry · runtime events · instrument port<br/>batcher · online · redirect · locale · generated contracts (not exported)"]
+        internal["src/internal  —  PlatformRuntime registry · runtime events · instrument port<br/>batcher · unload · reload · online · redirect · retry-after · urls · locale · generated contracts (not exported)"]
     end
 
     subgraph contracts["Generated contracts  —  packages/frontend-sdk/contracts/"]
@@ -199,7 +199,7 @@ graph BT
 
 The `PlatformRuntime` lives on `globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]`, so every copy of the SDK on a page finds the same object. That's how a remote sees the shell's identity, consent, session, flags, permissions and token source, even though the remote never imports the shell. Change notification goes through the runtime too. `/i18n`, `/flags`, `/authz` and `/http` emit the topics `i18n`, `flags`, `authz` and `read-only`, and `/react` re-renders on them.
 
-A second copy is a remote that bundled the SDK instead of taking it from the shell. It logs one error. If the major version matches, it binds to the existing runtime; otherwise it keeps its own.
+A second copy is a remote that bundled the SDK instead of taking it from the shell. It logs one error. If its version is compatible (the same major, or for a pre-release the same version: `1.0.0-alpha.3` and `alpha.4` each keep their own), it binds to the existing runtime; otherwise it keeps its own. State a newer copy adds (the remote container cache, the flag subscription, the before-reload listeners) is created on first use, so an older copy's runtime still works.
 
 > Source: [`docs/architecture/mermaid/runtime-registry.mmd`](docs/architecture/mermaid/runtime-registry.mmd)
 
@@ -212,8 +212,8 @@ graph LR
         page["pageRoute · routeTemplates"]
         authf["identityProvider · tokenSource · storageNamespace"]
         az["authorizer · authzSubject · flagProvider"]
-        mf["manifest · remotes (mfe → ownerDomain) · appUpdate"]
-        ui["i18n · navigator · trustedTypesPolicy · readOnlyDenied"]
+        mf["manifest · remotes (mfe → ownerDomain) · appUpdate<br/>remoteContainers (one per remote per page)"]
+        ui["i18n · navigator · trustedTypesPolicy · readOnlyDenied<br/>beforeReload (listeners run before an SDK reload)"]
         ev["events: i18n · flags · authz · read-only"]
     end
 
@@ -233,14 +233,14 @@ graph LR
     react -->|read| az
     react -->|read| authf
 
-    dup["second SDK copy<br/>(a remote that bundled it)"] -.->|"same major: binds to the existing runtime<br/>other major: own runtime + one error log"| rt
+    dup["second SDK copy<br/>(a remote that bundled it)"] -.->|"one error log · compatible version (same major;<br/>for a pre-release the same version): binds to the existing runtime<br/>otherwise: its own runtime"| rt
 ```
 
 ---
 
 ## Shell bootstrap
 
-The shell (never a remote) runs the bootstrap once (design doc §C2). Steps 2–3 are fatal: they fall back to a static page, and no SDK telemetry is possible yet. Step 5 is never fatal. Step 7 is fatal only for routes that need auth. If step 9 fails, every remote slot shows its fallback. `examples/shell/src/bootstrap.tsx` is the §C4 code verbatim.
+The shell (never a remote) runs the bootstrap once (design doc §C2). Steps 2–3 are fatal: they fall back to a static page, and no SDK telemetry is possible yet. Step 5 is never fatal. Step 7 is fatal only for routes that need auth. If step 9 fails, every remote slot shows its fallback. `examples/shell/src/bootstrap.tsx` follows the §C4 code; when step 8 failed transiently, the shell renders deny-all and retries P-35 in the background (`examples/shell/src/session-context.ts`). A sign-out in any tab during the steps stops the bootstrap before the app is mounted.
 
 > Source: [`docs/architecture/mermaid/shell-bootstrap.mmd`](docs/architecture/mermaid/shell-bootstrap.mmd)
 
@@ -250,7 +250,7 @@ flowchart TD
     idx --> tt["1. installTrustedTypesPolicy()  —  /security"]
     tt --> core["2. initializeCore({ serviceName, domain: 'portal', environment, buildVersion })<br/>build-time constants, validated against the registry vocabulary"]
     core -->|throws| fatal["static 'unavailable' page, console only"]
-    core --> cfg["3. loadRuntimeConfig() → GET /config/runtime.json (no-cache) → zod (strict) → freeze<br/>setRuntimeConfig(cfg)"]
+    core --> cfg["3. loadRuntimeConfig() → GET /config/runtime.json (no-cache, 10 s timeout) → zod (strict) → freeze<br/>setRuntimeConfig(cfg)"]
     cfg -->|fails| fatal
     cfg --> consent["4. setConsentProvider(cmp)  —  before any export"]
     consent --> tel["5. initializeTracing · initializeLogging · initializeMetrics → /otel<br/>installGlobalErrorHandlers() · startWebVitals()  (never fatal)"]
@@ -263,9 +263,11 @@ flowchart TD
     auth -->|"authenticated"| wrong{"isWrongWorkspace?"}
     wrong -->|yes| wrongscreen["wrong-workspace screen (sign out / switch); stop"]
     wrong -->|no| ctx["8. sessionContextSource.load()  (IAM P-35; failure → undefined: deny-all, no tenant flags)<br/>setAuthorizer(roleMapAuthorizer) · setAuthzSubject · rememberWorkspace (URL → /t/&lt;slug&gt;/)<br/>setFlagProvider(sessionContextFlagProvider) · await initializeI18n()"]
+    ctx -->|"a sign-out meanwhile (any tab)"| stop["stop: the app is never mounted"]
     ctx --> manifest["9. loadManifest() → GET /remotes/manifest.json · startVersionPolling()<br/>(failure: every remote slot shows its fallback)"]
     manifest --> render["10. createRoot().render(&lt;PlatformProvider shell&gt;&lt;App/&gt;)<br/>routes render &lt;RemoteBoundary&gt; lazily"]
-    render --> expired["idp.subscribe: 'expired' → session-ended dialog → signInAgain()"]
+    render --> expired["idp.subscribe: 'expired' → session-ended dialog → signInAgain()<br/>'signed-out' → unmount the app, signed-out screen"]
+    render -->|"P-35 failed transiently (network, timeout, 429, 5xx)"| ctxretry["retry P-35 3 times (after 1 s, 2 s, 4 s); on success:<br/>setAuthzSubject · session flags · rememberWorkspace · re-render<br/>(a sign-out stops the retries)"]
 ```
 
 A remote run on its own skips all of this. Every API then returns a no-op or an anonymous default (`denyAll`, empty flags, the console logger), and remotes read the config only through `tryGetConfig()`.
@@ -294,10 +296,10 @@ sequenceDiagram
     Note over D: key = URL + token + headers,<br/>concurrent identical GETs share one call<br/>(aborts only when every subscriber aborts)
     D->>X: startCall: URL from baseUrl + template,<br/>x-request-id, Idempotency-Key (POST), span "HTTP GET"
     X->>T: getAccessToken() — same origin only
-    loop attempts (GET/PUT/DELETE, or retry.unsafe): 1 + 2 retries by default
+    loop attempts (GET/PUT/DELETE, or retry.unsafe): 1 + 2 retries by default (at most 5)
         X->>A: attempt(token)
         Note over A: offline → NetworkError(offline) at once<br/>drop FORBIDDEN identity headers (dev: throw)<br/>x-request-id · x-session-id: same origin or allowlist<br/>traceparent: same origin or allowlist<br/>Authorization: same origin only<br/>deadline 35 s (api.timeoutMs)
-        A->>F: fetch(url, headers, signal = caller ∪ timeout)
+        A->>F: fetch(url, headers, signal = caller ∪ timeout,<br/>redirect: 'manual' when it carries the token or correlation headers)
         F-->>A: Response / error
         A-->>X: Response, or TimeoutError / NetworkError / AbortedError
         alt 401 and not yet refreshed
@@ -307,7 +309,9 @@ sequenceDiagram
             X->>X: sleep Retry-After (≤ 30 s) or full-jitter backoff min(5 s, 250 ms·2ⁿ)
         end
     end
-    alt 2xx
+    alt redirect, or a 2xx body that is not the JSON it claims
+        X-->>C: throw synthetic 502 ProblemError (the redirect is not followed)
+    else 2xx
         X->>O: record(status) · http.response.status_code
         X-->>C: { data, status, headers, requestId, traceId (X-Trace-ID) }
     else non-2xx
@@ -392,17 +396,20 @@ stateDiagram-v2
         refreshing --> idle_timer: 200 → rotate tokens (never reuse a replaced refresh token)
         refreshing --> waiting_online: offline before sending → keep the token
         waiting_online --> refreshing: online event
+        refreshing --> backing_off: 429, or 503 with Retry-After (refused unprocessed)<br/>keep the tokens · getAccessToken and 401s join this refresh
+        backing_off --> refreshing: 2 s doubling to 30 s (jitter) or Retry-After,<br/>when the wait ends over 5 s before the access token expires
     }
 
-    authenticated --> expired_server: invalid_grant before refresh_expires_in<br/>(serverEnded: true, e.g. trial → paid)
-    authenticated --> expired_natural: invalid_grant / refresh token past its expiry<br/>(serverEnded: false)
-    authenticated --> expired_idle: no activity in any tab for idleTimeoutMs<br/>(idle: true; session id rotated)
-    authenticated --> restoring: sent but outcome unknown (timeout, network after send,<br/>non-invalid_grant error, bad ID token) → drop the lineage
+    authenticated --> expired_server: invalid_grant before refresh_expires_in<br/>(serverEnded = true, e.g. trial → paid)
+    authenticated --> expired_natural: invalid_grant / refresh token past its expiry<br/>(serverEnded = false)
+    authenticated --> expired_idle: no activity in any tab for idleTimeoutMs<br/>(idle = true, session id rotated)
+    authenticated --> restoring: sent but outcome unknown (timeout, network after send,<br/>500 · 502 · 504 · bare 503, other errors, bad ID token) → drop the lineage<br/>· or a backoff that would outlast the access token
     restoring --> [*]: wait online → beforeRedirect('restore') → prompt=none redirect
-    authenticated --> anonymous: logout (this tab or a 'logout' broadcast)
+    authenticated --> anonymous: logout (this tab or a 'logout' broadcast)<br/>forget the user (authz subject, flags, read-only) · global = form POST to end-session
+    expired_natural --> anonymous: 'logout' broadcast (expired and loading tabs follow it too)
     authenticated --> expired_natural: 'workspace-switched' broadcast from another tab
 
-    expired_server --> [*]: shell dialog → signInAgain(forceResolve: true)
+    expired_server --> [*]: shell dialog → signInAgain(forceResolve)
     expired_natural --> [*]: shell dialog → signInAgain()
     expired_idle --> [*]: shell dialog → signInAgain(prompt=login)
 ```
@@ -419,7 +426,7 @@ stateDiagram-v2
 
 ## Remote loading
 
-The shell loads `/remotes/manifest.json` once. Routes render `<RemoteBoundary remote module>`, which lazily calls `loadRemote` inside `Suspense` and an `MFEErrorBoundary`. Container globals follow one rule shared by `loadRemote` and `@bcbp-solutions-fzc-llc/webpack-preset`'s `containerName`: the remote's name, with `-` replaced by `_`.
+The shell loads `/remotes/manifest.json` once. Routes render `<RemoteBoundary remote module>`, which lazily calls `loadRemote` inside `Suspense` and an `MFEErrorBoundary`. Container globals follow one rule shared by `loadRemote` and `@bcbp-solutions-fzc-llc/webpack-preset`'s `containerName`: `__platform_mfe_` plus the remote's name, with `-` replaced by `_` (never the bare name: an element `id` or a browser global of that name would shadow it). `loadRemote` adds the entry script unless that global already holds a container.
 
 > Source: [`docs/architecture/mermaid/remote-loading.mmd`](docs/architecture/mermaid/remote-loading.mmd)
 
@@ -434,16 +441,16 @@ sequenceDiagram
     participant C as window.{container}
     participant EB as error boundary
 
-    SH->>M: GET /remotes/manifest.json (no-cache)
+    SH->>M: GET /remotes/manifest.json (no-cache, timeout remotes.loadTimeoutMs)
     Note over M: per remote: name ^[a-z][a-z0-9_-]{0,62}$ (not 'shell'),<br/>entry same origin or remotes.allowedOrigins, version, ownerDomain ∈ registry,<br/>integrity sha256/384/512 — an invalid remote is dropped with an error log
     M-->>SH: manifest → runtime.manifest + remotes (mfe → ownerDomain)
     RB->>L: lazy(loadRemote(remote, './Module')) inside Suspense
     alt killSwitch lists it, or flag remote.{name}.disabled
         L-->>RB: RemoteDisabledError (failure: disabled)
     else
-        loop attempt ≤ 1 + retries (default 2), timeout per attempt (default 10 s)
+        loop attempt ≤ 1 + retries (default 2), one timeout per attempt (default 10 s) over the entry, init and get
             L->>L: entry still allowed? (checked again before the script)
-            L->>DOM: {script src} via Trusted Types createScriptURL · integrity + crossorigin when SRI is set
+            L->>DOM: unless the global already holds a container: {script src} via Trusted Types<br/>createScriptURL · integrity + crossorigin when SRI is set
             DOM-->>C: remoteEntry.js defines window.__platform_mfe_<name, '-' → '_'>
             L->>C: init(share scope) — strictVersion clash → incompatible (no retry)
             L->>C: get('./Module') → factory()
@@ -452,11 +459,11 @@ sequenceDiagram
     end
     Note over L: span "remote load", platform_web_remote_load_* through the instrument port,<br/>one container per remote per page (a failed load is forgotten so it can retry)
     RB->>EB: any failure → MFEErrorBoundary with mfe = remote
-    EB->>EB: chunk-load error → reload once per version (sessionStorage guard)<br/>else log + platform_web_errors_total{source=boundary}, fallback with Try again (new lazy)
-    SH->>SH: startVersionPolling: /version.json every 5 min and on visible → useAppUpdate().available
+    EB->>EB: chunk-load error → useBeforeAuthRedirect listeners → reload once per version (sessionStorage guard)<br/>else log + platform_web_errors_total{source=boundary}, fallback with Try again (new lazy)
+    SH->>SH: startVersionPolling: /version.json every 5 min (pollIntervalMs, 10 s fetch timeout) and on visible → useAppUpdate().available
 ```
 
-Sharing: the shell provides React, react-dom, `@opentelemetry/api` (`~1.10.0`) and every SDK subpath except `/testing` as strict singletons (`platformShared`). Remotes take the SDK with `import: false`, so they never bundle it. A remote built against an incompatible SDK major fails share negotiation, which shows as a `RemoteLoadError` in its own boundary, not as a broken shell.
+Sharing: the shell provides React, react-dom, `@opentelemetry/api` (`~1.10.0`) and every SDK subpath except `/testing` as strict singletons (`platformShared`). Remotes take the SDK with `import: false`, so they never bundle it. A remote that requires an SDK version the shell does not provide (`^<the version it was built against>`) fails share negotiation, which shows as a `RemoteLoadError` in its own boundary, not as a broken shell.
 
 ---
 
@@ -511,7 +518,7 @@ graph LR
         redact["redaction: sensitive keys → [REDACTED] · JWT / Bearer patterns<br/>URL query + fragment dropped · stack ≤ 4 KiB<br/>sanitizeString: control chars, U+2028/2029"]
         consent{"consent"}
         sample["ParentBased + Go's TraceIDRatioBased<br/>(sampleRatio, default 0.1)"]
-        checks["registration checks = metricslint rules<br/>Tier 3 label values ≤ 100 → __other__"]
+        checks["registration checks = metricslint rules<br/>Tier 3: ≤ 8 labels · label values ≤ 100 → __other__"]
     end
 
     subgraph queues["Bounded queues (drop oldest, ≤ 2 sends in flight)"]
@@ -534,7 +541,7 @@ graph LR
     tq --> otel
     mq --> otel
     lq & tq & mq -.-> unload -.-> otel
-    otel --> gw["Collector gateway (examples/collector/gateway.yaml)<br/>drops per-browser attributes · name + label allowlists<br/>routes each metric stream to one aggregator"]
+    otel --> gw["Collector gateway (examples/collector/gateway.yaml)<br/>drops per-browser attributes (metrics: every resource attribute)<br/>name + label-key + label-value allowlists (Tier 3 ≤ 8 keys)<br/>routes each metric stream to one aggregator"]
     gw -->|"metrics"| agg["Collector aggregator (aggregator.yaml)<br/>arrival-time stamp · delta → cumulative → Mimir"]
     gw -->|"traces · logs"| backends["Tempo · Loki"]
 ```
@@ -611,6 +618,7 @@ graph LR
         io["Cross-language compatibility<br/>interop.yml (pair 4 at this ref)"]
         br["Browser tests<br/>Playwright: Chromium · Firefox · WebKit"]
         rf["React floor (19.0.0)<br/>types · unit tests · build"]
+        e9["ESLint 9<br/>eslint-plugin tests on ESLint 9"]
         co["Collector config<br/>examples/collector in the Collector image"]
         ps["PR summary comment"]
         vt --> tv
@@ -618,8 +626,8 @@ graph LR
         vt --> sm
         pk --> sm
         vt --> io
-        vt --> br & rf & co
-        vt & vq & vc & pk & tv & sm & io & br & rf & co --> ps
+        vt --> br & rf & e9 & co
+        vt & vq & vc & pk & tv & sm & io & br & rf & e9 & co --> ps
     end
 
     subgraph rel["release.yml  —  tag vX.Y.Z (one version, changesets fixed)"]
@@ -645,9 +653,9 @@ The browser is single-threaded; concurrency here means overlapping promises and 
 | Concern | Mechanism |
 |---|---|
 | Concurrent identical GETs | One in-flight call per key (URL + token + headers); the shared fetch is aborted only when every subscriber has aborted |
-| Token refresh | One in-flight `refresh()` per tab; the timer, `/http`'s 401 path and direct callers await the same promise; a new refresh starts only after it settles, with the token it returned |
+| Token refresh | One in-flight `refresh()` per tab; the timer, `/http`'s 401 path and direct callers await the same promise, including its backoff after a 429 or a 503 with `Retry-After`; a new refresh starts only after it settles, with the token it returned |
 | Tabs | One refresh lineage per tab, never shared; `BroadcastChannel('platform-auth')` carries only `logout` and `workspace-switched`; idle activity and the signed-out mark are shared through localStorage |
-| Remote containers | One container per remote per page; concurrent `loadRemote` calls share it; a failed load is forgotten so a retry starts fresh |
+| Remote containers | One container per remote per page, cached on the runtime (shared by SDK copies); concurrent `loadRemote` calls share it; a failed or timed-out load is forgotten so a retry starts fresh |
 | i18n catalogs | One in-flight load per namespace and locale |
 | Telemetry export | At most two sends in flight per signal; beyond the queue bound the oldest items are dropped and counted |
 | Runtime listeners | Snapshot before notify; a throwing listener never stops the others |
@@ -656,14 +664,15 @@ The browser is single-threaded; concurrency here means overlapping promises and 
 
 | Failure | Effect | What still works |
 |---|---|---|
-| `runtime.json` unreachable or invalid | Fatal at bootstrap (static page) | — |
+| `runtime.json` unreachable, invalid or slower than 10 s | Fatal at bootstrap (static page) | — |
 | `/otel` down or slow | Queues fill, oldest dropped, failures counted | Everything else; no retries into a struggling page |
-| Keycloak unreachable during refresh | Ambiguous outcome → lineage dropped → silent restore after `online` | Calls fail with 401/`NetworkError` meanwhile; no sign-out |
+| Keycloak unreachable during refresh | Ambiguous outcome (network error, 500, 502, 504, bare 503) → lineage dropped → silent restore after `online` | Calls fail with 401/`NetworkError` meanwhile; no sign-out |
+| Keycloak shedding load (429, or 503 with `Retry-After`) | Tokens kept; the refresh retried with backoff while the access token stays valid, then a silent restore | Calls wait for the refresh, then carry the token |
 | Session ended by the server (`invalid_grant`) | `expired { serverEnded: true }` → dialog → re-resolve the workspace | Drafts saved by `beforeRedirect` listeners |
-| P-35 session context fails | Deny-all permissions, platform flags only, workspace not cached | Signed-in shell |
-| Manifest fails | Every remote slot shows its fallback | Shell routes |
+| P-35 session context fails | Deny-all permissions, platform flags only, workspace not cached; the example shell retries a transient failure 3 times (1 s, 2 s, 4 s) | Signed-in shell |
+| Manifest fails or times out | Every remote slot shows its fallback | Shell routes |
 | A remote fails to load or render | That remote's boundary fallback with `traceId` / Try again | Shell and other remotes |
-| Old chunks gone after a deploy | One reload per version (sessionStorage guard) | — |
+| Old chunks gone after a deploy | One reload per version (sessionStorage guard), after the `useBeforeAuthRedirect` listeners | Drafts those listeners saved |
 | Consent not granted | Only `error` logs and essential `warn` logs leave the page | All functionality |
 | localStorage / sessionStorage blocked | Session id per page; storage kept in memory; **sign-in impossible** (no pending-login record), stated, never silent | Anonymous pages |
 
@@ -674,7 +683,7 @@ The browser is single-threaded; concurrency here means overlapping promises and 
 | Tokens are never in storage, a global, a log or the channel | `/auth` closure; `/storage` refuses token-like keys; redaction of JWT/Bearer patterns; auth tests scan storage |
 | The browser never sends identity headers | `/http` drops `FORBIDDEN_REQUEST_HEADERS` (generated from gincommon + AuthZ Enrichment); `@bcbp-solutions-fzc-llc/eslint-plugin` `no-identity-headers`; interop pair 4 |
 | The access token goes to the page's own origin only | `/http` `isSameOrigin` check before `Authorization` |
-| A replaced refresh token is never sent | single-flight `refresh()`; ambiguous failures drop the lineage instead of retrying |
+| A replaced refresh token is never sent | single-flight `refresh()`; ambiguous failures drop the lineage instead of retrying; only an answer that says it was not processed (429, 503 with `Retry-After`) is retried with the same token |
 | Metric `route` labels are templates, never raw URLs | `ApiClient` takes templates; `api-route-template` lint rule |
 | Metric names, labels and units follow the registry | `/metrics` registration checks = gincommon `metricslint` rules (`metrics:parity` in CI) |
 | One page identity; remotes never set `domain` | `/core` `initializeCore` once; `IdentityMismatchError` on a different second call |
@@ -682,6 +691,8 @@ The browser is single-threaded; concurrency here means overlapping promises and 
 | No `eval`, no inline script (CSP `script-src 'self'`) | preset (no eval devtools, `environment.globalThis`); Zod jitless; `examples:check`; `no-eval` lint |
 | Untrusted HTML only through DOMPurify + Trusted Types | `/security` `sanitizeHtml`; `no-unsafe-html` lint |
 | A remote never bundles the SDK | `sharedFor('remote')` `import: false`; `examples:check` |
+| A build uses the SDK its preset was made for | `SdkVersionPlugin` in every preset |
+| The ID token never lands in a URL | Global sign-out is a form POST (`id_token_hint` in the body); CSP `form-action` allows the IdP origin |
 | Contracts are generated, never edited | `contracts:check`, `docs:check` in CI |
 
 ## Release and distribution
@@ -693,7 +704,7 @@ All three packages share one version (`fixed`). The release flow:
 4. `npm-publish` publishes the three packages to **GitHub Packages** (`@bcbp-solutions-fzc-llc/*`), with a build-provenance attestation each, only if publishing is gated: required reviewers, or (this private repository on GitHub Team) an `npm` environment limited to release tags plus a tag ruleset over who may push them (`check-npm-environment.sh`).
 5. A **GitHub Release** carries the tarballs, a CycloneDX SBOM and Cosign-signed checksums.
 
-The first release is `v1.0.0-alpha.1` (2026-11-03); the latest is `v1.0.0-alpha.3` (2026-11-04).
+The first release is `v1.0.0-alpha.1` (2026-11-03); the latest is `v1.0.0-alpha.3` (2026-11-04). `1.0.0-alpha.4` is pending under `[Unreleased]` in CHANGELOG.md (not released): its breaking changes (the container global, the `/storage` key prefix, the CSP `form-action` for the sign-out POST, at most 8 Tier 3 labels, stricter lint rules) mean the shell and every remote upgrade together.
 
 During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`, so a shell with an older SDK refuses it at share negotiation. `1.0.0` is cut with the first environment, and SemVer is strict from then on (design doc §C3 "Versioning").
 
@@ -701,12 +712,13 @@ During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `
 
 | Layer | How |
 |---|---|
-| Unit | Vitest per subpath (`test/unit/<subpath>`). Node by default; `happy-dom` for React; `jsdom` for DOMPurify. Coverage gate ≥ 98 % statements of `packages/*/src` |
+| Unit | Vitest per subpath (`test/unit/<subpath>`). Node by default; `happy-dom` for React; `jsdom` for DOMPurify. Coverage gate ≥ 98 % statements of `packages/*/src` (`pnpm test`: 1519 tests in 61 files, 98.5 %) |
 | Integration / E2E | `test/integration`: subpaths wired together; `test/e2e`: the reference shell and remote booted end to end (both in-process, jsdom) |
-| Browser | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP: the keepalive budget on hide and tab close, page-lifecycle event order, SRI on lazy chunks (webpack and Rspack remotes), `AbortSignal.any` native and absent, Trusted Types (CI job `browser`); engine limits in `engine-notes.ts` |
+| Browser | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP: the keepalive budget on hide and tab close, page-lifecycle event order, SRI on lazy JS and CSS chunks (webpack and Rspack builds of the example remote and of `styled-remote/`), `AbortSignal.any` native and absent, Trusted Types (CI job `browser`); engine limits in `engine-notes.ts` |
 | Collector | `test/collector`: the reference two-tier Collector (`examples/collector`) in the Collector image, two gateways and two aggregators: per-stream routing, totals across device clocks, allowlists (`pnpm test-collector`, CI job `collector`); `examples/collector/test` keeps the allowlists equal to the registry |
 | Integrated | `test/stack`: the example shell in three engines against Keycloak, Envoy with the real IAM services, the distribution on floci and the two-tier Collector (`docker-compose.yml`); nightly in CI (`stack-nightly.yml`); findings in `docs/e2e/integrated-deployment-report.md` |
 | React floor | The typecheck, unit suite, build and example checks on React 19.0.0 (CI job `react-floor`) |
+| ESLint floor | The eslint-plugin's tests on ESLint 9, the lower major of its peer range (CI job `eslint-9`, `.github/scripts/eslint-9.sh`) |
 | Smoke | `test/smoke`: the example builds served with the CloudFront headers and rewrite, or a deployed shell (`SMOKE_BASE_URL`) |
 | Contract | Shared fixtures from platform-interop-tests (headers, identity, redaction, problem bodies) and the PUB-1 / P-35 cases, run by the SDK and by the example shell's ports |
 | Fake backends | A Keycloak fake at the HTTP level (PKCE, rotation, reuse revokes the session); `mockApi` / `mockProblem` |
@@ -729,7 +741,8 @@ A shell or remote conforms when:
   - it uses `useApi` / `useApiClient` with route templates;
   - it registers its page templates (`useRouteTemplate`) and keeps drafts in `storage(appId, { area: 'session' })` from `useBeforeAuthRedirect`.
 - Its own metrics use `getServiceMeter()` (Tier 3), and its CI runs `metricslint check` on `renderMetricInventory()`.
-- It serves the CloudFront response headers of `examples/cloudfront` (CSP with the three Trusted Types policies).
+- It serves the CloudFront response headers of `examples/cloudfront` (CSP with the three Trusted Types policies, and `form-action` allowing the IdP origin).
+- Its SDK and preset are the same version (`SdkVersionPlugin`); the shell and its remotes upgrade together across a breaking alpha.
 
 ## Threat model
 
@@ -740,10 +753,11 @@ A shell or remote conforms when:
 | An authorization code reused or injected | PKCE S256; one-time pending record per `state`; RFC 9207 `iss` check; ID-token `nonce`/`aud`/`azp`/`iss`/time checks |
 | A code from one realm exchanged at another | The `iss` check against the record's realm before any exchange |
 | An open redirect after login | `returnUrl` must pass `isSafeRedirect` (same origin; no protocol-relative, backslash or control-character tricks) |
-| Tenant data seen by another tenant on a shared browser | `/storage` namespaced by realm or `trial:<tenant_id>`; `clearAllAppStorage` on logout and switch; `anon` writes are no-ops |
-| A malicious remote entry | Manifest entries limited to same origin or exact allowed origins, checked again before the script; SRI when given; kill switch |
-| Telemetry leaking secrets or PII | Redaction (sensitive keys, JWT/Bearer, URL query), bounded stack size, consent; the Collector gateway drops per-browser attributes |
-| Forged telemetry flooding the metrics backend (`/otel` is public) | The gateway allowlists metric names and label values from the registry and cuts values at 128 characters; WAF rate rules on `/otel` (`examples/cloudfront`) |
+| Tenant data seen by another tenant on a shared browser | `/storage` namespaced by realm or `trial:<tenant_id>` under the SDK's key prefix; `clearAllAppStorage` on logout and switch, with the UI permissions, flags and read-only mark; other tabs follow, expired and loading ones included; `anon` writes are no-ops |
+| A malicious remote entry | Manifest entries limited to same origin or exact allowed origins, checked again before the script; SRI on the entry when given and on every lazy JS and CSS chunk; kill switch |
+| Telemetry leaking secrets or PII | Redaction (sensitive keys, JWT/Bearer, URL queries in every string and span attribute), bounded stack and attribute size, consent (withdrawing it drops what is queued); the Collector gateway drops per-browser attributes |
+| The ID token (name, email) in the browser history or an access log | Global sign-out POSTs it in a form body, never a URL query |
+| Forged telemetry flooding the metrics backend (`/otel` is public) | The gateway allowlists metric names, label keys (Tier 3: snake_case, not prohibited, at most 8) and label values from the registry, cuts values at 128 characters, records a `page_route` over 64 as `unknown` and keeps no resource attribute on metrics; Mimir per-tenant series limits; WAF rate rules on `/otel` (`examples/cloudfront`) |
 | A reload loop after a bad deploy or failed restore | Reload once per version; one `prompt=none` per tab |
 
 ## Developer tools

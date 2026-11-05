@@ -3,7 +3,7 @@ flowchart TD
     idx --> tt["1. installTrustedTypesPolicy()  —  /security"]
     tt --> core["2. initializeCore({ serviceName, domain: 'portal', environment, buildVersion })<br/>build-time constants, validated against the registry vocabulary"]
     core -->|throws| fatal["static 'unavailable' page, console only"]
-    core --> cfg["3. loadRuntimeConfig() → GET /config/runtime.json (no-cache) → zod (strict) → freeze<br/>setRuntimeConfig(cfg)"]
+    core --> cfg["3. loadRuntimeConfig() → GET /config/runtime.json (no-cache, 10 s timeout) → zod (strict) → freeze<br/>setRuntimeConfig(cfg)"]
     cfg -->|fails| fatal
     cfg --> consent["4. setConsentProvider(cmp)  —  before any export"]
     consent --> tel["5. initializeTracing · initializeLogging · initializeMetrics → /otel<br/>installGlobalErrorHandlers() · startWebVitals()  (never fatal)"]
@@ -16,6 +16,8 @@ flowchart TD
     auth -->|"authenticated"| wrong{"isWrongWorkspace?"}
     wrong -->|yes| wrongscreen["wrong-workspace screen (sign out / switch); stop"]
     wrong -->|no| ctx["8. sessionContextSource.load()  (IAM P-35; failure → undefined: deny-all, no tenant flags)<br/>setAuthorizer(roleMapAuthorizer) · setAuthzSubject · rememberWorkspace (URL → /t/&lt;slug&gt;/)<br/>setFlagProvider(sessionContextFlagProvider) · await initializeI18n()"]
+    ctx -->|"a sign-out meanwhile (any tab)"| stop["stop: the app is never mounted"]
     ctx --> manifest["9. loadManifest() → GET /remotes/manifest.json · startVersionPolling()<br/>(failure: every remote slot shows its fallback)"]
     manifest --> render["10. createRoot().render(&lt;PlatformProvider shell&gt;&lt;App/&gt;)<br/>routes render &lt;RemoteBoundary&gt; lazily"]
-    render --> expired["idp.subscribe: 'expired' → session-ended dialog → signInAgain()"]
+    render --> expired["idp.subscribe: 'expired' → session-ended dialog → signInAgain()<br/>'signed-out' → unmount the app, signed-out screen"]
+    render -->|"P-35 failed transiently (network, timeout, 429, 5xx)"| ctxretry["retry P-35 3 times (after 1 s, 2 s, 4 s); on success:<br/>setAuthzSubject · session flags · rememberWorkspace · re-render<br/>(a sign-out stops the retries)"]

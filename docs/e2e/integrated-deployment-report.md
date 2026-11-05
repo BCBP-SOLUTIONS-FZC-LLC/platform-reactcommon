@@ -8,7 +8,7 @@ only once these parts ran together. Unit, integration, smoke and the single-orig
 
 - Stack: `docker-compose.yml` (compose project `reactcommon-e2e`)
 - Suite: `test/stack/e2e.spec.ts`, config `test/stack/playwright.config.ts`
-- Run date: 2026-10-31. Repository: `test/layout` at `5c9645e` (plus this change). Re-run on 2026-11-01 with the fixes for Issues 1 and 2 (status lines below).
+- Run date: 2026-10-31. Repository: `test/layout` at `5c9645e` (plus this change). Re-run on 2026-11-01 with the fixes for Issues 1 and 2 (status lines below). Last full run: 2026-11-05 on PR #46's code (§7, run 9).
 
 ## 1. Environment
 
@@ -104,6 +104,8 @@ pnpm run stack-down                  # containers, network, volumes and floci's 
   - `STACK_PACK_TRACE_REASON=true`: Issue 14.
   - `DEPLOY_SET_CACHE_CONTROL=false`: Issue 15, the deploy as the README literally says.
   - `STACK_ACME_TOKEN_LIFESPAN`, `AUTHZ_ORG_MEMBERSHIP_TIMEOUT`.
+- The remote deploys under `<package version>-<12 hex of its entry's sha256>` (`remoteDeployVersion()` in `scripts/prepare.mjs`, `REMOTE_VERSION` in `.state/stack.env`, read by the tests as `STACK.deployedRemoteVersion()`). `docker/floci/deploy-web.sh` never overwrites a version: the same build again is skipped, different content under a deployed version fails the deploy.
+- `stack-up` force-recreates the Collectors, Envoy and the edge shim: they read their bind-mounted config only at start, so a stack left running would keep old config.
 - Evidence the tests read: `.state/otel/{traces,logs}.jsonl` (Collector), `.state/logs/edge.jsonl` (shim) and `docker logs reactcommon-e2e-envoy-1` (JSON access log with the upstream identity headers).
 
 ## 3. Test matrix and results
@@ -131,8 +133,8 @@ The emulator rows `E-n` are in §6.
 | 11 | Refresh lineage in one tab: rotation, no reuse error (two refreshes of a 60 s token take up to 100 s; the wait is 120 s) | ✅ | ✅ | ✅ |
 | 12 | Refresh cadence with a 60 s token: exactly one refresh (200) in the first 55 s | ✅ (Issue 4 fixed) | ✅ | ✅ |
 | 13 | Two tabs, two refresh lineages in one Keycloak session (`revokeRefreshToken=true`) | ✅ | ✅ | ✅ |
-| 14 | Example offers a sign-out control (`useSignOut`); the default sign-out goes to end-session and back to a signed-out app | ✅ (Issues 6, 10 fixed) | ✅ | ✅ |
-| 15 | Global logout: end-session with the SDK's exact parameters → back to `/`, "You are signed out", SSO gone | ✅ | ✅ | ✅ |
+| 14 | Example offers a sign-out control (`useSignOut`); the default sign-out is a form POST to end-session (`id_token_hint`, `client_id`, `post_logout_redirect_uri` in the body, allowed by the CSP's `form-action`) and comes back to a signed-out app | ✅ (Issues 6, 10 fixed) | ✅ | ✅ |
+| 15 | Global logout: a form POST to end-session with the SDK's exact parameters → back to `/`, "You are signed out", SSO gone | ✅ | ✅ | ✅ |
 | 16 | Shared device: after Sign out, a fresh Keycloak form with nothing of alice's; bob signs in; P-35 is bob's | ✅ (Issue 10 fixed) | ✅ | ✅ |
 | 17 | Cross-tab sign-out reaches the open tab: the app is unmounted (not left under the dialog), "You are signed out" shown | ✅ (Issue 7 fixed) | ✅ | ✅ |
 | 18 | Real CSP violation → `/csp-report` → Lambda → Collector | ⚠️ E-6 | ✅ (Issue 11 fixed) | ✅ |
@@ -265,7 +267,7 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 
 ### Issue 10 — Shared device: after a local sign-out, `prompt=login` shows the previous user
 
-- **Status: fixed** (decided 2026-11-03, with IAM's recommendation). `IdentityProvider.logout()`, and so the shell's `signOut` and `useSignOut()`, is **global by default**: it ends the Keycloak SSO session at the realm's end-session endpoint and returns to `<origin>/`, so the next person on the device signs in from scratch. `{ global: false }` is the documented opt-out for a local-only sign-out. The example shell relies on the default. Tests: `test/unit/auth/oidc.test.ts` (the default sends the end-session request; `{ global: false }` sends none), `test/unit/react` (`useSignOut()` passes no option, so the provider's default applies), `test/e2e/shell.test.tsx` (the Sign out button goes to end-session and back to a signed-out app), stack test 16.
+- **Status: fixed** (decided 2026-11-03, with IAM's recommendation). `IdentityProvider.logout()`, and so the shell's `signOut` and `useSignOut()`, is **global by default**: it ends the Keycloak SSO session at the realm's end-session endpoint (since 1.0.0-alpha.4, `[Unreleased]`: a form POST, the ID token in the body, so the shell's CSP `form-action` must allow the IdP origin) and returns to `<origin>/`, so the next person on the device signs in from scratch. `{ global: false }` is the documented opt-out for a local-only sign-out. The example shell relies on the default. Tests: `test/unit/auth/oidc.test.ts` (the default sends the end-session request; `{ global: false }` sends none), `test/unit/react` (`useSignOut()` passes no option, so the provider's default applies), `test/e2e/shell.test.tsx` (the Sign out button goes to end-session and back to a signed-out app), stack test 16.
 - **Before:** IAM needed nothing changed on their side and recommended making **Sign out** a full Keycloak sign-out (`logout({ global: true })`) by default, at least on shared devices (2026-11-03). Keycloak already allows the redirect back (`<origin>/*` is registered for `tender-web`); test 15 shows it working. They confirm that `prompt=login` with the hint cleared does not help: while the previous user's Keycloak session is alive, the re-login page still shows their username.
 - **Symptom:** The next "Sign in" carries `prompt=login`. Keycloak, with alice's SSO session still alive, shows "Please re-authenticate to continue" with **alice's username** (`#kc-attempted-username`) and only a password field. Bob must find "Restart login" (`#reset-login`).
 - **Root cause:** A local logout leaves the Keycloak SSO session alive by design. `prompt=login` re-authenticates the *same* subject.
@@ -482,6 +484,7 @@ After review round 4, with the machine awake and on AC power:
 | 6 (review round 5: `/otel` through the reference two-tier Collector) | **65** | **0** (1 skipped) | 15.2 min | test 24 added in each browser |
 | 7 (IAM fixes: authz-enrichment #40, realm-provisioner #49) | **65** | **0** (1 skipped) | 15.2 min | Issue 12 strict in tests 1, 8, 10; Issue 16 asserted in test 1 |
 | 8 (sign-out global by default, Issue 10) | **65** | **0** (1 skipped) | 15.8 min | tests 14 and 16 on the real Sign out button, strict |
+| 9 (2026-11-05, PR #46's code: 1.0.0-alpha.4 in `[Unreleased]`) | **65** | **0** (1 skipped: the WebKit clock test) | 15.6 min | expected failures: E-3/E-4 (floci WAF) and gateway Issue 9; sign-out asserted as a form POST; the remote deployed under a content-hashed version |
 
 To re-verify, rerun with the machine awake and on AC power:
 

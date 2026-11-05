@@ -13,10 +13,10 @@ sequenceDiagram
     Note over D: key = URL + token + headers,<br/>concurrent identical GETs share one call<br/>(aborts only when every subscriber aborts)
     D->>X: startCall: URL from baseUrl + template,<br/>x-request-id, Idempotency-Key (POST), span "HTTP GET"
     X->>T: getAccessToken() — same origin only
-    loop attempts (GET/PUT/DELETE, or retry.unsafe): 1 + 2 retries by default
+    loop attempts (GET/PUT/DELETE, or retry.unsafe): 1 + 2 retries by default (at most 5)
         X->>A: attempt(token)
         Note over A: offline → NetworkError(offline) at once<br/>drop FORBIDDEN identity headers (dev: throw)<br/>x-request-id · x-session-id: same origin or allowlist<br/>traceparent: same origin or allowlist<br/>Authorization: same origin only<br/>deadline 35 s (api.timeoutMs)
-        A->>F: fetch(url, headers, signal = caller ∪ timeout)
+        A->>F: fetch(url, headers, signal = caller ∪ timeout,<br/>redirect: 'manual' when it carries the token or correlation headers)
         F-->>A: Response / error
         A-->>X: Response, or TimeoutError / NetworkError / AbortedError
         alt 401 and not yet refreshed
@@ -26,7 +26,9 @@ sequenceDiagram
             X->>X: sleep Retry-After (≤ 30 s) or full-jitter backoff min(5 s, 250 ms·2ⁿ)
         end
     end
-    alt 2xx
+    alt redirect, or a 2xx body that is not the JSON it claims
+        X-->>C: throw synthetic 502 ProblemError (the redirect is not followed)
+    else 2xx
         X->>O: record(status) · http.response.status_code
         X-->>C: { data, status, headers, requestId, traceId (X-Trace-ID) }
     else non-2xx

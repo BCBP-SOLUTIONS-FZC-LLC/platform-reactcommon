@@ -6,8 +6,8 @@ graph LR
         page["pageRoute · routeTemplates"]
         authf["identityProvider · tokenSource · storageNamespace"]
         az["authorizer · authzSubject · flagProvider"]
-        mf["manifest · remotes (mfe → ownerDomain) · appUpdate"]
-        ui["i18n · navigator · trustedTypesPolicy · readOnlyDenied"]
+        mf["manifest · remotes (mfe → ownerDomain) · appUpdate<br/>remoteContainers (one per remote per page)"]
+        ui["i18n · navigator · trustedTypesPolicy · readOnlyDenied<br/>beforeReload (listeners run before an SDK reload)"]
         ev["events: i18n · flags · authz · read-only"]
     end
 
@@ -27,4 +27,4 @@ graph LR
     react -->|read| az
     react -->|read| authf
 
-    dup["second SDK copy<br/>(a remote that bundled it)"] -.->|"same major: binds to the existing runtime<br/>other major: own runtime + one error log"| rt
+    dup["second SDK copy<br/>(a remote that bundled it)"] -.->|"one error log · compatible version (same major;<br/>for a pre-release the same version): binds to the existing runtime<br/>otherwise: its own runtime"| rt

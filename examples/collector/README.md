@@ -28,10 +28,10 @@ what the SDK can send and nothing else:
 | `page_route` length | at most 64 characters | recorded as `unknown` |
 | Any label value | the first 128 characters | cut |
 
-A Tier 3 (service-owned) metric declares its own labels, so the gateway keeps them, but bounds them: the
-SDK sets no limit on a Tier 3 metric's label count, so the gateway keeps at most 8 besides the const
-labels (with more, which 8 survive is arbitrary, so declare no more), and each value is cut at 128
-characters.
+A Tier 3 (service-owned) metric declares its own labels, so the gateway keeps them, but bounds them: at
+most 8 besides the const labels, the limit the SDK enforces at registration (`getServiceMeter` throws
+`InvalidMetricError`, rule `label_vocabulary`, for a 9th), so a point with more came from something other
+than the SDK (with more, which 8 survive is arbitrary); each value is cut at 128 characters.
 The SDK itself bounds each Tier 3 label at 100 distinct values per page.
 
 ## Set Mimir's series limits too
