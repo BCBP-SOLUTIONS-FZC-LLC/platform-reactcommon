@@ -345,6 +345,8 @@ During `1.0.0-alpha.N`, a breaking change bumps `N`. Each one is listed in [CHAN
 
 **`alpha.4` → `alpha.5`**: no breaking changes; `runtime.json` gains the optional `auth.signInUrl`. The shell upgrades first (a remote built against `alpha.5` requires `^1.0.0-alpha.5`, which an `alpha.4` shell refuses), and a `runtime.json` sets `auth.signInUrl` only once its page runs `alpha.5` (earlier versions refuse the unknown key).
 
+**`alpha.5` → `alpha.6`** (pending under `[Unreleased]`): no breaking changes. To build the shell once for every environment, add `environment` to each environment's `runtime.json`, load the config before `initializeCore` and pass `cfg.environment` (`examples/shell/src/bootstrap.tsx`); then drop the build-time environment. Shells that keep calling `initializeCore` first still work. Set `environment` only once the page runs `alpha.6`.
+
 `1.0.0` is cut with the first environment, and SemVer is strict from then on.
 
 ---

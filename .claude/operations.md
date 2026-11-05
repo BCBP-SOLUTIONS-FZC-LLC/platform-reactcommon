@@ -23,7 +23,7 @@ Commands, CI, releases and the Docker suites. The README's *Local development*, 
 | `pnpm run stack-up` · `test-stack` · `stack-down [--purge]` | The integrated stack; `stack-up` builds the IAM images with `GO_PRIVATE_TOKEN` or `gh auth token` (a BuildKit secret, never written); ~16 min of tests |
 | `pnpm contracts:sync [--update-pins]` / `contracts:check` | Generated contracts from the pinned commits |
 | `pnpm metrics:parity` · `metrics:proposal` | SDK rules vs gincommon `metricslint`; the Tier 1 proposal judged by it |
-| `pnpm api` · `exports:sync` · `docs:sync` | Regenerate API reports, exports + SDK facts, generated docs + diagram blocks |
+| `pnpm api` · `exports:sync` · `docs:sync` | Regenerate API reports (LF line endings, `scripts/api-report.ts`), exports + SDK facts, generated docs + diagram blocks |
 | `pnpm publish:check` | After `.github/scripts/pack-packages.sh`: tarballs publishable (scope, registry, repository, `engines.node >=22`, README in each), dist-tag |
 
 ## CI (`.github/workflows/`)

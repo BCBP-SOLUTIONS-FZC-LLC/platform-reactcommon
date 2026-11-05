@@ -502,7 +502,7 @@ flowchart TD
 
 ## Telemetry pipeline
 
-Logs, traces and metrics leave the page over OTLP/HTTP to the same-origin `/otel` path. CloudFront forwards it to the OTel Collector; there is no Faro SDK and no second pipeline. When the page is hidden or closing, the three signals share one 60 KiB keepalive budget in a fixed order (metrics' share, logs, spans), and every request that must outlive the tab starts inside the listener (`src/internal/unload`, LLD §7.5). The reference Collector configuration is two-tier (`examples/collector`, LLD §7.6): a gateway that scrubs, allowlists and routes each metric stream to one aggregator, which converts delta to cumulative. Everything is redacted with the same rules as gincommon's log sanitizer, gated on consent, and queued with fixed bounds, so a slow or unreachable collector costs a fixed amount of memory. See [docs/observability](docs/observability/README.md).
+Logs, traces and metrics leave the page over OTLP/HTTP to the same-origin `/otel` path. CloudFront forwards it to the OTel Collector; there is no Faro SDK and no second pipeline. When the page is hidden or closing, the three signals share one 60 KiB keepalive budget in a fixed order (metrics' share, logs, spans), and every request that must outlive the tab starts inside the listener (`src/internal/unload`, LLD §7.5). The reference Collector configuration is two-tier (`examples/collector`, LLD §7.6): a gateway that scrubs, allowlists and routes each metric stream to one aggregator, which converts delta to cumulative. Everything is redacted with the same rules as gincommon's log sanitizer, gated on consent, and queued with fixed bounds, so a slow or unreachable collector costs a fixed amount of memory. Nothing is printed to the console outside local and dev while logging runs; before it starts, with telemetry off, or on a remote's standalone page (no collector), `warn` and `error` go to the console, redacted (LLD §7.2). See [docs/observability](docs/observability/README.md).
 
 > Source: [`docs/architecture/mermaid/telemetry-pipeline.mmd`](docs/architecture/mermaid/telemetry-pipeline.mmd)
 
@@ -704,7 +704,7 @@ All three packages share one version (`fixed`). The release flow:
 4. `npm-publish` publishes the three packages to **GitHub Packages** (`@bcbp-solutions-fzc-llc/*`), with a build-provenance attestation each, only if publishing is gated: required reviewers, or (this private repository on GitHub Team) an `npm` environment limited to release tags plus a tag ruleset over who may push them (`check-npm-environment.sh`).
 5. A **GitHub Release** carries the tarballs, a CycloneDX SBOM and Cosign-signed checksums.
 
-The first release is `v1.0.0-alpha.1` (2026-11-03); `v1.0.0-alpha.4` (2026-11-05)'s breaking changes (the container global, the `/storage` key prefix, the CSP `form-action` for the sign-out POST, at most 8 Tier 3 labels, stricter lint rules) mean the shell and every remote upgrade together. The latest is `v1.0.0-alpha.5` (2026-11-05): the optional `auth.signInUrl`, not breaking (the shell upgrades first).
+The first release is `v1.0.0-alpha.1` (2026-11-03); `v1.0.0-alpha.4` (2026-11-05)'s breaking changes (the container global, the `/storage` key prefix, the CSP `form-action` for the sign-out POST, at most 8 Tier 3 labels, stricter lint rules) mean the shell and every remote upgrade together. The latest is `v1.0.0-alpha.5` (2026-11-05): the optional `auth.signInUrl`, not breaking (the shell upgrades first). Pending under `[Unreleased]` (the next release, `1.0.0-alpha.6`, not breaking): `runtime.json` names the `environment`, so one shell build serves every environment; `formatDate` takes calendar dates; `warn` and `error` reach the console while logging is not running.
 
 During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`, so a shell with an older SDK refuses it at share negotiation. `1.0.0` is cut with the first environment, and SemVer is strict from then on (design doc §C3 "Versioning").
 
@@ -735,7 +735,8 @@ A shell or remote conforms when:
 - It builds with `platformWebpackConfig({ role, name, exposes })`, `platformRspackConfig(…)` or Rsbuild's `pluginPlatform(…)`, and adds no other shared config for React, OTel or the SDK (with Rsbuild: no `moduleFederation` option).
 - **Shell:**
   - it runs the bootstrap in order, implements `WorkspaceResolver` and `SessionContextSource` as ports, and passes the PUB-1/P-35 contract cases;
-  - it shows its own signed-out, session-ended and wrong-workspace screens, and never signs in automatically after a logout.
+  - it shows its own signed-out, session-ended and wrong-workspace screens, and never signs in automatically after a logout;
+  - it is built once for every environment: it loads `runtime.json` before `initializeCore` and takes `environment` from it, and each environment's deployed `runtime.json` sets its own `environment` (the deploy pipeline checks it matches the target).
 - **Remote:**
   - it wraps its root in `MFEErrorBoundary` (or is loaded through `RemoteBoundary`);
   - it uses `useApi` / `useApiClient` with route templates;
