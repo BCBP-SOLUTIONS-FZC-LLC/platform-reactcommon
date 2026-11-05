@@ -273,7 +273,7 @@ function EditTenderForm({ id }: { id: string }) {
 }
 ```
 
-A remote never initializes anything; it reads the shell's state. The shell renders it with `<RemoteBoundary remote="tenders" module="./EditTender" props={{ id }} />`. Full example: [`examples/remote-tenders`](examples/remote-tenders/src/EditTender.tsx).
+A remote's code that also runs inside a shell never initializes anything; it reads the shell's state. A remote's own standalone page, when no shell is present, is its host page: it runs `initializeCore`, `loadRuntimeConfig` and `setRuntimeConfig` itself, and a standalone page that sends a signed-out user to sign in reads `tryGetConfig()?.auth.signInUrl`. The shell renders it with `<RemoteBoundary remote="tenders" module="./EditTender" props={{ id }} />`. Full example: [`examples/remote-tenders`](examples/remote-tenders/src/EditTender.tsx).
 
 ### 4. Implementing the IAM ports (shell)
 
@@ -528,7 +528,7 @@ test/
 
 ## Runtime configuration
 
-The SDK reads no environment variables in the browser. Its configuration is one `/config/runtime.json` per environment, loaded by the shell and validated strictly. Unknown keys fail. The full reference is in [LLD §12.1](docs/lld/platform-reactcommon-lld.md#121-runtimejson).
+The SDK reads no environment variables in the browser. Its configuration is one `/config/runtime.json` per environment, loaded by the host page (the shell, or a remote's standalone page) and validated strictly. Unknown keys fail. The full reference is in [LLD §12.1](docs/lld/platform-reactcommon-lld.md#121-runtimejson).
 
 | Key | Default | Purpose |
 |---|---|---|
@@ -539,6 +539,7 @@ The SDK reads no environment variables in the browser. Its configuration is one 
 | `auth.idpOrigin` · `clientId` · `scopes` | `https://auth.bcbpsolutions.com` · `tender-web` · `["openid"]` | Keycloak |
 | `auth.trialRealm` · `paidRealmPrefix` · `workspacePathPrefix` | `trial` · `tenant-` · `/t/` | Workspace (realm) rules |
 | `auth.idleTimeoutMs` · `auth.redirectPath` | — (**required**) | Idle timeout (1 min – 8 h); the callback path |
+| `auth.signInUrl` | none | Where users sign in (the shell's URL), for pages without a shell, such as a remote run standalone |
 | `flags` | `{}` | Platform flags and kill switches |
 | `remotes.killSwitch` · `allowedOrigins` | `[]` · `[]` | Remotes switched off; extra entry origins |
 | `remotes.loadTimeoutMs` · `remotes.retries` | — (**required**) | Remote loading |

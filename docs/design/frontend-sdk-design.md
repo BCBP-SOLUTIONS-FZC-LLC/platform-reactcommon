@@ -203,7 +203,8 @@ export interface RuntimeConfig {
                    readonly paidRealmPrefix: string /* 'tenant-': a resolved paid realm must equal `${prefix}${slug}` (sanity check) */;
                    readonly workspacePathPrefix: string /* '/t/': paid workspace URL = `/t/<slug>/…` */;
                    readonly clientId: string /* 'tender-web' */; readonly scopes: readonly string[];
-                   readonly idleTimeoutMs: number; readonly redirectPath: string };
+                   readonly idleTimeoutMs: number; readonly redirectPath: string;
+                   readonly signInUrl?: string /* no default: the shell's sign-in URL, for pages without a shell */ };
                    // issuer = `${idpOrigin}/realms/${realm}`: one issuer per realm, never a single fixed issuer
   readonly flags: Readonly<Record<string, boolean | string | number>>;
   readonly remotes: { readonly killSwitch: readonly string[]; readonly loadTimeoutMs: number; readonly retries: number;
@@ -212,11 +213,11 @@ export interface RuntimeConfig {
   readonly appUpdate: { readonly pollIntervalMs: number };
 }
 export class RuntimeConfigError extends Error { readonly issues: readonly { path: string; message: string }[] }
-export function loadRuntimeConfig(opts?: { url?: string /* '/config/runtime.json' */; signal?: AbortSignal }): Promise<RuntimeConfig>; // shell only
-export function setRuntimeConfig(c: RuntimeConfig): void;   // shell only, deep-freezes, set-once
+export function loadRuntimeConfig(opts?: { url?: string /* '/config/runtime.json' */; signal?: AbortSignal }): Promise<RuntimeConfig>; // host page only (the shell, or a remote's standalone page)
+export function setRuntimeConfig(c: RuntimeConfig): void;   // host page only (the shell, or a remote's standalone page), deep-freezes, set-once
 ```
 
-Every exact origin (`auth.idpOrigin`, `api.propagationAllowlist`, `remotes.allowedOrigins`) is `https:`. An
+Every exact origin (`auth.idpOrigin`, `api.propagationAllowlist`, `remotes.allowedOrigins`) and the `auth.signInUrl` URL is `https:`. An
 `http:` origin on `localhost`, `127.0.0.1` or `[::1]` is accepted only when the page environment is `local`,
 `dev` or `test` (CI and integration runs against local servers), checked by `loadRuntimeConfig` and `setRuntimeConfig`; so `initializeCore` runs first, and a
 leftover dev origin in a production `runtime.json` fails the load. `telemetry.enabled: false` (for a

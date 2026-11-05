@@ -7,7 +7,7 @@ What every other area stands on: who the page is, what the user consented to, ho
 | Subpath | What it does | Main exports |
 |---|---|---|
 | `/core` | The page identity (`domain`, `service`, `environment`, `buildVersion`) validated against the platform registry; consent; the RUM session id shared by tabs; request ids; log-safe sanitizing | `initializeCore`, `getIdentity`, `setConsentProvider`, `hasConsent`, `getSessionId`, `newRequestId`, `sanitizeString`, `sanitizeFields`, `isSensitiveKey`, `DOMAINS`, `ENVIRONMENTS` |
-| `/config` | `/config/runtime.json`: loaded once by the shell, validated strictly (an unknown key fails), frozen, read by everyone | `loadRuntimeConfig`, `setRuntimeConfig`, `getConfig`, `tryGetConfig`, `RuntimeConfigSchema`, `RuntimeConfigError` |
+| `/config` | `/config/runtime.json`: loaded once by the host page (the shell, or a remote's standalone page), validated strictly (an unknown key fails), frozen, read by everyone | `loadRuntimeConfig`, `setRuntimeConfig`, `getConfig`, `tryGetConfig`, `RuntimeConfigSchema`, `RuntimeConfigError` |
 | `/problem` | RFC 9457 Problem Details as platform-gincommon and platform-fastapicommon send them, and the other API errors | `parseProblemResponse`, `ProblemError`, `isProblemError`, `PlatformProblemTypes`, `defineProblemType`, `toFieldErrorMap`, `gatewayDenyCode`, `TimeoutError`, `NetworkError`, `AbortedError` |
 
 ## How it's used
@@ -20,7 +20,7 @@ setRuntimeConfig(await loadRuntimeConfig());
 setConsentProvider(cmp);
 ```
 
-A remote never initializes anything; it reads: `getIdentity()`, `tryGetConfig()`, `hasConsent('telemetry')`. Errors from an API call are matched by type:
+A remote's code that also runs inside a shell never initializes anything; it reads: `getIdentity()`, `tryGetConfig()`, `hasConsent('telemetry')`. A remote's own standalone page, when no shell is present, is its host page: it runs `initializeCore`, `loadRuntimeConfig` and `setRuntimeConfig` itself ([LLD §12.1](../lld/platform-reactcommon-lld.md#121-runtimejson)). Errors from an API call are matched by type:
 
 ```ts
 if (isProblemError(e) && e.is(PlatformProblemTypes.ValidationFailed)) setErrors(toFieldErrorMap(e));

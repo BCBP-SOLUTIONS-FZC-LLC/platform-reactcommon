@@ -51,6 +51,11 @@ export interface RuntimeConfig {
     readonly idleTimeoutMs: number;
     /** Same-origin path Keycloak redirects back to. */
     readonly redirectPath: string;
+    /**
+     * Where users sign in: the shell's page, an absolute https URL (http only for localhost); no
+     * default. For pages without a shell, e.g. a remote run standalone, to send a signed-out user there.
+     */
+    readonly signInUrl?: string | undefined;
   };
   /** Platform flags (kill switches, rollout). Names are opaque; default {}. */
   readonly flags: Readonly<Record<string, boolean | string | number>>;
@@ -115,6 +120,31 @@ const exactOrigin = checkedString(
   (value) => `must be an exact https origin (http only for localhost), got ${JSON.stringify(value)}`,
 );
 
+/**
+ * An absolute URL in normal form: https, or http on a local host only (refused outside local, dev
+ * and test as for origins); no user info and no fragment.
+ */
+const absoluteUrl = checkedString(
+  (value) => {
+    let url: URL | undefined;
+    try {
+      url = new URL(value);
+    } catch {
+      url = undefined;
+    }
+    return (
+      url !== undefined &&
+      url.href === value &&
+      url.username === '' &&
+      url.password === '' &&
+      url.hash === '' &&
+      (url.protocol === 'https:' || (url.protocol === 'http:' && LOCAL_HOSTS.has(url.hostname)))
+    );
+  },
+  (value) =>
+    `must be an absolute https URL in normal form, without user info or fragment (http only for localhost), e.g. 'https://app.example.com/', got ${JSON.stringify(value)}`,
+);
+
 /** A same-origin absolute path: no scheme, no '//', no '\', no query or fragment, no dot segments. */
 const isSameOriginPath = (value: string): boolean =>
   /^\/(?!\/)[^\s?#\\]*$/.test(value) && !value.split('/').some((segment) => segment === '.' || segment === '..') && !/[\p{Cc}]/u.test(value);
@@ -173,6 +203,7 @@ const schema = z.strictObject({
       scopes: z._default(z.array(scopeToken).check(z.refine((s: string[]) => s.includes('openid'), "must include 'openid'")), ['openid']),
       idleTimeoutMs: intMs(60_000, 8 * HOUR_MS),
       redirectPath: sameOriginPath,
+      signInUrl: z.optional(absoluteUrl),
     })
     .check(
       z.refine((a: { trialRealm: string; paidRealmPrefix: string }) => !a.trialRealm.startsWith(a.paidRealmPrefix), {

@@ -38,6 +38,7 @@ export interface RuntimeConfig {
         readonly scopes: readonly string[];
         readonly idleTimeoutMs: number;
         readonly redirectPath: string;
+        readonly signInUrl?: string | undefined;
     };
     readonly flags: Readonly<Record<string, boolean | string | number>>;
     // (undocumented)
