@@ -529,6 +529,14 @@ describe('GET deduplication', () => {
     expect(calls).toHaveLength(2); // not cached once settled
   });
 
+  it('shares a text (or empty) answer as is: nothing to copy', async () => {
+    handler = () => new Response('plain text', { headers: { 'content-type': 'text/plain' } });
+    const api = createApiClient();
+    const [a, b] = await Promise.all([api.get<string>('/t'), api.get<string>('/t')]);
+    expect(calls).toHaveLength(1);
+    expect([a.data, b.data]).toEqual(['plain text', 'plain text']);
+  });
+
   it("gives each subscriber its own data, so one caller's mutation never reaches another", async () => {
     handler = () => json({ items: [3, 1, 2] });
     const api = createApiClient();

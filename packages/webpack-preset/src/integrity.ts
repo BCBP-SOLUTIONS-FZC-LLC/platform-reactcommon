@@ -129,6 +129,7 @@ function lazyFile(chunk: Chunk, ext: Ext, onDemand?: Set<Chunk>): string | undef
 const TAG = /<(script|link)\b[^>]*>/gi;
 const SRC = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
 const HREF = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+const INTEGRITY_ATTR = /\bintegrity\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i;
 const STYLESHEET = /\brel\s*=\s*(?:"\s*stylesheet\s*"|'\s*stylesheet\s*'|stylesheet(?=[\s/>]))/i;
 
 /** The emitted asset with `ext` a URL names (publicPath stripped), or undefined for another URL. */
@@ -160,12 +161,15 @@ function pinTags(compilation: Compilation, html: string, add: boolean): { html: 
     const asset = tagAsset(compilation, tag, element);
     if (!asset) return tag;
     const want = integrityOf(compilation.getAsset(asset)!.source.buffer());
-    const have = /\bintegrity\s*=\s*"([^"]*)"/i.exec(tag)?.[1];
+    // Quoted, single-quoted or unquoted: html-webpack-plugin's minifier drops the quotes, and a second
+    // attribute added next to an existing one would lose (the browser uses the first).
+    const m = INTEGRITY_ATTR.exec(tag);
+    const have = m ? (m[1] ?? m[2] ?? m[3]) : undefined;
     if (!add) {
       if (have !== want) wrong.push(asset);
       return tag;
     }
-    if (have !== undefined) return tag.replace(/\bintegrity\s*=\s*"[^"]*"/i, `integrity="${want}"`);
+    if (m) return tag.replace(INTEGRITY_ATTR, `integrity="${want}"`);
     const cross = /\bcrossorigin\b/i.test(tag) ? '' : ' crossorigin="anonymous"';
     return tag.replace(/\s*\/?>$/, (end) => ` integrity="${want}"${cross}${end}`);
   });

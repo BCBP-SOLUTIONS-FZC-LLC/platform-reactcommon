@@ -272,6 +272,71 @@ describe('lazily loaded CSS: integrity', () => {
     await expect(build(join(root, 'dist2'), [rewriteCss])).rejects.toThrow(/index\.html loads assets\/main\.\S+\.css without its current integrity/);
   });
 
+  it('Rspack: a shell whose CSS only loads at startup builds with runtimeChunk: \'single\' (review 3)', async () => {
+    const root = mkdtempSync(join(dir, 'rs-initial-css-'));
+    fakeSdk(root);
+    writeFileSync(join(root, 'shell.js'), "import './shell.css';\nimport('./bootstrap.js');\n");
+    writeFileSync(join(root, 'shell.css'), 'body { margin: 0; }\n');
+    writeFileSync(join(root, 'bootstrap.js'), 'export const ready = 1;\n');
+    const preset = platformRspackConfig({ role: 'shell', mode: 'production' });
+    await expect(
+      compileRspack({
+        ...preset,
+        context: root,
+        entry: { main: './shell.js' },
+        output: { ...preset.output, path: join(root, 'dist') },
+        optimization: { ...preset.optimization, runtimeChunk: 'single' },
+        module: { rules: [{ ...cssModulesRule(rspack.CssExtractRspackPlugin.loader), type: 'javascript/auto' }] },
+        plugins: [...(preset.plugins ?? []), new rspack.CssExtractRspackPlugin({ filename: 'assets/[name].[contenthash].css' })],
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('the HTML pinning leaves other links and external URLs alone, and corrects an integrity already there', async () => {
+    const HtmlWebpackPlugin = createRequire(join(import.meta.dirname, '../../../examples/shell/package.json'))('html-webpack-plugin') as new (o: object) => webpack.WebpackPluginInstance;
+    const root = mkdtempSync(join(dir, 'html-edge-'));
+    fakeSdk(root);
+    writeFileSync(join(root, 'shell.js'), "import('./bootstrap.js');\n");
+    writeFileSync(join(root, 'bootstrap.js'), 'export const ready = 1;\n');
+    writeFileSync(
+      join(root, 'index.html'),
+      '<!doctype html><html><head>' +
+        '<link rel="preload" href="/assets/font.woff2" as="font">' + // not a stylesheet: left as is
+        '<script src="https://cdn.example/analytics.js"></script>' + // not an emitted asset: left as is
+        '</head><body></body></html>\n',
+    );
+    const preset = platformWebpackConfig({ role: 'shell', mode: 'production' });
+    const out = join(root, 'dist');
+    const stale: webpack.WebpackPluginInstance = {
+      // Another plugin wrote a stale integrity on the bundle's tag: the pinning replaces it.
+      apply(compiler) {
+        compiler.hooks.thisCompilation.tap('stale', (c) => {
+          (HtmlWebpackPlugin as unknown as { getHooks(c: webpack.Compilation): { alterAssetTags: { tap(n: string, f: (d: { assetTags: { scripts: { attributes: Record<string, string> }[] } }) => unknown): void } } })
+            .getHooks(c)
+            .alterAssetTags.tap('stale', (d) => {
+              for (const t of d.assetTags.scripts) t.attributes.integrity = 'sha384-stale';
+              return d;
+            });
+        });
+      },
+    };
+    await compileWebpack({
+      ...preset,
+      context: root,
+      entry: { main: './shell.js' },
+      output: { ...preset.output, path: out },
+      plugins: [...preset.plugins!, new HtmlWebpackPlugin({ template: './index.html', inject: 'body', scriptLoading: 'defer' }), stale],
+    });
+    const html = readFileSync(join(out, 'index.html'), 'utf8');
+    // html-webpack-plugin minifies the HTML: attribute quotes are dropped.
+    expect(html).toMatch(/<link rel="?preload"? href="?\/assets\/font\.woff2"? as="?font"?>/);
+    expect(html).toMatch(/<script src="?https:\/\/cdn\.example\/analytics\.js"?><\/script>/);
+    const main = /<script\b[^>]*src="?\/?(assets\/main\.[^" >]+\.js)"?[^>]*>/.exec(html)!;
+    expect(main[0]).toContain(`integrity="${integrityOf(readFileSync(join(out, main[1]!)))}"`);
+    expect(main[0].match(/integrity=/g)).toHaveLength(1); // replaced, not a second attribute (the first one wins)
+    expect(html).not.toContain('sha384-stale');
+  });
+
   it.each([
     ['runtimeChunk: \'single\'', { runtimeChunk: 'single' as const }],
     ['one CSS file for all (mini-css-extract\'s cacheGroup)', { splitChunks: { cacheGroups: { styles: { type: 'css/mini-extract', name: 'styles', chunks: 'all' as const, enforce: true } } } }],

@@ -281,6 +281,24 @@ describe('loadRuntimeConfig', () => {
     expect(fetchMock.mock.calls[0]![1]!.signal!.aborted).toBe(true); // the caller's abort reaches the request
   });
 
+  it('rethrows the caller\'s abort as is: already aborted, or aborted while the body is read', async () => {
+    const before = new AbortController();
+    before.abort(new DOMException('gone', 'AbortError'));
+    const fetchMock = vi.fn<typeof fetch>(async (_u, init) => {
+      if (init!.signal!.aborted) throw init!.signal!.reason;
+      return new Response('{}');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const e1 = await loadRuntimeConfig({ signal: before.signal }).catch((e: unknown) => e);
+    expect(e1).not.toBeInstanceOf(RuntimeConfigError);
+    expect(fetchMock.mock.calls[0]![1]!.signal!.aborted).toBe(true); // never sent unaborted
+
+    const during = new AbortController();
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => ({ ok: true, status: 200, json: async () => { during.abort(); throw new DOMException('aborted', 'AbortError'); } }) as unknown as Response));
+    const e2 = await loadRuntimeConfig({ signal: during.signal }).catch((e: unknown) => e);
+    expect(e2).toBeInstanceOf(DOMException);
+  });
+
   it('refuses a timeoutMs that setTimeout would take as about 1 ms', async () => {
     vi.stubGlobal('fetch', respond('{}'));
     for (const timeoutMs of [0, Number.POSITIVE_INFINITY, Number.NaN, 2 ** 31, 1.5]) {

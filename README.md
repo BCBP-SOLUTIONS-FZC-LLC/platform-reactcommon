@@ -522,7 +522,7 @@ test/
 
 ### Coverage
 
-`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.5% today (1519 tests in 61 files). Don't lower the threshold.
+`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.7% today (1530 tests in 61 files). Don't lower the threshold.
 
 ---
 

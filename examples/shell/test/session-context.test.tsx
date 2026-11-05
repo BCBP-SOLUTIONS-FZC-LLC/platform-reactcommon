@@ -70,6 +70,27 @@ describe('retrySessionContext', () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
+  it('returns at once for a signal already aborted, without waiting or loading (review 3)', async () => {
+    vi.useFakeTimers();
+    const stop = new AbortController();
+    stop.abort();
+    const load = vi.fn().mockResolvedValue(CONTEXT);
+    const added = vi.spyOn(stop.signal, 'addEventListener');
+    expect(await retrySessionContext(load, { signal: stop.signal })).toBeUndefined(); // no timer needed to settle
+    expect(load).not.toHaveBeenCalled();
+    expect(added).not.toHaveBeenCalled(); // no listener left on a signal that will never fire again
+  });
+
+  it('removes its abort listener once a wait ends', async () => {
+    vi.useFakeTimers();
+    const stop = new AbortController();
+    const removed = vi.spyOn(stop.signal, 'removeEventListener');
+    const done = retrySessionContext(vi.fn().mockResolvedValue(CONTEXT), { signal: stop.signal });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await done).toEqual(CONTEXT);
+    expect(removed).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
+
   it('stops when its signal aborts (sign-out), and drops a context that arrives after it', async () => {
     vi.useFakeTimers();
     const stop = new AbortController();
