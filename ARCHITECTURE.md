@@ -704,7 +704,7 @@ All three packages share one version (`fixed`). The release flow:
 4. `npm-publish` publishes the three packages to **GitHub Packages** (`@bcbp-solutions-fzc-llc/*`), with a build-provenance attestation each, only if publishing is gated: required reviewers, or (this private repository on GitHub Team) an `npm` environment limited to release tags plus a tag ruleset over who may push them (`check-npm-environment.sh`).
 5. A **GitHub Release** carries the tarballs, a CycloneDX SBOM and Cosign-signed checksums.
 
-The first release is `v1.0.0-alpha.1` (2026-11-03); the latest is `v1.0.0-alpha.3` (2026-11-04). `1.0.0-alpha.4` is pending under `[Unreleased]` in CHANGELOG.md (not released): its breaking changes (the container global, the `/storage` key prefix, the CSP `form-action` for the sign-out POST, at most 8 Tier 3 labels, stricter lint rules) mean the shell and every remote upgrade together.
+The first release is `v1.0.0-alpha.1` (2026-11-03); the latest is `v1.0.0-alpha.4` (2026-11-05): its breaking changes (the container global, the `/storage` key prefix, the CSP `form-action` for the sign-out POST, at most 8 Tier 3 labels, stricter lint rules) mean the shell and every remote upgrade together.
 
 During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`, so a shell with an older SDK refuses it at share negotiation. `1.0.0` is cut with the first environment, and SemVer is strict from then on (design doc §C3 "Versioning").
 
