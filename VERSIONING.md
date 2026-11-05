@@ -60,6 +60,7 @@ The shell provides the SDK to every remote as a **strict singleton** shared unde
   - the shell shares the SDK under `^1.0.0-0`, and each remote requires `^<the SDK version it was built against>` (for example `^1.0.0-alpha.4`, which accepts later alphas and every `1.x`);
   - two SDK copies on one page share the `PlatformRuntime` only when they are the same alpha (`1.0.0-alpha.3` next to `alpha.4` each keep their own, as two majors would): a remote that bundled the SDK by mistake does not see the shell's identity or session;
   - **`1.0.0-alpha.4`** (released 2026-11-05) has breaking changes that need the shell and every remote rebuilt and deployed **together**: a remote's container global is `__platform_mfe_<name>` (an alpha.3 remote defines the bare name, which the alpha.4 SDK does not read), `/storage` keys move under the SDK's prefix, the shell's CSP `form-action` must allow the IdP origin (sign-out is a form POST), a Tier 3 metric takes at most 8 labels, and `no-raw-storage` / `no-unsafe-html` report more. Each entry in the CHANGELOG says how to upgrade.
+  - **`1.0.0-alpha.5`** (released 2026-11-05) adds the optional `auth.signInUrl` to `runtime.json`; not breaking. The shell upgrades first, since a remote built against it requires `^1.0.0-alpha.5`.
 - **MAJOR `1` (from `1.0.0`, cut with the first end-to-end environment):** we avoid breaking changes within `1.x`. When one is required, we release `2.0.0` and document the migration in the CHANGELOG.
 - **MINOR:** safe to upgrade without code changes unless you opt into new features (shell first, see above).
 - **PATCH:** drop-in replacement; upgrade recommended for security fixes.
@@ -73,7 +74,7 @@ None. During the alpha, breaking changes are expected and recorded in the CHANGE
 
 | Version | Status | Supported until |
 |---------|--------|-----------------|
-| `1.0.0-alpha.N` | **Current** pre-release line: latest release `1.0.0-alpha.4` (2026-11-05) (first tag: `v1.0.0-alpha.1`; `1.0.0-alpha.0` was never released) | Until `1.0.0` |
+| `1.0.0-alpha.N` | **Current** pre-release line: latest release `1.0.0-alpha.5` (2026-11-05) (first tag: `v1.0.0-alpha.1`; `1.0.0-alpha.0` was never released) | Until `1.0.0` |
 | `1.x` | Planned, from `1.0.0` | Active once released |
 
 When a new **MAJOR** line ships, the previous major receives **security fixes only** for six months after the new major's release ([SECURITY.md](SECURITY.md)).
@@ -101,8 +102,8 @@ The packages are published to **GitHub Packages** (the npm registry at `npm.pkg.
 - **GitHub Actions:** `NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` with `permissions: packages: read`. On each package's settings page (*Manage Actions access*), give the consuming repository read access once.
 
 ```bash
-pnpm add @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.4
-pnpm add -D @bcbp-solutions-fzc-llc/webpack-preset@1.0.0-alpha.4 @bcbp-solutions-fzc-llc/eslint-plugin@1.0.0-alpha.4
+pnpm add @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.5
+pnpm add -D @bcbp-solutions-fzc-llc/webpack-preset@1.0.0-alpha.5 @bcbp-solutions-fzc-llc/eslint-plugin@1.0.0-alpha.5
 ```
 
 | Pin style | Use when |
@@ -116,8 +117,8 @@ Dist-tags: a pre-release is published under its identifier (`alpha`, `rc`), and 
 **Verifying what you install.** Each tarball has a GitHub build-provenance attestation from the release workflow:
 
 ```bash
-npm pack @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.4
-gh attestation verify bcbp-solutions-fzc-llc-frontend-sdk-1.0.0-alpha.4.tgz --repo BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
+npm pack @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.5
+gh attestation verify bcbp-solutions-fzc-llc-frontend-sdk-1.0.0-alpha.5.tgz --repo BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
 ```
 
 The same tarballs are attached to the GitHub Release, with Cosign-signed `checksums.txt` (see *Verifying a release* in the [README](README.md#cutting-a-release)).
