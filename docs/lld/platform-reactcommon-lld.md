@@ -18,6 +18,7 @@
 | 1.0 | 2026-10-31 | First LLD, written from the implementation of design-doc steps 0–14 plus the `portal` domain and the CI pipeline (all on `main`). Step 15 (Tier 1 metric binding) is open; see §15 |
 | 1.1 | 2026-11-03 | Aligned with the first release `1.0.0-alpha.1`: GitHub Packages distribution and its publish gate (§14.1), React 19 only, sign-out global by default (§8.7), one keepalive budget for all three signals on hide and `pagehide` (§7.5), metrics sent on page hide (§7.3), the reference two-tier Collector (§7.6), the test layers and nightly integrated run (§14.3), open items (§15) |
 | 1.2 | 2026-11-03 | `@bcbp-solutions-fzc-llc/webpack-preset` supports Rspack 2 (`/rspack`) and Rsbuild 2 (`/rsbuild`) besides webpack 5, interoperable over the v1 Module Federation protocol (§13.1), released in `1.0.0-alpha.2` |
+| 1.4 | 2026-11-05 | `[Unreleased]`: optional `auth.signInUrl` in `runtime.json`; a remote's standalone page is its own host page and may load and set the runtime config (§12.1) |
 | 1.3 | 2026-11-05 | Aligned with `[Unreleased]` (`1.0.0-alpha.4`, PRs #41–#46): container global `__platform_mfe_<name>` and `SdkVersionPlugin` (§13.1), prefixed `/storage` keys (§4.4), refresh backoff on 429 / 503 + `Retry-After` (§8.5), sign-out by form POST and dropping the user's page state (§8.7), whole-attempt remote timeout and fetch timeouts (§5.4.3, §8.9), synthetic 502s and byte bodies (§5.4.1), boundary `resetKeys` (§5.4.4), the global error rate limit (§11.1), Tier 3 label limit and the Collector's label bounds (§7.3, §7.6), CSS SRI (§13.1), runtime sharing per pre-release (§6.1), open items (§15) |
 
 ### Table of Contents
@@ -679,6 +680,7 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 | `auth.scopes` | `["openid"]` | must include `openid` |
 | `auth.idleTimeoutMs` | — (required) | 60 000 – 8 h (the refresh token's idle lifetime) |
 | `auth.redirectPath` | — (required) | same-origin path |
+| `auth.signInUrl` | none | absolute https URL in normal form (http only on a local host, and only in local, dev and test), no user info or fragment. Where users sign in (the shell's page); read by pages without a shell |
 | `flags` | `{}` | name → boolean / string / finite number |
 | `remotes.killSwitch` | `[]` | remote names |
 | `remotes.loadTimeoutMs` | — (required) | 1 000–120 000 |
@@ -686,6 +688,8 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 | `remotes.allowedOrigins` | `[]` | exact origins |
 | `i18n.defaultLocale`, `i18n.supportedLocales` | — (required) | canonical BCP 47; the list includes the default |
 | `appUpdate.pollIntervalMs` | — (required) | 10 s – 24 h |
+
+**The host page.** `initializeCore`, `loadRuntimeConfig` and `setRuntimeConfig` are called by the page's host: the shell, or a remote's own standalone page when no shell is present (that page is its own host). A remote's code that also runs inside a shell must not call them: it reads `tryGetConfig()`, which is the shell's config there. A standalone page that sends a signed-out user to sign in reads `tryGetConfig()?.auth.signInUrl` (mfe-dashboard's standalone log-out).
 
 ### 12.2 Build-time constants (shell)
 `__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`) feed `initializeCore`. The example shell takes the environment from `PLATFORM_ENVIRONMENT`: a production build without it fails (a development build defaults to `dev`); the repository's `pnpm build` passes `dev` when it is unset. The SDK's own `__SDK_VERSION__` is defined when the SDK is built.

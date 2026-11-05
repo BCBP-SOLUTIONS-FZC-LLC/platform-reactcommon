@@ -203,7 +203,8 @@ export interface RuntimeConfig {
                    readonly paidRealmPrefix: string /* 'tenant-': a resolved paid realm must equal `${prefix}${slug}` (sanity check) */;
                    readonly workspacePathPrefix: string /* '/t/': paid workspace URL = `/t/<slug>/…` */;
                    readonly clientId: string /* 'tender-web' */; readonly scopes: readonly string[];
-                   readonly idleTimeoutMs: number; readonly redirectPath: string };
+                   readonly idleTimeoutMs: number; readonly redirectPath: string;
+                   readonly signInUrl?: string /* no default: the shell's sign-in URL, for pages without a shell */ };
                    // issuer = `${idpOrigin}/realms/${realm}`: one issuer per realm, never a single fixed issuer
   readonly flags: Readonly<Record<string, boolean | string | number>>;
   readonly remotes: { readonly killSwitch: readonly string[]; readonly loadTimeoutMs: number; readonly retries: number;

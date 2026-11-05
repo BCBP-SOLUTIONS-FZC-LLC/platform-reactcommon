@@ -539,6 +539,7 @@ The SDK reads no environment variables in the browser. Its configuration is one 
 | `auth.idpOrigin` · `clientId` · `scopes` | `https://auth.bcbpsolutions.com` · `tender-web` · `["openid"]` | Keycloak |
 | `auth.trialRealm` · `paidRealmPrefix` · `workspacePathPrefix` | `trial` · `tenant-` · `/t/` | Workspace (realm) rules |
 | `auth.idleTimeoutMs` · `auth.redirectPath` | — (**required**) | Idle timeout (1 min – 8 h); the callback path |
+| `auth.signInUrl` | none | Where users sign in (the shell's URL), for pages without a shell, such as a remote run standalone |
 | `flags` | `{}` | Platform flags and kill switches |
 | `remotes.killSwitch` · `allowedOrigins` | `[]` · `[]` | Remotes switched off; extra entry origins |
 | `remotes.loadTimeoutMs` · `remotes.retries` | — (**required**) | Remote loading |

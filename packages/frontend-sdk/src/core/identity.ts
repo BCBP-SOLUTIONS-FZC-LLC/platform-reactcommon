@@ -107,7 +107,7 @@ function validate(input: CoreIdentityInput): CoreIdentity {
 }
 
 /**
- * Shell only: sets the page identity. Idempotent for an equal identity (after normalisation);
+ * Host page only (the shell, or a remote's own standalone page when no shell is present): sets the page identity. Idempotent for an equal identity (after normalisation);
  * a different one throws IdentityMismatchError, because a page emits one identity.
  */
 export function initializeCore(input: CoreIdentityInput): CoreIdentity {

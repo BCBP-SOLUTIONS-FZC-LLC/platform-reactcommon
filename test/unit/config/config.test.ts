@@ -97,6 +97,27 @@ describe('RuntimeConfigSchema', () => {
   });
 
   it.each([
+    ['https://app.example.com/', true],
+    ['https://app.example.com/sign-in', true],
+    ['https://app.example.com:8443/t/?from=standalone', true],
+    ['http://localhost:5001/', true],
+    ['https://app.example.com', false], // not in normal form: the URL is 'https://app.example.com/'
+    ['http://app.example.com/', false],
+    ['https://user:pw@app.example.com/', false],
+    ['https://app.example.com/#x', false],
+    ['/sign-in', false],
+    ['javascript:alert(1)', false],
+    ['', false],
+  ])('accepts %s as auth.signInUrl: %s', (url, ok) => {
+    expect(parse(withPatch('auth.signInUrl', url)).success).toBe(ok);
+  });
+
+  it('has no auth.signInUrl unless runtime.json sets one', () => {
+    expect(parse(minimal()).data?.auth).not.toHaveProperty('signInUrl');
+    expect(parse(withPatch('auth.signInUrl', 'https://app.example.com/')).data?.auth.signInUrl).toBe('https://app.example.com/');
+  });
+
+  it.each([
     ['/api', true],
     ['/api/v1', true],
     ['/', true],
@@ -197,11 +218,12 @@ describe('http origins on a local host', () => {
     initializeCore({ serviceName: 'web-app', domain: 'portal', environment, buildVersion: '1.0.0' });
   const withLocal = (origin: string) => {
     const c = withPatch('auth.idpOrigin', origin);
+    (c.auth as Record<string, unknown>).signInUrl = `${origin}/`;
     (c.api as Record<string, unknown>).propagationAllowlist = ['https://api.example.com', origin];
     (c.remotes as Record<string, unknown>).allowedOrigins = [origin];
     return c;
   };
-  const LOCAL_PATHS = ['auth.idpOrigin', 'api.propagationAllowlist.1', 'remotes.allowedOrigins.0'];
+  const LOCAL_PATHS = ['auth.idpOrigin', 'auth.signInUrl', 'api.propagationAllowlist.1', 'remotes.allowedOrigins.0'];
 
   it.each(['prod', 'staging'] as const)('are refused by setRuntimeConfig in %s', (env) => {
     identity(env);
@@ -239,12 +261,20 @@ describe('http origins on a local host', () => {
     setRuntimeConfig(loaded);
     expect(getConfig().auth.idpOrigin).toBe('http://localhost:8080');
     expect(getConfig().remotes.allowedOrigins).toEqual(['http://localhost:8080']);
+    expect(getConfig().auth.signInUrl).toBe('http://localhost:8080/');
   });
 
   it('are accepted in test as platform-interop-tests pair 4 sets them (ts-probe against local servers)', () => {
     identity('test');
     setRuntimeConfig(withPatch('api.propagationAllowlist', ['http://localhost:18082']) as unknown as RuntimeConfig);
     expect(getConfig().api.propagationAllowlist).toEqual(['http://localhost:18082']);
+  });
+
+  it("a remote's standalone page, its own host, loads the config and reads auth.signInUrl (no shell on the page)", async () => {
+    identity('prod');
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify(withPatch('auth.signInUrl', 'https://app.example.com/')))));
+    setRuntimeConfig(await loadRuntimeConfig());
+    expect(tryGetConfig()?.auth.signInUrl).toBe('https://app.example.com/');
   });
 
   it('do not affect https origins in prod', () => {

@@ -39,6 +39,7 @@ function environmentIssues(c: RuntimeConfig): { path: string; message: string }[
   if (isLocalEnvironment(env)) return [];
   const origins: [string, string][] = [
     ['auth.idpOrigin', c.auth.idpOrigin],
+    ...(c.auth.signInUrl === undefined ? [] : [['auth.signInUrl', c.auth.signInUrl] as [string, string]]),
     ...c.api.propagationAllowlist.map((o, i): [string, string] => [`api.propagationAllowlist.${i}`, o]),
     ...c.remotes.allowedOrigins.map((o, i): [string, string] => [`remotes.allowedOrigins.${i}`, o]),
   ];
@@ -110,7 +111,7 @@ function parseConfig(raw: unknown, source: string): RuntimeConfig {
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
- * Shell only: fetches and validates the runtime config (no HTTP cache: `cache: 'no-cache'`
+ * Host page only (the shell, or a remote's own standalone page when no shell is present): fetches and validates the runtime config (no HTTP cache: `cache: 'no-cache'`
  * revalidates with the ETag), within `timeoutMs` (default 10 s). Any failure (network, timeout, HTTP status, JSON, schema) is a
  * RuntimeConfigError; the shell shows its static "unavailable" page. As for setRuntimeConfig, an
  * http origin on a local host is an error unless initializeCore set the local, dev or test environment.
@@ -165,7 +166,8 @@ export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSig
 }
 
 /**
- * Shell only: makes `c` the page's config, validated and deep-frozen. Call initializeCore first:
+ * Host page only (the shell, or a remote's own standalone page when no shell is present): makes
+ * `c` the page's config, validated and deep-frozen. Call initializeCore first:
  * http origins on a local host are accepted only when the page environment is local, dev or test. Set once: setting an equal
  * config again is a no-op, a different one throws.
  */
