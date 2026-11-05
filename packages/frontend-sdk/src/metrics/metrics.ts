@@ -75,6 +75,8 @@ interface MetricsState {
   stats: MetricsStats;
   warned: Set<string>;
   removeListeners: () => void;
+  /** Set by shutdownMetrics({ discardLastInterval: true }): the exporter drops what the shutdown collects. */
+  discarding?: { on: boolean };
 }
 
 const SHELL = 'shell';
@@ -84,10 +86,12 @@ const MAX_SERVICE_LABEL_VALUES = 100;
 const OVERFLOW = '__other__';
 const MAX_BUCKETS = 50;
 
-let exporterFactory: (url: string) => PushMetricExporter = (url) =>
+const defaultExporter = (url: string): PushMetricExporter =>
   new OTLPMetricExporter({ url, temporalityPreference: AggregationTemporalityPreference.DELTA, timeoutMillis: 10_000 });
-export function setMetricsInternalsForTests(o: { exporter?: (url: string) => PushMetricExporter }): void {
-  if (o.exporter) exporterFactory = o.exporter;
+let exporterFactory: (url: string) => PushMetricExporter = defaultExporter;
+/** Test seam: `exporter` replaces the OTLP exporter; `exporter: undefined` restores it. */
+export function setMetricsInternalsForTests(o: { exporter?: ((url: string) => PushMetricExporter) | undefined }): void {
+  if ('exporter' in o) exporterFactory = o.exporter ?? defaultExporter;
 }
 
 /** The page's metrics state; instruments exist before initializeMetrics (they record once it runs). */
@@ -309,10 +313,14 @@ export function getServiceMeter(scope?: Partial<MfeScope>): {
   };
 }
 
-/** Wraps the exporter so nothing leaves the page without telemetry consent. */
-function consentGated(inner: PushMetricExporter, stats: MetricsStats): PushMetricExporter {
+/** Wraps the exporter so nothing leaves the page without telemetry consent (nor after a discarding shutdown). */
+function consentGated(inner: PushMetricExporter, stats: MetricsStats, discarding: { on: boolean }): PushMetricExporter {
   return {
     export: (metrics, cb) => {
+      if (discarding.on) {
+        cb({ code: 0 }); // shut down without its last interval: nothing more leaves
+        return;
+      }
       if (!hasConsent('telemetry')) {
         stats.droppedNoConsent++;
         cb({ code: 0 }); // delta: the interval is discarded, not retried
@@ -387,7 +395,8 @@ export function initializeMetrics(o: { otlpBaseUrl: string; exportIntervalMs?: n
   }
   const url = collectorUrl(o.otlpBaseUrl, 'metrics');
   if (tryGetConfig()?.telemetry.enabled === false) return; // the runtime config's off switch
-  const exporter = consentGated(exporterFactory(url), s.stats);
+  s.discarding = { on: false };
+  const exporter = consentGated(exporterFactory(url), s.stats, s.discarding);
   const reader = new PeriodicExportingMetricReader({
     exporter,
     exportIntervalMillis: interval,
@@ -420,11 +429,16 @@ export function initializeMetrics(o: { otlpBaseUrl: string; exportIntervalMs?: n
   s.removeListeners = () => stopUnload();
 }
 
-/** Internal: flushes and stops exporting; instruments go back to recording only the inventory. */
-export async function shutdownMetrics(): Promise<void> {
+/**
+ * Internal: flushes and stops exporting; instruments go back to recording only the inventory. The reader
+ * collects and sends the last interval first, unless `discardLastInterval` (createTestPlatform: the next
+ * test's page must not receive the previous one's export).
+ */
+export async function shutdownMetrics(o?: { discardLastInterval?: boolean }): Promise<void> {
   const s = metricsState();
   const provider = s.provider;
   if (!provider) return;
+  if (o?.discardLastInterval && s.discarding) s.discarding.on = true;
   s.removeListeners();
   setMetricsShare(0);
   s.provider = undefined;

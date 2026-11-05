@@ -32,5 +32,7 @@ if (isProblemError(e) && e.is(PlatformProblemTypes.ValidationFailed)) setErrors(
 - **The domain and environment vocabularies, the patterns and the problem types** are generated from the backend's own sources (`contracts/`), never typed by hand.
 - **Nothing leaves the page without consent:** `essential` is always granted, `telemetry` only when the consent manager says so.
 - **The raw body of a non-problem error is never surfaced:** a problem is synthesized from the status.
+- **A stalled `runtime.json` fails visibly:** `loadRuntimeConfig` times out after 10 s (`timeoutMs`) with a `RuntimeConfigError`.
+- **The RUM session id lasts at most 24 hours,** and is rotated on sign-out and idle timeout.
 
 Design doc: §C1 `/core`, `/config`, `/problem`, §C5 (contracts).

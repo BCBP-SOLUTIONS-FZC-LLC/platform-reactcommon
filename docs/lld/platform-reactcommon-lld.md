@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Packages | `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin` (one version, changesets `fixed`) |
-| Version | `1.0.0-alpha.3` (tag `v1.0.0-alpha.3`, 2026-11-04, GitHub Packages, dist-tag `alpha`), after `1.0.0-alpha.1` (the first release) and `1.0.0-alpha.2` on 2026-11-03; `1.0.0-alpha.N` until the first end-to-end environment |
+| Version | `1.0.0-alpha.3` (tag `v1.0.0-alpha.3`, 2026-11-04, GitHub Packages, dist-tag `alpha`), after `1.0.0-alpha.1` (the first release) and `1.0.0-alpha.2` on 2026-11-03; `1.0.0-alpha.N` until the first end-to-end environment. This LLD also describes `[Unreleased]` in `CHANGELOG.md` (to ship as `1.0.0-alpha.4`, not yet released; breaking: shell and remotes upgrade together, §14.2) |
 | Runtime | Evergreen browsers (ES2022, Trusted Types where supported); build tooling on Node ≥ 22 |
 | Peers | `react` / `react-dom` `^19.0.0` (one major; floor tested in CI), `@opentelemetry/api` `~1.10.0`, `webpack` `^5.100.0`, `@rspack/core` `^2.2.0`, `@rsbuild/core` `^2.2.0` (the preset's bundler peers, each optional: an app installs the one it builds with; `/rsbuild` uses the Rspack inside `@rsbuild/core`), `eslint` `^9 \|\| ^10` |
 | Design record | [`docs/design/frontend-sdk-design.md`](../design/frontend-sdk-design.md) (decisions, public API per subpath, contracts, backend changes) |
@@ -18,6 +18,7 @@
 | 1.0 | 2026-10-31 | First LLD, written from the implementation of design-doc steps 0–14 plus the `portal` domain and the CI pipeline (all on `main`). Step 15 (Tier 1 metric binding) is open; see §15 |
 | 1.1 | 2026-11-03 | Aligned with the first release `1.0.0-alpha.1`: GitHub Packages distribution and its publish gate (§14.1), React 19 only, sign-out global by default (§8.7), one keepalive budget for all three signals on hide and `pagehide` (§7.5), metrics sent on page hide (§7.3), the reference two-tier Collector (§7.6), the test layers and nightly integrated run (§14.3), open items (§15) |
 | 1.2 | 2026-11-03 | `@bcbp-solutions-fzc-llc/webpack-preset` supports Rspack 2 (`/rspack`) and Rsbuild 2 (`/rsbuild`) besides webpack 5, interoperable over the v1 Module Federation protocol (§13.1), released in `1.0.0-alpha.2` |
+| 1.3 | 2026-11-05 | Aligned with `[Unreleased]` (`1.0.0-alpha.4`, PRs #41–#46): container global `__platform_mfe_<name>` and `SdkVersionPlugin` (§13.1), prefixed `/storage` keys (§4.4), refresh backoff on 429 / 503 + `Retry-After` (§8.5), sign-out by form POST and dropping the user's page state (§8.7), whole-attempt remote timeout and fetch timeouts (§5.4.3, §8.9), synthetic 502s and byte bodies (§5.4.1), boundary `resetKeys` (§5.4.4), the global error rate limit (§11.1), Tier 3 label limit and the Collector's label bounds (§7.3, §7.6), CSS SRI (§13.1), runtime sharing per pre-release (§6.1), open items (§15) |
 
 ### Table of Contents
 
@@ -131,7 +132,7 @@ platform-reactcommon/
   .claude/                    Claude Code reference set (CLAUDE.md and topic files)
 ```
 
-`src/internal/` also holds `unload` (the page's keepalive budget for hide and `pagehide`, §7.5) and `environments` (which environments are local).
+`src/internal/` also holds `unload` (the page's keepalive budget for hide and `pagehide`, §7.5), `environments` (which environments are local), `flag-provider` (the one swap of the runtime's flag provider, for `/flags`' `setFlagProvider` and the sign-out, §8.7), `reload` (the listeners run before an SDK-started reload, §8.9) and `retry-after` (`Retry-After` parsing for `/http` and the refresh backoff). `urls` holds `stripUrlQueries` (§7.2). Each package's tarball carries a `README.md` and `engines.node` `>=22`.
 
 ### 3.1 Library dependencies (direct, `@bcbp-solutions-fzc-llc/frontend-sdk`)
 
@@ -185,7 +186,7 @@ The **RUM session id** is a random v4 UUID kept in localStorage under `@bcbp-sol
 
 ### 4.2 Runtime configuration (`/config`)
 
-`loadRuntimeConfig()` fetches `/config/runtime.json` with `cache: no-cache`. `RuntimeConfigSchema` (zod, strict at every level: an unknown key fails) parses it, and the result is deep-frozen. `setRuntimeConfig()` publishes it on the runtime; `getConfig()` throws `NotInitializedError` before that, and `tryGetConfig()` returns `undefined`. Fields and defaults are listed in §12.1. Zod runs in **jitless** mode: its first-parse `new Function('')` probe would otherwise fire a CSP violation on every page load.
+`loadRuntimeConfig()` fetches `/config/runtime.json` with `cache: no-cache`, within `timeoutMs` (default 10 s, an integer from 1 to 2 147 483 647, else a `RangeError`; combined with the caller's `signal`; a timeout is a `RuntimeConfigError`). `RuntimeConfigSchema` (zod, strict at every level: an unknown key fails) parses it, and the result is deep-frozen. `setRuntimeConfig()` publishes it on the runtime; `getConfig()` throws `NotInitializedError` before that, and `tryGetConfig()` returns `undefined`. Fields and defaults are listed in §12.1. Zod runs in **jitless** mode: its first-parse `new Function('')` probe would otherwise fire a CSP violation on every page load.
 
 ### 4.3 Session model (`/auth`)
 
@@ -283,8 +284,8 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 | `/auth` | `createOidcProvider` · `initializeAuth` · `getSession` · `chooseWorkspace` · `cachedWorkspace` · `rememberWorkspace` · `slugFromPath` · `isWrongWorkspace` · `signInAgain` · types `IdentityProvider`, `SessionState`, `SessionUser`, `Workspace`, `SessionContext`, `WorkspaceResolver`, `SessionContextSource` |
 | `/mfe` | `loadManifest` · `loadRemote` · `isChunkLoadError` · `reloadOnceForChunkError` · `startVersionPolling` · `subscribeAppUpdate` · `RemoteDisabledError` · `RemoteLoadError` · types `RemoteManifest`, `RemoteManifestEntry` |
 | `/nav` | `navigate(appId, path)` · `registerNavigator` · `isSafeRedirect` |
-| `/react` | `PlatformProvider` · `useSession` · `useCurrentUser` · `useWorkspace` · `useSessionContext` · `useBeforeAuthRedirect` · `useReadOnly` · `useStepUp` · `useLocale` · `useSwitchWorkspace` · `useFeatureFlag` · `useHasPermission` · `Can` · `useApi` · `useApiClient` · `useRouteTemplate` · `useOnlineStatus` · `useAppUpdate` · `useT` · `MFEErrorBoundary` · `RemoteBoundary` · `installGlobalErrorHandlers` · types `ShellContextValue`, `ErrorInfoView` |
-| `/testing` | `createTestPlatform` · `mockApi` · `mockProblem` · `renderMetricInventory` · types `LogRecord`, `SpanRecord` |
+| `/react` | `PlatformProvider` · `useSession` · `useCurrentUser` · `useWorkspace` · `useSessionContext` · `useBeforeAuthRedirect` · `useReadOnly` · `useStepUp` · `useLocale` · `useSwitchWorkspace` · `useFeatureFlag` · `useHasPermission` · `Can` · `useApi` · `useApiClient` · `useRouteTemplate` · `useOnlineStatus` · `useAppUpdate` · `useSignOut` · `useT` · `MFEErrorBoundary` · `RemoteBoundary` · `installGlobalErrorHandlers` · types `ShellContextValue`, `ErrorInfoView` |
+| `/testing` | `createTestPlatform` (`signOuts`, `reset`) · `mockApi` · `mockProblem` · `renderMetricInventory` · types `LogRecord`, `SpanRecord` |
 
 ### 5.4 Key behaviour specifications
 
@@ -309,13 +310,14 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 |---|---|
 | `init()` | Handles a callback (§8.3), else attempts one silent restore per tab (§8.4); resolves only to `authenticated` or `anonymous`; called twice → the same promise |
 | `login({ workspace, returnUrl?, loginHint?, prompt? })` | Pending record + PKCE + `beforeRedirect('login')` + top-level redirect; throws when sessionStorage is unavailable |
-| `getAccessToken()` | `undefined` when anonymous, expired or restoring; joins the refresh when within 5 s of expiry |
-| `refresh()` | Single-flight; `true` with new tokens, `false` otherwise (state already moved, §8.5) |
+| `getAccessToken()` | `undefined` when anonymous, expired or restoring; joins the refresh when within 5 s of expiry, and waits out a refresh backoff (§8.5) instead of failing |
+| `refresh()` | Single-flight; `true` with new tokens, `false` otherwise (state already moved, §8.5); a 429 / 503 + `Retry-After` backoff is awaited inside it |
 | `logout({ global? })` (global unless `global: false`) | §8.7 |
 | `switchWorkspace(w)` | Local logout of the current realm without the signed-out mark, broadcast `workspace-switched`, then `login(w)` with reason `switch` |
 | `reauthenticate({ maxAgeSeconds, returnUrl? })` | `prompt=login&max_age=<s>` with reason `step-up`; needs a session |
 | `needsStepUp(s)` | `now − auth_time > s`; `false` when `auth_time` is unknown |
 | `subscribe` / `beforeRedirect` / `getState` | Listeners isolated (a throwing one is logged, others still run) |
+| `dispose()` (optional) | Stops the provider without signing out: closes the cross-tab channel, clears timers and listeners, forgets the tokens. For hot module replacement and tests |
 
 #### 5.4.3 `loadRemote(name, module, { timeoutMs?, retries?, signal? })`
 
@@ -334,8 +336,9 @@ Any failure is a `RemoteLoadError` carrying the cause. One span `remote load` an
   1. It counts `platform_web_errors_total{ source: boundary or chunk_load }`.
   2. A chunk-load error reloads the page once per version.
   3. Otherwise it logs: an API error as `warn` (the server answer is already traced), anything else as `error`.
-- **Fallback view:** `{ message, traceId?, requestId?, retry }`. The message is `problemMessage` for problems; otherwise a `platform` catalog text (with an English default) for "unexpected", "unavailable" (kill switch) and "offline".
+- **Fallback view:** `{ message, traceId?, requestId?, retry }`; the default fallback takes focus. The message is `problemMessage` for problems; otherwise a `platform` catalog text (with an English default) for "unexpected", "unavailable" (kill switch) and "offline".
 - **`RemoteBoundary`** creates a new lazy component per retry, because React caches a rejected lazy forever.
+- An error thrown in the same update that changes `resetKeys` is caught and logged once.
 
 ---
 
@@ -357,11 +360,12 @@ Any failure is a `RemoteLoadError` carrying the cause. One span `remote load` an
 | `identityProvider`, `tokenSource`, `storageNamespace` | `/auth` | `/http`, `/storage`, `/react` |
 | `i18n` | `/i18n` | `/i18n`, `/react` (locale via `src/internal/locale`) |
 | `navigator`, `trustedTypesPolicy` | `/nav`, `/security` | `/nav`, `/mfe` (script URLs), `/security` |
+| `beforeReload` (listeners) | `src/internal/reload` (`/react` `useBeforeAuthRedirect`) | `/mfe` and `/react` before an SDK-started reload |
 | `readOnlyDenied` | `/http` | `/react` `useReadOnly` |
 | `events` (topic → listeners) | `src/internal/events` | `/react` |
 | `unload` (senders, keepalive ledger, reservations, metrics share) | `src/internal/unload` | `/tracing`, `/logging`, `/metrics` |
 
-Created on first use on `globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]`. A second SDK copy with the same major binds to it; another major keeps its own and logs one error. `resetRuntimeForTests()` exists for tests only.
+Created on first use on `globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]`. A second SDK copy logs one error. It binds to the existing runtime when its version is compatible: the same major, or for a pre-release (or `0.x`) the same full version (`1.0.0-alpha.3` and `alpha.4` each keep their own, as two majors do; `compatibilityOf` in `src/internal/runtime.ts`). The container cache, the flag provider's subscription and the before-reload listeners (`beforeReload`) live on the runtime, so a second compatible copy shares them. `resetRuntimeForTests()` exists for tests only.
 
 ### 6.2 Initialisation order (shell)
 
@@ -406,7 +410,7 @@ The order is fixed by design doc §C2 and drawn in ARCHITECTURE.md § Shell boot
 Every record carries the envelope `trace_id`, `span_id` (active span), `request_id` (when given), `session_id`, `mfe` (`shell` by default) and `page_route` (a registered template or `unknown`). Caller attributes of the same name are dropped. Attributes go through redaction:
 - sensitive keys become `[REDACTED]`;
 - JWT and `Bearer` patterns are masked;
-- URL query strings and fragments are removed, after an absolute URL or a `/`-rooted path (from the message and every string, as from span attributes);
+- URL query strings and fragments are removed from every token that is a URL or a path (a `/` before its `?` or `#`: absolute URLs, scheme-less hosts such as `bucket.s3.amazonaws.com/k?X-Amz-Signature=…`, relative paths), in the message and every string, as in span names and attributes; prose such as `/help?` is left alone, and the pass is linear (`stripUrlQueries`, `src/internal/urls.ts`);
 - stacks are cut to 4 KiB;
 - a record's attributes are capped at about 8 KiB (`[TRUNCATED]` past it), so one record always fits the unload budget.
 
@@ -437,7 +441,7 @@ For a remote, `domain` is its manifest `ownerDomain` and `service` is the remote
 - known bucket presets, at most 50 buckets;
 - no reuse of a legacy name.
 
-Tier 3 label values are capped at 100 per label, and the overflow value is `__other__`. Export uses OTLP/HTTP with **delta** temporality every 60 s, through a consent gate that discards the interval when `telemetry` isn't granted. When the page is hidden or closing, the interval is collected then and sent by `sendBeacon` in the share the logs and spans leave it (§7.5); an empty interval sends nothing, a refused or oversized one goes through the exporter. Up to 1 000 label sets per instrument are kept for `renderMetricInventory()`.
+A Tier 3 metric declares at most 8 labels besides `domain`, `service` and `environment` (`MAX_SERVICE_LABELS`, the gateway's per-point limit; more is an `InvalidMetricError`), and its label values are capped at 100 per label, the overflow value being `__other__`. Export uses OTLP/HTTP with **delta** temporality every 60 s, through a consent gate that discards the interval when `telemetry` isn't granted. When the page is hidden or closing, the interval is collected then and sent by `sendBeacon` in the share the logs and spans leave it (§7.5); an empty interval sends nothing, a refused or oversized one goes through the exporter. Up to 1 000 label sets per instrument are kept for `renderMetricInventory()`. `shutdownMetrics` collects and sends the last interval.
 
 ### 7.4 Governance and CI
 
@@ -464,7 +468,7 @@ The platform's Collector is deployed elsewhere; this repository ships its **refe
 
 | Tier | Does |
 |---|---|
-| Gateway (`gateway.yaml`, behind `/otel/*`, any number of replicas) | OTLP/HTTP on `/otel/v1/*`; keeps only the SDK's resource attributes (`service.name`, `service.version`, `service.namespace`, `deployment.environment.name`); allowlists metric names (a Tier 1 name of the proposal, or a `<domain>_*` matching the `domain` label, with a unit suffix), label keys (Tier 1 and Tier 2: the registry's and the proposal's; Tier 3: snake_case, not prohibited, at most 8 besides the const labels) and label values (registry vocabulary, this deployment's environment); `page_route` over 64 characters becomes `unknown`; cuts values at 128 characters; routes each metric stream to one aggregator (`loadbalancing`, `routing_key: streamID`) |
+| Gateway (`gateway.yaml`, behind `/otel/*`, any number of replicas) | OTLP/HTTP on `/otel/v1/*`; keeps only the SDK's resource attributes on traces and logs (`service.name`, `service.version`, `service.namespace`, `deployment.environment.name`) and none on metrics (labels carry the identity; a version or forged name would split or mint series); allowlists metric names (a Tier 1 name of the proposal, or a `<domain>_*` matching the `domain` label, with a unit suffix), label keys (Tier 1 and Tier 2: the registry's and the proposal's; Tier 3: snake_case, not prohibited, at most 8 besides the const labels) and label values (registry vocabulary, this deployment's environment); `page_route` over 64 characters becomes `unknown`; cuts values at 128 characters; routes each metric stream to one aggregator (`loadbalancing`, `routing_key: streamID`) |
 | Aggregator (`aggregator.yaml`) | Re-stamps each delta with its arrival time (device clocks are not trusted), then `delta_to_cumulative` for Mimir. One converter per stream: two Collectors converting the same stream would write conflicting totals |
 
 The allowlists bound what one request adds, not the product of allowed values: set Mimir's per-tenant series limits too (`examples/collector/README.md`). `examples/collector/test` keeps the allowlists equal to the metric registry; `pnpm test-collector` (CI job `collector`) runs two gateways and two aggregators in the Collector image; the integrated stack routes `/otel` through both tiers.
@@ -511,7 +515,8 @@ The loop guard is set, then the page does one top-level redirect with `prompt=no
 - **Refresh token past `refresh_expires_in`:** `expired { serverEnded: false }` without sending.
 - **200:** rotate (a response without `refresh_token` keeps the current one); refreshed ID tokens must keep `sub`, and their `nonce` if present.
 - **`invalid_grant`:** `expired`, with `serverEnded = now < refreshExpiresAt`.
-- **Anything else that may have reached Keycloak:** network error after send, timeout, other errors, an invalid answer. The lineage is dropped, the page waits for `online`, runs `beforeRedirect('restore')`, then does a `prompt=none` redirect. A token that might already be rotated is never re-sent.
+- **429, or 503 with `Retry-After`** (Keycloak or its gateway refused it without processing it): keep the tokens and retry after a backoff of 2 s doubling to 30 s with jitter, or `Retry-After` when longer, as long as the retry answers 5 s before the access token expires; otherwise restore as below. `getAccessToken()` and a 401 join the backoff instead of sending more. Logged once per retry as `token endpoint unavailable: retrying the refresh`.
+- **Anything else that may have reached Keycloak:** network error after send, timeout, other errors (500, 502, 504, a bare 503: a gateway may answer so after Keycloak rotated the token), an invalid answer. The lineage is dropped, the page waits for `online`, runs `beforeRedirect('restore')`, then does a `prompt=none` redirect. A token that might already be rotated is never re-sent.
 - **Cancelled by a navigation away:** `beforeunload` or `pagehide` fired while the request was in flight (listened to only then: a standing `beforeunload` listener keeps Firefox from using its back/forward cache). The lineage is dropped, but the restore waits 10 s, which an unloading page never reaches; a page that stays restores then. Restoring at once would send the leaving page to the IdP and replace the user's navigation.
 
 ### 8.6 Idle timeout
@@ -521,19 +526,20 @@ Activity events (`pointerdown`, `keydown`, `wheel`, `touchstart`, `scroll`, capt
 - **Logout:**
   1. Drop the tokens and stop the timers.
   2. `clearAllAppStorage()`, rotate the session id, and set the signed-out mark.
-  3. Broadcast `logout`, set the storage namespace to `anon`, and move to `anonymous { signed-out }`.
-  4. Unless `{ global: false }` (the default is global, report Issue 10): a form POST to the realm's `/logout` with `id_token_hint` (when held), `client_id` and `post_logout_redirect_uri=<origin>/` in the body (never the URL), ending the SSO session; CSP `form-action` allows the IdP origin. `{ global: false }` is a local-only sign-out: the SSO session stays alive, and the next sign-in on this device is a re-authentication of the previous user (`prompt=login`).
-- **Other tabs on `logout`:** become `anonymous { signed-out }`.
+  3. Broadcast `logout`, forget the user's page state (storage namespace `anon`, no UI authorization subject, no flag provider, no read-only mark; topics `authz`, `flags`, `read-only` emitted), and move to `anonymous { signed-out }`.
+  4. Unless `{ global: false }` (the default is global, report Issue 10): a hidden form's POST to the realm's `/logout` with `id_token_hint` (when held), `client_id` and `post_logout_redirect_uri=<origin>/` in the body (never the URL), ending the SSO session. The shell's CSP `form-action` must allow the IdP origin, or the browser blocks the POST, the SSO session stays alive, and a `content security policy violation` warn is logged. `{ global: false }` is a local-only sign-out: the SSO session stays alive, and the next sign-in on this device is a re-authentication of the previous user (`prompt=login`).
+- **Workspace switch:** the same local steps without the signed-out mark (the user's page state is forgotten too), broadcast `workspace-switched`, then `login(w)`.
+- **Other tabs on `logout`:** become `anonymous { signed-out }` and forget the user's page state. An `expired` tab does the same; a `loading` tab drops its tokens and storage namespace and discards a sign-in it was finishing.
 - **Other tabs on `workspace-switched`:** become `expired { serverEnded: false, idle: false }`, so the shell's dialog offers sign-in again.
 - **The channel** (`BroadcastChannel('platform-auth')`) carries only `{ type }`, never a token.
 
 ### 8.8 Step-up
-Before an approver action, the UI checks `useStepUp().needed` (`now − auth_time > SessionContext.mfaFreshnessSeconds`). When it's needed, or when a request is denied with `DENY_MFA_STALE`, the UI calls `reauthenticate()`: `prompt=login&max_age`, after `beforeRedirect('step-up')`, returning to the same page. The request isn't retried automatically.
+Before an approver action, the UI checks `useStepUp().needed` (`now − auth_time > SessionContext.mfaFreshnessSeconds`). When it's needed, or when a request is denied with `DENY_MFA_STALE`, the UI calls `reauthenticate()`: `prompt=login&max_age`, after `beforeRedirect('step-up')`, returning to the same page. The request isn't retried automatically. `needed` turns true when the window lapses while the page stays open (checked every 15 s). A callback whose `auth_time` is still older than `max_age` is logged (`step-up not performed by the identity provider: auth_time is older than max_age`).
 
 ### 8.9 Remote load, chunk errors, app updates
 See §5.4.3 and ARCHITECTURE.md § Remote loading.
-- **Chunk errors:** `isChunkLoadError` recognises webpack's `ChunkLoadError` and the browsers' dynamic-import failure messages, including inside a `RemoteLoadError`. `reloadOnceForChunkError` reloads at most once per version, guarded by a sessionStorage key; without storage it never reloads.
-- **App updates:** `startVersionPolling` fetches `/version.json` every `appUpdate.pollIntervalMs` (default 5 min) and when the page becomes visible. It notifies `subscribeAppUpdate` listeners once per newer version. The first version seen is the baseline when the identity's `buildVersion` is `unknown`.
+- **Chunk errors:** `isChunkLoadError` recognises webpack's `ChunkLoadError` and the browsers' dynamic-import failure messages, including inside a `RemoteLoadError`. `reloadOnceForChunkError` reloads at most once per version, guarded by a sessionStorage key; without storage it never reloads. Before any SDK-started reload (this one, `useAppUpdate().reload`), the `beforeReload` listeners run synchronously (`src/internal/reload.ts`; `useBeforeAuthRedirect` subscribes), so a draft survives.
+- **App updates:** `startVersionPolling` fetches `/version.json` every `appUpdate.pollIntervalMs` (default 5 min) and when the page becomes visible, each fetch with a 10 s timeout; an interval under 1 s is refused (`RangeError`). `loadManifest` times out after `remotes.loadTimeoutMs`. It notifies `subscribeAppUpdate` listeners once per newer version. The first version seen is the baseline when the identity's `buildVersion` is `unknown`.
 
 ### 8.10 i18n
 - **Setup:** `initializeI18n({ defaultLocale, supported, detect? })` negotiates the locale: the exact tag, then the same language, then the default. It sets `<html lang dir>`.
@@ -565,10 +571,12 @@ See ARCHITECTURE.md § Concurrency model. All shared mutable state is on the run
 |---|---|
 | sessionStorage blocked | `login()` throws (sign-in impossible, stated). `init()` does no silent restore (the loop guard can't be set) |
 | localStorage blocked | Per-page session id; storage in memory; the workspace cache and signed-out mark are not shared |
-| Clock skew | ID-token checks allow ±60 s; refresh timing uses `expires_in` relative to the local clock at receipt |
+| Clock skew | ID-token times are judged on the provider's clock (the offset from `iat` at receipt), with 60 s of leeway on `exp`; a device clock up to 10 minutes off is tolerated, beyond that the callback ends in `anonymous { device-clock }`; refresh timing uses `expires_in` relative to the local clock at receipt |
 | Collector rejects or times out | Batch counted as failed; never retried |
 | Manifest entry invalid | That remote dropped with an error log; the rest load |
-| Two SDK majors on one page | Separate runtimes, one error log (identity, session and consent no longer shared) |
+| Two incompatible SDK copies on one page (another major, or another pre-release) | Separate runtimes, one error log (`Major (or pre-release) versions differ…`: identity, session and consent no longer shared) |
+| Token endpoint shedding load (429, 503 + `Retry-After`) | Tokens kept; refresh retried with backoff while the access token is valid (§8.5) |
+| `runtime.json`, manifest, `/version.json` or a catalog stalls | Each fetch times out (§4.2, §8.9, §8.10): the unavailable page, remotes' fallbacks, the next poll, the default-locale text |
 
 ### 9.4 Consistency guarantees
 - **Session state:** each tab's `SessionState` changes only through its provider. Other tabs follow through the channel (logout, switch), through shared localStorage (idle), or at their own next refresh (a session the server ended).
@@ -603,6 +611,7 @@ The browser is untrusted. Everything it sends is checked again by the gateway; `
 The SDK works under the CSP of `examples/cloudfront/csp.mjs`:
 - `script-src 'self'` and `style-src 'self'`;
 - `connect-src 'self' https://auth.bcbpsolutions.com`;
+- `form-action 'self' https://auth.bcbpsolutions.com` (the global sign-out's POST, §8.7);
 - `require-trusted-types-for 'script'`, with the policies `platform-sdk`, `platform-webpack` and `dompurify`;
 - no `eval` anywhere: preset `environment.globalThis`, Zod jitless, `examples:check`.
 
@@ -623,7 +632,7 @@ CSP violations after bootstrap are logged by `installGlobalErrorHandlers` (direc
 | `/mfe` | warn (essential) | `chunk load failed: reloading` | a chunk of the running build is gone; logged before the one reload per version (`version`, `exception.*`) |
 | `/react` | error | `remote failed to render` | a render error in an `MFEErrorBoundary` |
 | `/react` | warn | `remote showed an error` | an API error reached a boundary |
-| `/react` | error | `uncaught error` · `unhandled promise rejection` | global handlers |
+| `/react` | error | `uncaught error` · `unhandled promise rejection` | global handlers; at most 10 per signature and 60 per page a minute (shared with the CSP line); the next line of a signature carries `suppressed` |
 | `/react` | warn (essential) | `content security policy violation` | `securitypolicyviolation` (`violated_directive`, `blocked_uri` origin, `disposition`) |
 | `/auth` | warn (essential) | `sign-in callback ignored: unknown or expired state` | callback without a valid record |
 | `/auth` | error | `sign-in callback rejected: iss does not match the realm` | RFC 9207 check failed |
@@ -632,6 +641,7 @@ CSP violations after bootstrap are logged by `installGlobalErrorHandlers` (direc
 | `/auth` | warn (essential) | `sign-in failed` | `?error=` on an interactive login |
 | `/auth` | error | `silent sign-in could not start` | restore redirect could not be prepared |
 | `/auth` | error | `trial ID token has no valid tenant_id: storage stays anonymous` | trial token without `tenant_id` |
+| `/auth` | warn (essential) | `step-up not performed by the identity provider: auth_time is older than max_age` | a step-up callback whose `auth_time` is older than the requested `max_age` (`max_age`) |
 | `/auth` | warn (essential) | `token refresh outcome unknown: restoring the session` · `token refresh failed: restoring the session` | ambiguous refresh outcome |
 | `/auth` | warn (essential) | `token endpoint unavailable: retrying the refresh` | 429, or 503 with `Retry-After`, on refresh; `status`, `retry_in_ms` |
 | `/auth` | error | `token refresh answer rejected: restoring the session` · `token refresh failed` | invalid refresh answer; unexpected exception |
@@ -644,7 +654,7 @@ CSP violations after bootstrap are logged by `installGlobalErrorHandlers` (direc
 The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are recorded through the instrument port. They are no-ops until the names are ratified and the binding ships (§15). The list is in [docs/observability/README.md](../observability/README.md).
 
 ### 11.3 Counters for tests and support
-`tracingStats()`, `loggingStats()` and `metricsStats()` (internal) count exported items, items dropped because the queue was full or consent was missing, export failures and beacons. `/testing`'s `createTestPlatform` exposes the logs and spans that would have been exported.
+`tracingStats()`, `loggingStats()` and `metricsStats()` (internal) count exported items, items dropped because the queue was full or consent was missing, export failures and beacons. `/testing`'s `createTestPlatform` exposes the logs and spans that would have been exported, and `signOuts` (its shell's `signOut`, for `useSignOut`); a new platform stops the previous one (unload listeners, logging, tracing, identity provider).
 
 ---
 
@@ -721,7 +731,7 @@ Shells and remotes built with webpack and Rspack interoperate: an Rspack shell p
 | `no-sdk-deep-import` | any SDK specifier that is not a public subpath (or `package.json`) |
 | `no-identity-headers` | a forbidden header (list generated from the contracts) as a key of a `headers: {}` object or `x.headers = {}`, in a `new Headers({})` or `new Headers([[name, v]])` (also `[[name, v]]` as `headers`), as the name in `.set` / `.append` (string or template without expressions), or in a computed assignment `h['x-user-id'] = v` |
 | `no-raw-storage` | global `localStorage` / `sessionStorage`, also via `window`, `globalThis`, `self`, chains of them (`window.self`), a `const` / `let` alias never reassigned (`const w = window; w.localStorage`) and destructuring (`const { localStorage } = window`) |
-| `no-unsafe-html` | without `sanitizeHtml(…)` imported from `@bcbp-solutions-fzc-llc/frontend-sdk/security` (named, aliased or through its namespace; the `sanitizers` option replaces it with names of your own): `innerHTML` / `outerHTML` / `srcdoc` assignment, `setAttribute('srcdoc', …)`, JSX `srcDoc`, `insertAdjacentHTML`, `setHTMLUnsafe`, `parseHTMLUnsafe`, `createContextualFragment`, `parseFromString` of any type but `text/xml` / `application/xml`, `dangerouslySetInnerHTML`; `document.write` / `writeln` always |
+| `no-unsafe-html` | without `sanitizeHtml(…)` imported from `@bcbp-solutions-fzc-llc/frontend-sdk/security` (named, aliased or through its namespace; the `sanitizers` option replaces it with names of your own): `innerHTML` / `outerHTML` / `srcdoc` assignment, `setAttribute('srcdoc', …)`, JSX `srcDoc`, `insertAdjacentHTML`, `setHTMLUnsafe`, `parseHTMLUnsafe`, `createContextualFragment`, `parseFromString` (any type: Trusted Types requires TrustedHTML for XML too), `dangerouslySetInnerHTML`; `document.write` / `writeln` always |
 | `no-runtime-css-in-js` | `@emotion/*`, `styled-components`, `@mui/*`, `@stitches/react`, `goober`, `styled-jsx`, `@vanilla-extract/dynamic` (written exceptions via `allow`) |
 | `api-route-template` | an `ApiClient`-style `get/post/put/patch/delete` whose path is a template literal with expressions or a `+` concatenation starting with `/` |
 
@@ -739,10 +749,11 @@ The packages are released together with one version (changesets `fixed`):
 4. `npm-publish` publishes the three tarballs to **GitHub Packages** (`@bcbp-solutions-fzc-llc/*`, dist-tag from `publish:check`: `alpha`, `rc` or `latest`), with a build-provenance attestation each. It runs in the `npm` environment and refuses to publish unless publishing is gated (`.github/scripts/check-npm-environment.sh`): required reviewers, or (this private repository on GitHub Team) the environment accepts only release tags and an active tag ruleset limits creating, moving and deleting `v*` tags to admins and named teams. A version already published with the same integrity is skipped; a different one is refused.
 5. It publishes a GitHub Release with the three tarballs, a CycloneDX SBOM, and `checksums.txt` with a Cosign keyless signature bundle. Pre-release tags (`v1.0.0-alpha.N`) are marked as pre-releases.
 
-The first release is `v1.0.0-alpha.1` (2026-11-03); the latest is `v1.0.0-alpha.3` (2026-11-04). Changesets v3's pre mode moves consumed changesets into `.changeset/pre/`; `changelog-check.yml` recognises that as a release PR.
+The first release is `v1.0.0-alpha.1` (2026-11-03); the latest is `v1.0.0-alpha.3` (2026-11-04). `[Unreleased]` (PRs #41–#46) is to ship as `1.0.0-alpha.4`, not yet released. Changesets v3's pre mode moves consumed changesets into `.changeset/pre/`; `changelog-check.yml` recognises that as a release PR.
 
 ### 14.2 Compatibility
-- **During the alpha:** breaking changes bump `N` and are listed in the CHANGELOG. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`.
+- **During the alpha:** breaking changes bump `N` and are listed in the CHANGELOG. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`. Two pre-release SDK copies share the runtime only at the same version (§6.1).
+- **`alpha.4`:** the shell and every remote upgrade together. The container global is `__platform_mfe_<name>` (a remote built with an older preset defines the old one, which the new `loadRemote` does not read); the shell's CSP `form-action` must allow the IdP origin; `/storage` values under the old keys are not read; a Tier 3 metric with more than 8 labels fails registration; `no-raw-storage` and `no-unsafe-html` report more.
 - **From `1.0.0`:** SemVer is strict. A remote built for another major fails share negotiation, and that failure stays inside its boundary.
 
 ### 14.3 Testing
@@ -767,3 +778,8 @@ See ARCHITECTURE.md § Testing strategy. Key guarantees under test:
 | Reference Collector deployment | `examples/collector` is a reference; the platform Collector is deployed by Platform observability | The browser's metrics need the two tiers (§7.6) to aggregate correctly |
 | `createTestPlatform` option for remote → domain (`remotes`) | Proposed, not in §C1 | A remote's own tests cannot register Tier 2/3 metrics under its `ownerDomain` |
 | changesets v3 pre mode | `changeset version` moves consumed changesets into `.changeset/pre/` instead of deleting them | `changelog-check.yml` accepts that as a release PR; `pnpm changeset pre exit` before `1.0.0` |
+| Staging validation on real AWS and Keycloak | Not run: the integrated stack emulates AWS with floci (gaps E-n in `docs/e2e/integrated-deployment-report.md`) | Unverified outside the stack: the global sign-out's form POST under a real CloudFront CSP (`form-action`), CSS SRI served by CloudFront, Chromium's `report-to` (needs valid certificates, E-6) |
+| Bundle-size budget | None: no size limit is checked in CI | A dependency or subpath can grow the shell's and remotes' bundles unnoticed |
+| Load and soak testing | Not done | Behaviour under sustained traffic (refresh backoff at scale, Collector intake, long-lived tabs) is untested |
+| Telemetry export during a Collector outage | Each failed batch is counted and dropped; exports are not paused | A Collector outage costs every tab one failed request per batch until it recovers |
+| Design doc §C4 bootstrap diagram | The design record's diagram shows one session-context attempt; the shell retries a transient failure 3 times (§6.2, `examples/shell/src/session-context.ts`) | The diagram is noted, not redrawn |

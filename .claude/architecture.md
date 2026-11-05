@@ -11,7 +11,8 @@ platform-reactcommon/
 │   │   ├── src/<subpath>/index.ts    the only public surface of each of the 17 subpaths
 │   │   ├── src/internal/             shared, private: runtime (PlatformRuntime), events, instruments (the Tier 1 port),
 │   │   │                             batcher, unload (keepalive budget, LLD §7.5), environments, online, redirect,
-│   │   │                             locale, session, ids, urls, generated/ (contracts as TS: never edit)
+│   │   │                             reload (onBeforeReload / reloadPage), retry-after (/http and /auth), flag-provider (/flags and /auth), locale,
+│   │   │                             session, ids, urls (stripUrlQueries), generated/ (contracts as TS: never edit)
 │   │   ├── src/root.ts               "." entry: throws (import a subpath)
 │   │   ├── contracts/                generated from pinned backend commits (sources.json): never edit
 │   │   ├── api/<subpath>.api.md      api-extractor reports: the SemVer surface
@@ -19,10 +20,12 @@ platform-reactcommon/
 │   │   └── tsup.config.ts            one entry per subpath; build heap 4 GB (package.json "build")
 │   ├── webpack-preset/               shared.ts (bundler-neutral), index.ts (webpack), rspack.ts, rsbuild.ts, rspack-preset.ts (Rspack passed in);
 │   │                                 platformShared, sharedFor, platformWebpackConfig, ProvideSdkPlugin,
-│   │                                 ChunkIntegrityPlugin (src/integrity.ts); src/generated/sdk.ts generated
-│   └── eslint-plugin/                src/rules.ts; src/generated/{sdk,forbidden-headers}.ts generated
+│   │                                 SdkVersionPlugin (src/sdk-version.ts), ChunkIntegrityPlugin (src/integrity.ts:
+│   │                                 JS and CSS); src/generated/sdk.ts generated; README.md (in the tarball)
+│   └── eslint-plugin/                src/rules.ts; src/generated/{sdk,forbidden-headers}.ts generated; README.md
 ├── examples/
-│   ├── shell/                        reference shell: bootstrap.tsx (the design doc's order), IAM ports, session screens
+│   ├── shell/                        reference shell: bootstrap.tsx (the design doc's order), session-context.ts (P-35 retry),
+│   │                                 ShellRoot.tsx, environment.mjs, IAM ports, session screens
 │   ├── remote-tenders/               reference remote (exposes ./EditTender)
 │   ├── cloudfront/                   behaviors, response-headers policy (csp.mjs), SPA rewrite (static extensions only), /csp-report Lambda
 │   └── collector/                    reference OTel Collector: gateway.yaml + aggregator.yaml, README (Mimir series limits) (+ test/: allowlists = registry)
@@ -31,9 +34,10 @@ platform-reactcommon/
 │   ├── integration/                  subpaths wired together in-process
 │   ├── e2e/                          the reference shell + remote end to end (jsdom, Keycloak fake)
 │   ├── smoke/                        served builds (or a deployed shell: SMOKE_BASE_URL)
-│   ├── browser/                      Playwright × 3 engines, production CSP; harness/, engine-notes.ts
+│   ├── browser/                      Playwright × 3 engines, production CSP; harness/, styled-remote/ (CSS SRI), engine-notes.ts
 │   ├── collector/                    the reference Collector in its image (2 gateways + 2 aggregators)
-│   ├── stack/                        Playwright against docker-compose.yml (Keycloak, Envoy, IAM, floci, Collectors)
+│   ├── stack/                        Playwright against docker-compose.yml (Keycloak, Envoy, IAM, floci, Collectors);
+│   │                                 scripts/ (prepare.mjs: content-hashed remote deploy version, deploy-web.sh)
 │   ├── fixtures/ · testenv/
 ├── docker/ + docker-compose.yml      the integrated stack (edge shim, envoy, floci, go-probe, otel, org-membership seed)
 ├── monitoring/                       Tier 1 proposal (registry/), Grafana dashboard, Prometheus rules (all proposed)
@@ -41,8 +45,8 @@ platform-reactcommon/
 │                                     check-examples, check-publish; pure logic in scripts/lib (unit-tested)
 ├── docs/                             design/, architecture/ (+ mermaid/*.mmd), lld/, areas/, observability/,
 │                                     problem-details/, e2e/ (the integrated-deployment report)
-├── .github/                          workflows (ci, release, validate-*, changelog-check, stack-nightly), scripts/,
-│                                     actions/setup
+├── .github/                          workflows (ci, release, validate-*, changelog-check, stack-nightly), scripts/
+│                                     (eslint-9.sh, react-floor.sh, coverage-gate.sh, …), actions/setup, dependabot.yml
 └── .changeset/                       pending changesets; pre.json + pre/ (consumed, changesets v3 pre mode)
 ```
 
@@ -63,7 +67,7 @@ Cross-layer needs that would point upwards go through `src/internal`: the instru
 
 ## The Runtime
 
-One `PlatformRuntime` per page on `globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]`, shared by every SDK copy of the same major (a second major keeps its own and logs one error). It holds identity, consent, config, the telemetry providers, the identity provider and token source, the manifest, flags, i18n, the authorizer, the event topics and `unload` (senders, keepalive ledger, reservations, metrics share). Inventory: LLD §6.1. `resetRuntimeForTests()` is for tests only.
+One `PlatformRuntime` per page on `globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]`, shared by every SDK copy of a compatible version: the same major, or for a pre-release the same version (`1.0.0-alpha.3` and `alpha.4` each keep their own). An incompatible copy keeps its own runtime; any second copy logs one error. It holds identity, consent, config, the telemetry providers, the identity provider and token source, the manifest, flags, i18n, the authorizer, the event topics, the remote container cache, the flag subscription, the before-reload listeners and `unload` (senders, keepalive ledger, reservations, metrics share). Inventory: LLD §6.1. `resetRuntimeForTests()` is for tests only.
 
 ## Telemetry Delivery on Hide and Close
 
@@ -74,6 +78,8 @@ One `PlatformRuntime` per page on `globalThis[Symbol.for('@bcbp-solutions-fzc-ll
 - **`platformWebpackConfig({ role, name?, exposes?, mode })`**: shell `publicPath: '/'` (scripts under `/assets`), remote `'auto'`; Trusted Types policy `platform-webpack`; no `eval` devtools; content hashes; `crossOriginLoading: 'anonymous'`.
 - **`platformShared` / `sharedFor('shell' | 'remote')`**: React, react-dom, `@opentelemetry/api` and every SDK subpath (except `/testing`) as strict singletons; the shell shares the SDK under `^1.0.0-0`, a remote requires `^<the version it was built against>`.
 - **`ProvideSdkPlugin`** (shell): provides every SDK subpath lazily, not only those the shell imports (report Issue 2).
+- **`SdkVersionPlugin`** (every preset): fails the build when the SDK installed for the app is not the preset's own version (an app without the SDK is not checked).
+- **`containerName(name)`**: a remote's container global is `__platform_mfe_<name>` (`-` as `_`), never the bare name (element ids are `window` properties).
 - **`ChunkIntegrityPlugin`** (production): a sha384 for every lazily loaded JS and CSS chunk (CSS through mini-css-extract-plugin, `CssExtractRspackPlugin` or native CSS; any other lazy CSS loader fails the build), fail-closed `MISSING_INTEGRITY`; the HTML's `<script>`s and `<link rel="stylesheet">`s pinned with `integrity` + `crossorigin`.
 
 ## Examples

@@ -32,7 +32,7 @@ packages/
     contracts/              ← Generated from pinned backend commits (never edited)
     api/<subpath>.api.md    ← api-extractor report: the reviewed public API
     subpaths.json           ← Subpaths, layers, functional areas, allowed imports (single source)
-  webpack-preset/           ← platformShared, sharedFor, platformWebpackConfig; platformRspackConfig (/rspack), pluginPlatform (/rsbuild)
+  webpack-preset/           ← platformShared, sharedFor, platformWebpackConfig, ProvideSdkPlugin, SdkVersionPlugin, ChunkIntegrityPlugin; platformRspackConfig (/rspack), pluginPlatform (/rsbuild)
   eslint-plugin/            ← Consumer lint rules (src/rules.ts)
 test/                       ← All tests, not beside production code (as platform-gincommon)
   unit/<subpath>/           ← One folder per SDK subpath; unit/sdk, unit/webpack-preset, unit/eslint-plugin
@@ -41,9 +41,10 @@ test/                       ← All tests, not beside production code (as platfo
   smoke/                    ← The served example builds, or a deployed shell (SMOKE_BASE_URL)
   browser/                  ← Playwright: Chromium, Firefox, WebKit under the production CSP
   stack/                    ← Playwright against a production-like stack (Keycloak, Envoy + IAM, floci, Collector)
+  collector/                ← The reference Collector (examples/collector) in its image (Docker)
   fixtures/                 ← Shared fakes and helpers
   testenv/                  ← Loads .env; sets OBSERVABILITY_DOMAIN, ENVIRONMENT defaults
-examples/                   ← shell, remote-tenders, cloudfront (built and checked in CI; not deployed)
+examples/                   ← shell, remote-tenders, cloudfront, collector (built and checked in CI; not deployed)
 scripts/                    ← exports, contracts, docs, API reports, metrics parity and proposal, example checks
 monitoring/                 ← Grafana dashboard, Prometheus rules (+ promtool tests), the Tier 1 registry proposal
 docker-compose.yml          ← The production-like stack for test/stack (start with `pnpm run stack-up`, not `docker compose up`)
@@ -108,9 +109,12 @@ Review the diff: a contract change that alters public behaviour (a new problem t
 | Contract | `test/unit/` (fixtures from `contracts/`) | Identity, redaction and problem fixtures shared with Go and Python |
 | Build | `test/unit/webpack-preset/` (incl. `rspack.test.ts`), `pnpm examples:check` | Real webpack, Rspack and Rsbuild builds: container globals, no SDK in remotes, no `eval` or `Function`, a mixed webpack/Rspack estate |
 | Examples | `examples/*/test/` | The shell's IAM ports against the contract cases; the CloudFront CSP and Lambda |
-| Browser | `test/browser/` | Playwright in Chromium, Firefox and WebKit (`pnpm run test-browser`): keepalive and tab close, page-lifecycle order, `AbortSignal.any`, Trusted Types, the production CSP. Known SDK bugs are `test.fail` in `known-bugs.ts` |
-| Stack | `test/stack/` | The example shell against a production-like deployment (`pnpm run stack-up`, then `pnpm run test-stack`, then `pnpm run stack-down`; needs Docker and `gh auth token` for the IAM images). The stack is `docker-compose.yml` with its configs in `docker/`. Local only, not in CI. Findings: `docs/e2e/integrated-deployment-report.md` |
+| Browser | `test/browser/` | Playwright in Chromium, Firefox and WebKit (`pnpm run test-browser`): keepalive and tab close, page-lifecycle order, `AbortSignal.any`, Trusted Types, the production CSP, SRI on lazily loaded JS and CSS chunks. Engine limits are recorded in `engine-notes.ts` (skip only on them) |
+| Stack | `test/stack/` | The example shell against a production-like deployment (`pnpm run stack-up`, then `pnpm run test-stack`, then `pnpm run stack-down`; needs Docker and `gh auth token` for the IAM images). The stack is `docker-compose.yml` with its configs in `docker/`. Locally, and nightly in CI (`stack-nightly.yml`). Findings: `docs/e2e/integrated-deployment-report.md` |
 | Interop | CI `interop` job | platform-interop-tests pair 4 at a pinned SHA |
+| React floor | CI `react-floor` job (`pnpm run test-react-floor`) | Typecheck, unit suite, build and example checks on React 19.0.0 |
+| ESLint 9 | CI `eslint-9` job (`pnpm run test-eslint-9`) | The eslint-plugin's tests on ESLint 9, the lower major of its peer range (a release gate too) |
+| Collector | CI `collector` job (`pnpm run test-collector`) | The reference two-tier Collector in its image (Docker) |
 
 - Statement coverage of `packages/*/src` must stay **≥ 98%** (`pnpm test:coverage`, gated in CI). Don't lower the threshold.
 - Don't break the canonical tests listed in the [README](README.md#canonical-tests-do-not-break) (OIDC refresh, header rules, redaction, problem parsing, CSP-safe config, dependency rules).
@@ -131,7 +135,7 @@ Give new public symbols a TSDoc comment; it ends up in the API report (api-extra
 ## Pull request checklist
 
 - [ ] `pnpm run ci` passes locally (`pnpm verify` + the coverage gate and the audit)
-- [ ] New behaviour is covered by tests in `packages/*/test/`; coverage stays ≥ 98%
+- [ ] New behaviour is covered by tests under `test/` (mirroring `src/`); coverage stays ≥ 98%
 - [ ] New public symbols have TSDoc comments, and `api/*.api.md` is updated (`pnpm api`)
 - [ ] A changeset (`pnpm changeset`) for a change to a published package
 - [ ] `CHANGELOG.md` `[Unreleased]` section updated (the *Changelog check* workflow requires both)
@@ -156,4 +160,4 @@ See **[VERSIONING.md § Maintainer release process](./VERSIONING.md#maintainer-r
 2. Run `pnpm install` if the lockfile changed, and `pnpm verify`. Merge as `chore(release): vX.Y.Z`.
 3. Create and push an annotated tag on the merge commit: `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`.
 4. `release.yml` verifies the tag, reruns every CI gate and creates the GitHub Release (tarballs, SBOM, signed checksums) with the CHANGELOG section as release notes.
-5. Notify the shell and remote teams with upgrade notes if MINOR or MAJOR (upgrade the shell first).
+5. Notify the shell and remote teams with upgrade notes if MINOR or MAJOR: upgrade the shell first, unless the CHANGELOG says the shell and remotes must upgrade together (as for `1.0.0-alpha.4`'s container global).

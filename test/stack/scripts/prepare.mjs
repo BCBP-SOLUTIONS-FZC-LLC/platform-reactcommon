@@ -107,12 +107,24 @@ async function cloudfrontInputs() {
   write('cloudfront/expected-headers.json', h);
 }
 
+/**
+ * The version this build of the remote deploys under: the package's, plus its entry's content hash. As in a
+ * real deploy, a version is never overwritten (deploy-web.sh), so each build needs its own: with the bare
+ * package version, a stack whose floci bucket outlived a run served the previous build's remote against the
+ * new shell and manifest (an SRI failure on its entry).
+ */
+function remoteDeployVersion() {
+  const entry = readFileSync(join(STATE, 'web/remote/remoteEntry.js'));
+  return `${STACK.remoteVersion}-${createHash('sha256').update(entry).digest('hex').slice(0, 12)}`;
+}
+
 function manifest() {
   const entry = readFileSync(join(STATE, 'web/remote/remoteEntry.js'));
+  const version = remoteDeployVersion();
   return {
     tenders: {
-      entry: `/remotes/tenders/${STACK.remoteVersion}/remoteEntry.js`,
-      version: STACK.remoteVersion,
+      entry: `/remotes/tenders/${version}/remoteEntry.js`,
+      version,
       ownerDomain: 'tender_management',
       integrity: `sha384-${createHash('sha384').update(entry).digest('base64')}`,
     },
@@ -274,7 +286,7 @@ function composeEnv() {
     AUTH_HOSTNAME_URL: STACK.authOrigin,
     SHARED_REALM_ISSUER: STACK.issuer('trial'),
     REALM_TENANT_MAP_SEED: JSON.stringify({ [STACK.issuer('tenant-acme')]: STACK.tenants.acme.id }),
-    REMOTE_VERSION: STACK.remoteVersion,
+    REMOTE_VERSION: remoteDeployVersion(),
     SHELL_VERSION: STACK.shellVersion,
     IAM_ROOT: relative(ROOT, IAM_ROOT),
   };

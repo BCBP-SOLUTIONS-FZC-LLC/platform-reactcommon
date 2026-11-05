@@ -23,7 +23,7 @@ We use [SemVer 2.0.0](https://semver.org/): `MAJOR.MINOR.PATCH` (e.g. `1.2.3`). 
 |---------------------------|----------------------------------------|
 | Every export of the 17 SDK subpaths, as recorded in [`packages/frontend-sdk/api/*.api.md`](packages/frontend-sdk/api/) (api-extractor; CI fails on an unreviewed change) | `src/internal/*` and anything not exported from a subpath's `index.ts` |
 | The subpath list itself (the exports map) and the package root throwing | Test seams (`set*InternalsForTests`, `resetRuntimeForTests`) |
-| The `runtime.json` schema (keys, defaults, validation), see [LLD §12.1](docs/lld/platform-reactcommon-lld.md#121-runtimejson) | The `PlatformRuntime` object's shape on `globalThis` (shared only between copies of the same major) |
+| The `runtime.json` schema (keys, defaults, validation), see [LLD §12.1](docs/lld/platform-reactcommon-lld.md#121-runtimejson) | The `PlatformRuntime` object's shape on `globalThis` (shared only between compatible copies: the same major, or for a pre-release the same version) |
 | Wire behaviour: headers sent and withheld, the RFC 9457 parsing, the reserved browser-storage keys | `contracts/` and `src/internal/generated/` files (generated; their **effects** on public behaviour are in scope) |
 | `@bcbp-solutions-fzc-llc/webpack-preset` exports and the `platformShared` map | `examples/`, `scripts/`, `.github/` |
 | `@bcbp-solutions-fzc-llc/eslint-plugin` rule names, options and `configs.recommended` | Log message wording (the catalogue in the LLD is informative) |
@@ -57,7 +57,9 @@ The shell provides the SDK to every remote as a **strict singleton** shared unde
 - **Pre-release `1.0.0-alpha.N` (current).** The repository is in changesets pre mode (`alpha`), so every release is `1.0.0-alpha.N`, whatever the bump:
   - a breaking change bumps `N` and is listed in the CHANGELOG;
   - nothing is deployed, and the shell and remotes upgrade together;
-  - the shell shares the SDK under `^1.0.0-0`, and each remote requires `^<the SDK version it was built against>` (for example `^1.0.0-alpha.3`, which accepts later alphas and every `1.x`).
+  - the shell shares the SDK under `^1.0.0-0`, and each remote requires `^<the SDK version it was built against>` (for example `^1.0.0-alpha.3`, which accepts later alphas and every `1.x`);
+  - two SDK copies on one page share the `PlatformRuntime` only when they are the same alpha (`1.0.0-alpha.3` next to `alpha.4` each keep their own, as two majors would): a remote that bundled the SDK by mistake does not see the shell's identity or session;
+  - **`1.0.0-alpha.4` (in `[Unreleased]`, not released)** has breaking changes that need the shell and every remote rebuilt and deployed **together**: a remote's container global is `__platform_mfe_<name>` (an alpha.3 remote defines the bare name, which the alpha.4 SDK does not read), `/storage` keys move under the SDK's prefix, the shell's CSP `form-action` must allow the IdP origin (sign-out is a form POST), a Tier 3 metric takes at most 8 labels, and `no-raw-storage` / `no-unsafe-html` report more. Each entry in the CHANGELOG says how to upgrade.
 - **MAJOR `1` (from `1.0.0`, cut with the first end-to-end environment):** we avoid breaking changes within `1.x`. When one is required, we release `2.0.0` and document the migration in the CHANGELOG.
 - **MINOR:** safe to upgrade without code changes unless you opt into new features (shell first, see above).
 - **PATCH:** drop-in replacement; upgrade recommended for security fixes.
@@ -71,7 +73,7 @@ None. During the alpha, breaking changes are expected and recorded in the CHANGE
 
 | Version | Status | Supported until |
 |---------|--------|-----------------|
-| `1.0.0-alpha.N` | **Current** pre-release line (first tag: `v1.0.0-alpha.1`; `1.0.0-alpha.0` was never released) | Until `1.0.0` |
+| `1.0.0-alpha.N` | **Current** pre-release line: latest release `1.0.0-alpha.3` (2026-11-04); `1.0.0-alpha.4` pending in `[Unreleased]` (first tag: `v1.0.0-alpha.1`; `1.0.0-alpha.0` was never released) | Until `1.0.0` |
 | `1.x` | Planned, from `1.0.0` | Active once released |
 
 When a new **MAJOR** line ships, the previous major receives **security fixes only** for six months after the new major's release ([SECURITY.md](SECURITY.md)).
@@ -184,7 +186,7 @@ The release workflow (`.github/workflows/release.yml`) automates verification, e
      - the tag is reachable from `origin/main` (a manual dispatch must start from `main` or the tag);
      - all three package versions equal the tag;
      - `CHANGELOG.md` has the tag's section (`## [1.0.0-alpha.1]`, or the base `## [1.0.0]` for a pre-release tag).
-   - **Re-run every CI gate at the tag:** tests with the coverage gate, quality, contracts, package, Trivy, smoke, interop.
+   - **Re-run every CI gate at the tag:** tests with the coverage gate, quality, contracts, package, Trivy, smoke, interop, React floor, ESLint 9 (not `browser` or `collector`).
    - **Publish:** sign `checksums.txt` (tarballs + SBOM) with Cosign, then create the **[GitHub Release](https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/releases)** with that CHANGELOG section as the release notes. A tag with a pre-release part is marked as a pre-release.
 
 5. **Notify consumers** (the shell and remote teams) with upgrade notes. For a MINOR or MAJOR, say which order to upgrade in (shell first).
@@ -219,7 +221,7 @@ The SDK targets evergreen browsers (ES2022), with Trusted Types where the browse
 | platform-fastapicommon | `b0fcdfd` (after #50) |
 | platform-interop-tests | `93e3481` (#9, pair 4) |
 | platform-events · platform-pgcommon | `d85f6c8` · `9daebf8` (to build go-probe) |
-| iam-authz-enrichment · iam-org-membership | `4bea2ea` · `3d17d87` |
+| iam-authz-enrichment · iam-org-membership | `fae20d1` · `98cf517` |
 
 A backend change that alters a contract (a new problem type, deny code, registry domain or metric) reaches the SDK only through a reviewed pin move (`pnpm contracts:sync --update-pins`) and a release.
 

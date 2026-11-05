@@ -28,12 +28,16 @@ Import a subpath (`@bcbp-solutions-fzc-llc/frontend-sdk/http`), never the root (
 
 ### Behaviour worth knowing before changing a call site
 
-- **`IdentityProvider.logout(o?)`**, the shell's `signOut`, `useSignOut()`: **global by default** (ends the Keycloak session); `{ global: false }` is local-only (CHANGELOG `1.0.0-alpha.1`, Breaking).
-- **`createApiClient`**: route templates only (`/tenders/:id`, no query or `..`); identity headers throw; the token goes to the page origin only.
-- **`initializeMetrics`**: sends the interval by `sendBeacon` when the page is hidden or closing; Tier 1 `platform_web_*` names are recorded through the instrument port and stay no-ops until ratified (`startWebVitals` records nothing yet).
+- **`IdentityProvider.logout(o?)`**, the shell's `signOut`, `useSignOut()`: **global by default** (a form POST to the end-session endpoint ends the Keycloak session; the shell's CSP `form-action` must allow the IdP origin, `[Unreleased]` Breaking); `{ global: false }` is local-only (CHANGELOG `1.0.0-alpha.1`, Breaking). `dispose()` (optional) stops a provider without signing out.
+- **`createApiClient`**: route templates only (`/tenders/:id`, no query or `..`); identity headers throw; the token goes to the page origin only; `retry.attempts` capped at 5; a redirect on a call with the token or correlation headers, or a 2xx body that is not the JSON it claims, is a synthetic 502; typed arrays and DataViews are sent as bytes, a `ReadableStream` body is refused.
+- **`useApi(fn, deps)`**: never returns the previous deps' data or error for new deps; `reload()` keeps the data. **`MFEErrorBoundary`** takes `resetKeys` (and resets when `mfe` changes), `RemoteBoundary` when `remote` or `module` changes; the default fallback takes focus.
+- **`installGlobalErrorHandlers()`**: rate-limited to 10 lines per signature and 60 per page a minute (the next line carries `suppressed`).
+- **`useBeforeAuthRedirect`**: runs before the SDK's sign-in redirects and before it reloads the page (chunk-load error, `useAppUpdate().reload`).
+- **`loadRuntimeConfig`**: times out after 10 s (`timeoutMs`, 1 to 2 147 483 647).
+- **`initializeMetrics`**: sends the interval by `sendBeacon` when the page is hidden or closing; Tier 1 `platform_web_*` names are recorded through the instrument port and stay no-ops until ratified (`startWebVitals` records nothing yet). `getServiceMeter` (Tier 3): at most 8 labels besides `domain`, `service`, `environment`.
 - **`sanitizeHtml`**: DOMPurify after a linear pre-pass that drops handler/style attributes and `<style>` (no CSP reports); returns `TrustedHTML` where Trusted Types exist.
 - **`loadManifest`**: drops an entry without `integrity` outside local, dev and test.
-- **`createTestPlatform()`** (`/testing`): a real SDK runtime with in-memory logs and spans, a signed-in session (`storage()` scoped to its workspace; `storageNamespace: 'anon'` for signed out), permissions and flags; `mockApi`, `mockProblem`, `renderMetricInventory`.
+- **`createTestPlatform()`** (`/testing`): a real SDK runtime with in-memory logs and spans, a signed-in session (`storage()` scoped to its workspace; `storageNamespace: 'anon'` for signed out), permissions and flags, a shell `signOut` recorded in `signOuts`; a new one stops the previous one; `mockApi`, `mockProblem`, `renderMetricInventory`.
 
 ## `@bcbp-solutions-fzc-llc/webpack-preset`
 
@@ -60,4 +64,4 @@ No api-extractor report for this package; its surface is `src/index.ts`. LLD §1
 
 ## `@bcbp-solutions-fzc-llc/eslint-plugin`
 
-Rules `no-sdk-root-import`, `no-sdk-deep-import`, `no-identity-headers`, `no-raw-storage`, `no-unsafe-html`, `no-runtime-css-in-js`, `api-route-template`; `configs.recommended` = all seven + `no-eval`, `no-implied-eval`, `no-new-func`. LLD §13.2.
+Rules `no-sdk-root-import`, `no-sdk-deep-import`, `no-identity-headers`, `no-raw-storage`, `no-unsafe-html`, `no-runtime-css-in-js`, `api-route-template`; `configs.recommended` = all seven + `no-eval`, `no-implied-eval`, `no-new-func`. `no-unsafe-html` trusts only the SDK's `sanitizeHtml` from `/security` unless the `sanitizers` option lists others; `no-raw-storage` also reports bare `localStorage` / `sessionStorage` under browser globals and follows aliases of `window`. LLD §13.2.

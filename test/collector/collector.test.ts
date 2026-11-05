@@ -104,6 +104,8 @@ const flat = (a: KeyValue[] | undefined): Attrs => Object.fromEntries((a ?? []).
 function tab(id: string): Attrs {
   return {
     'service.name': 'web-app',
+    // Tabs on two builds, as after a deploy: one series still (review 3: the version split the streams).
+    'service.version': id.endsWith('1') ? '1.4.0' : '1.5.0',
     'service.namespace': 'portal',
     'deployment.environment.name': ENVIRONMENT,
     'service.instance.id': id,
@@ -257,9 +259,9 @@ describe('metrics: delta → cumulative, one series for every tab', () => {
     expect(new Set(points.map((p) => p.aggregator))).toEqual(new Set([0, 1])); // both aggregators share the load
   });
 
-  it('keeps only the SDK\'s resource attributes (per-browser and made-up ones removed)', async () => {
+  it('keeps no resource attribute on metrics: no per-build, per-browser or forged series (review 3)', async () => {
     const [p] = await settled('portal_web_app_clicks_total', 6);
-    expect(p!.resource).toEqual({ 'service.name': 'web-app', 'service.namespace': 'portal', 'deployment.environment.name': ENVIRONMENT });
+    expect(p!.resource).toEqual({});
   });
 
   it('allowlists label values: the platform vocabulary, the registered domains, this environment', async () => {
@@ -377,7 +379,8 @@ describe('traces and logs', () => {
     type Res = { resource: { attributes?: KeyValue[] } };
     const gw = gateways[0]!;
     const span = await eventually(() => (lines(gw, 'traces') as { resourceSpans: (Res & { scopeSpans: { spans: { traceId: string }[] }[] })[] }[]).flatMap((b) => b.resourceSpans).find((rs) => rs.scopeSpans.some((ss) => ss.spans.some((s) => s.traceId === traceId))), 'the span');
-    expect(flat(span.resource.attributes)).toEqual({ 'service.name': 'web-app', 'service.namespace': 'portal', 'deployment.environment.name': ENVIRONMENT });
+    // Traces and logs keep the build (service.version): unlike a metric series, a span is per request.
+    expect(flat(span.resource.attributes)).toEqual({ 'service.name': 'web-app', 'service.version': '1.5.0', 'service.namespace': 'portal', 'deployment.environment.name': ENVIRONMENT });
     type LogBody = { resourceLogs: (Res & { scopeLogs: { logRecords: { body: { stringValue: string }; attributes?: KeyValue[] }[] }[] })[] };
     const logs = await eventually(() => (lines(gw, 'logs') as unknown as LogBody[]).flatMap((b) => b.resourceLogs).find((rl) => rl.scopeLogs.some((sl) => sl.logRecords.some((r) => r.body.stringValue === 'collector-test log'))), 'the log');
     expect(flat(logs.resource.attributes)).not.toHaveProperty('service.instance.id');

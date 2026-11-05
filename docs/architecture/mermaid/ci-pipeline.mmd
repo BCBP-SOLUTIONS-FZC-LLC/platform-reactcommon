@@ -9,6 +9,7 @@ graph LR
         io["Cross-language compatibility<br/>interop.yml (pair 4 at this ref)"]
         br["Browser tests<br/>Playwright: Chromium · Firefox · WebKit"]
         rf["React floor (19.0.0)<br/>types · unit tests · build"]
+        e9["ESLint 9<br/>eslint-plugin tests on ESLint 9"]
         co["Collector config<br/>examples/collector in the Collector image"]
         ps["PR summary comment"]
         vt --> tv
@@ -16,8 +17,8 @@ graph LR
         vt --> sm
         pk --> sm
         vt --> io
-        vt --> br & rf & co
-        vt & vq & vc & pk & tv & sm & io & br & rf & co --> ps
+        vt --> br & rf & e9 & co
+        vt & vq & vc & pk & tv & sm & io & br & rf & e9 & co --> ps
     end
 
     subgraph rel["release.yml  —  tag vX.Y.Z (one version, changesets fixed)"]

@@ -106,41 +106,62 @@ function parseConfig(raw: unknown, source: string): RuntimeConfig {
   );
 }
 
+/** loadRuntimeConfig's default bound on the request and its body. */
+const DEFAULT_TIMEOUT_MS = 10_000;
+
 /**
  * Shell only: fetches and validates the runtime config (no HTTP cache: `cache: 'no-cache'`
- * revalidates with the ETag). Any failure (network, HTTP status, JSON, schema) is a
+ * revalidates with the ETag), within `timeoutMs` (default 10 s). Any failure (network, timeout, HTTP status, JSON, schema) is a
  * RuntimeConfigError; the shell shows its static "unavailable" page. As for setRuntimeConfig, an
  * http origin on a local host is an error unless initializeCore set the local, dev or test environment.
+ * A `timeoutMs` outside 1 to 2147483647 is a programming error: a RangeError, before any request.
  */
-export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSignal }): Promise<RuntimeConfig> {
+export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<RuntimeConfig> {
   const url = opts?.url ?? DEFAULT_URL;
   if (!/^\/(?!\/)[^\s\\]*$/.test(url)) {
     throw new RuntimeConfigError(`the runtime config URL must be a same-origin path, got ${JSON.stringify(url)}`);
   }
-  let res: Response;
+  // Bounded: a stalled CDN or origin would otherwise leave a blank page instead of the "unavailable" one.
+  // Own timer plus the caller's signal (AbortSignal.any is missing in older Safari).
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // setTimeout takes NaN, Infinity or anything over 2^31-1 ms as about 1 ms.
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) {
+    throw new RangeError(`timeoutMs must be an integer from 1 to 2147483647, got ${String(timeoutMs)}`);
+  }
+  const timeoutMessage = `${url} did not answer within ${timeoutMs} ms`;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const onAbort = () => controller.abort(opts?.signal?.reason);
+  if (opts?.signal?.aborted) onAbort();
+  else opts?.signal?.addEventListener('abort', onAbort, { once: true });
   try {
-    res = await fetch(url, {
-      method: 'GET',
-      cache: 'no-cache',
-      credentials: 'same-origin',
-      headers: { accept: 'application/json' },
-      ...(opts?.signal ? { signal: opts.signal } : {}),
-    });
-  } catch (cause) {
-    if (opts?.signal?.aborted) throw cause; // the caller's abort is not a config error
-    throw new RuntimeConfigError(`${url} could not be loaded`, [], { cause });
+    let res: Response;
+    try {
+      res = await fetch(url, { method: 'GET', cache: 'no-cache', credentials: 'same-origin', headers: { accept: 'application/json' }, signal: controller.signal });
+    } catch (cause) {
+      if (opts?.signal?.aborted) throw cause; // the caller's abort is not a config error
+      throw new RuntimeConfigError(timedOut ? timeoutMessage : `${url} could not be loaded`, [], { cause });
+    }
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {});
+      throw new RuntimeConfigError(`${url} answered HTTP ${res.status}`);
+    }
+    let raw: unknown;
+    try {
+      raw = await res.json();
+    } catch (cause) {
+      if (opts?.signal?.aborted) throw cause;
+      throw new RuntimeConfigError(timedOut ? timeoutMessage : `${url} is not valid JSON`, [], { cause });
+    }
+    return parseConfig(raw, url);
+  } finally {
+    clearTimeout(timer);
+    opts?.signal?.removeEventListener('abort', onAbort);
   }
-  if (!res.ok) {
-    await res.body?.cancel().catch(() => {});
-    throw new RuntimeConfigError(`${url} answered HTTP ${res.status}`);
-  }
-  let raw: unknown;
-  try {
-    raw = await res.json();
-  } catch (cause) {
-    throw new RuntimeConfigError(`${url} is not valid JSON`, [], { cause });
-  }
-  return parseConfig(raw, url);
 }
 
 /**

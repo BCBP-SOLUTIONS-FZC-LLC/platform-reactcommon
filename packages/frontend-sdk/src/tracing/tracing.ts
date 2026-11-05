@@ -127,6 +127,9 @@ export async function shutdownTracing(): Promise<void> {
   getRuntime().tracing = undefined;
   s.removeListeners();
   await s.provider.shutdown().catch(() => {});
+  // Tracing started again while this one flushed (a new test platform, a re-initialised shell): the
+  // globals are the new provider's and context manager's now, so they stay.
+  if (getRuntime().tracing) return;
   trace.disable();
   otelContext.disable();
 }

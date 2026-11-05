@@ -52,6 +52,8 @@ export interface PlatformRuntime {
   trustedTypesPolicy: unknown;
   /** The flag provider (/flags owns its type); undefined means runtime-config flags. */
   flagProvider: unknown;
+  /** Stops the flag provider's subscription (internal/flag-provider.ts). */
+  stopFlagWatching?: (() => void) | undefined;
   /** The shell's router navigation function (/nav owns its type). */
   navigator: unknown;
   /** Locale, namespaces and catalogs (/i18n owns its type). */
@@ -85,8 +87,15 @@ export const ESSENTIAL_ONLY_CONSENT: RuntimeConsent = {
 const OWNER: object = Object.freeze({ sdkVersion: __SDK_VERSION__ });
 let bound: PlatformRuntime | undefined;
 
-function majorOf(version: string): string {
-  return version.split('.')[0] ?? version;
+/**
+ * What two SDK copies must share to share a runtime: the major, and for a 0.x or pre-release version the
+ * whole version (in the alpha every breaking change bumps N of 1.0.0-alpha.N, so alpha.3 and alpha.4 are as
+ * different as two majors: the runtime's shape changed between them).
+ */
+function compatibilityOf(version: string): string {
+  const [core = version, pre] = version.split('-', 2);
+  const major = core.split('.')[0] ?? core;
+  return pre !== undefined || major === '0' ? version : major;
 }
 
 function createRuntime(): PlatformRuntime {
@@ -133,13 +142,13 @@ export function getRuntime(): PlatformRuntime {
     return bound;
   }
   if (existing.owner !== OWNER) {
-    const shared = majorOf(existing.sdkVersion) === majorOf(__SDK_VERSION__);
+    const shared = compatibilityOf(existing.sdkVersion) === compatibilityOf(__SDK_VERSION__);
     console.error(
       `@bcbp-solutions-fzc-llc/frontend-sdk: a second copy (${__SDK_VERSION__}) was loaded next to ${existing.sdkVersion}. ` +
         'Remotes must take the SDK from the shell through Module Federation (import: false), never bundle it. ' +
         (shared
           ? 'This copy uses the existing runtime.'
-          : 'Major versions differ, so this copy keeps its own runtime: its identity, session and consent are not shared.'),
+          : 'Major (or pre-release) versions differ, so this copy keeps its own runtime: its identity, session and consent are not shared.'),
     );
     bound = shared ? existing : createRuntime();
     return bound;

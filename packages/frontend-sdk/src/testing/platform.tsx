@@ -10,10 +10,12 @@ import { roleMapAuthorizer, setAuthorizer, setAuthzSubject } from '../authz/inde
 import { RuntimeConfigSchema, setRuntimeConfig, type RuntimeConfig } from '../config/index.ts';
 import { initializeCore, setConsentProvider, type CoreIdentityInput } from '../core/index.ts';
 import { setFlagProvider, type FlagValue } from '../flags/index.ts';
-import { setLoggingInternalsForTests, initializeLogging } from '../logging/logging.ts';
+import { setLoggingInternalsForTests, initializeLogging, shutdownLogging } from '../logging/logging.ts';
+import { shutdownMetrics } from '../metrics/metrics.ts';
 import { PlatformProvider } from '../react/index.ts';
-import { setTracingInternalsForTests, initializeTracing } from '../tracing/tracing.ts';
+import { setTracingInternalsForTests, initializeTracing, shutdownTracing } from '../tracing/tracing.ts';
 import { getRuntime, resetRuntimeForTests } from '../internal/runtime.ts';
+import { resetUnloadForTests } from '../internal/unload.ts';
 import { workspaceNamespace } from '../storage/index.ts';
 import { restoreFetch } from './mock-api.ts';
 
@@ -110,9 +112,20 @@ export function createTestPlatform(o?: Partial<TestPlatformOptions>): {
   Wrapper: ComponentType<{ children: ReactNode }>;
   logs: LogRecord[];
   spans: SpanRecord[];
+  /** Each useSignOut() call, with its options. */
+  signOuts: { global?: boolean }[];
   reset(): void;
 } {
-  // Start from an empty page: the OTel globals refuse a second registration until disabled.
+  // Start from an empty page, and stop the previous platform first: its unload listeners, batchers, metric
+  // reader and identity provider would otherwise pile up across a test file, and a hidden-page event would drain old
+  // runtimes into old arrays.
+  const previous = getRuntime();
+  resetUnloadForTests();
+  void shutdownLogging();
+  void shutdownTracing();
+  void shutdownMetrics({ discardLastInterval: true }); // a test that initialised metrics: no more exports, not even its last interval
+  (previous.identityProvider as IdentityProvider | undefined)?.dispose?.();
+  // The OTel globals refuse a second registration until disabled.
   trace.disable();
   otelContext.disable();
   restoreFetch();
@@ -182,7 +195,16 @@ export function createTestPlatform(o?: Partial<TestPlatformOptions>): {
   const flags = { ...o?.flags };
   setFlagProvider({ get: (k) => flags[k] ?? config.flags[k], subscribe: () => () => {} });
 
-  const shell = { user, workspace, context, locale: config.i18n.defaultLocale, switchWorkspace: async () => {} };
+  const signOuts: { global?: boolean }[] = [];
+  // As a shell's: useSignOut() works in a remote's tests, and records each call.
+  const shell = {
+    user,
+    workspace,
+    context,
+    locale: config.i18n.defaultLocale,
+    switchWorkspace: async () => {},
+    signOut: async (opts?: { global?: boolean }) => void signOuts.push({ ...opts }),
+  };
   function Wrapper({ children }: { children: ReactNode }) {
     return <PlatformProvider shell={shell}>{children}</PlatformProvider>;
   }
@@ -190,9 +212,11 @@ export function createTestPlatform(o?: Partial<TestPlatformOptions>): {
     Wrapper,
     logs,
     spans,
+    signOuts,
     reset() {
       logs.length = 0;
       spans.length = 0;
+      signOuts.length = 0;
       restoreFetch();
     },
   };

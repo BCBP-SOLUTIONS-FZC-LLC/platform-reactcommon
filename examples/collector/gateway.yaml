@@ -51,7 +51,7 @@ processors:
     limit_percentage: 80
     spike_limit_percentage: 20
 
-  # Every signal: only the identity the SDK sets (src/{tracing,logging,metrics}: resourceFromAttributes).
+  # Traces and logs: only the identity the SDK sets (src/{tracing,logging}: resourceFromAttributes).
   transform/browser-resource:
     error_mode: ignore
     trace_statements:
@@ -62,10 +62,14 @@ processors:
       - context: resource
         statements:
           - keep_keys(attributes, ["service.name", "service.version", "service.namespace", "deployment.environment.name"])
+    # Metrics keep none: domain, service and environment are already labels on every point. A resource
+    # attribute would split a series (service.version: old-build and new-build tabs after a deploy write the
+    # same Prometheus series as two streams, which rate() reads as counter resets) or mint series
+    # (prometheusremotewrite makes job and target_info from service.name, which anyone can POST).
     metric_statements:
       - context: resource
         statements:
-          - keep_keys(attributes, ["service.name", "service.version", "service.namespace", "deployment.environment.name"])
+          - keep_keys(attributes, [])
 
   # Dropped: a point whose name or labels are outside what the SDK can emit (the registry:
   # packages/frontend-sdk/src/internal/generated/metric-registry.ts), or not this deployment's.

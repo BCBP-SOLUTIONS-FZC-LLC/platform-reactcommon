@@ -148,6 +148,19 @@ describe('storage', () => {
   });
 });
 
+describe('clearAllAppStorage: alpha.3 keys under a custom paid-realm prefix', () => {
+  it('follows auth.paidRealmPrefix, and still leaves other libraries\' keys', () => {
+    getRuntime().config = { auth: { paidRealmPrefix: 'org-' } };
+    local.setItem('org-acme:tenders:filters', '{}'); // alpha.3, prefix 'org-'
+    local.setItem('tenant-acme:tenders:filters', '{}'); // not this deployment's prefix: someone else's key
+    local.setItem('cache:v1:x', '{}');
+    clearAllAppStorage();
+    expect(local.getItem('org-acme:tenders:filters')).toBeNull();
+    expect(local.getItem('tenant-acme:tenders:filters')).toBe('{}');
+    expect(local.getItem('cache:v1:x')).toBe('{}');
+  });
+});
+
 describe('clearAllAppStorage', () => {
   it('removes every SDK app key in both areas and keeps the session id and foreign keys', () => {
     storage('tenders').set('a', 1);

@@ -34,6 +34,8 @@ export const STACK = {
   environment: 'staging',
   shellVersion: `${pkgVersion('examples/shell')}-e2e`,
   remoteVersion: pkgVersion('examples/remote-tenders'),
+  /** The version the remote was deployed under by the last stack-up: the package version plus a content hash (prepare.mjs). */
+  deployedRemoteVersion: (): string => /^REMOTE_VERSION='([^']+)'$/m.exec(readFileSync(join(ROOT, '.state/stack.env'), 'utf8'))![1]!,
   issuer: (realm: string): string => `${authOrigin}/realms/${realm}`,
   redirectUris: [`${appOrigin}/auth/callback`],
   postLogoutRedirectUris: [`${appOrigin}/`],

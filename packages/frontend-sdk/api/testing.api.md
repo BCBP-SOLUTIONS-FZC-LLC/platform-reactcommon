@@ -14,6 +14,9 @@ export function createTestPlatform(o?: Partial<TestPlatformOptions>): {
     }>;
     logs: LogRecord[];
     spans: SpanRecord[];
+    signOuts: {
+        global?: boolean;
+    }[];
     reset(): void;
 };
 

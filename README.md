@@ -8,7 +8,7 @@ The platform's shared **frontend SDK for React micro-frontends**: the browser-si
 It is also the browser's side of IAM: Keycloak sign-in with tokens kept in memory only, workspace (realm) choice, session restore, step-up MFA.
 
 **Repository:** `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon`
-**Packages:** `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin`. pnpm monorepo, Node ≥ 22, TypeScript 6, ESM only, React 19. One version for all three (`1.0.0-alpha.N` until the first environment); the first release is **`v1.0.0-alpha.1`** (2026-11-03), on GitHub Packages. **Never deployed**: consumers install the packages; `examples/` holds a reference shell and remote that are built and checked in CI, never run in production.
+**Packages:** `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin`. pnpm monorepo, Node ≥ 22, TypeScript 6, ESM only, React 19. One version for all three (`1.0.0-alpha.N` until the first environment); the latest release is **`v1.0.0-alpha.3`** (2026-11-04; `alpha.1` was the first, 2026-11-03), on GitHub Packages, and `1.0.0-alpha.4` is pending under `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md). **Never deployed**: consumers install the packages; `examples/` holds a reference shell and remote that are built and checked in CI, never run in production.
 **Design:**
 - **Decisions:** [`docs/design/frontend-sdk-design.md`](docs/design/frontend-sdk-design.md) is the decision record, including the public API per subpath.
 - **Implementation:** [ARCHITECTURE.md](ARCHITECTURE.md) and the [LLD](docs/lld/platform-reactcommon-lld.md) describe what's built.
@@ -147,7 +147,7 @@ An error from an API is always an RFC 9457 problem. A non-problem answer is repl
 | A workspace's realm fits its slug | Paid `tenant-<slug>` or the trial realm; anything else from PUB-1 is rejected and not cached; realms matching `^[a-z0-9][a-z0-9-]{0,62}$` only |
 | Storage never holds credentials | Keys that look like credentials → `ForbiddenStorageKeyError`; writes before sign-in (`anon`) are no-ops |
 | Remote entries come from allowed origins | Manifest: name pattern (not `shell`), same origin or exact allowed origin, version pattern, registry `ownerDomain`, SRI format; the origin is checked again before the script is added |
-| Metric names and labels follow the registry | `getDomainMeter` / `getServiceMeter`: tier namespace, `_total` / `_seconds` / `_bytes`, prohibited labels and suffixes, registry values and buckets → `InvalidMetricError`; Tier 3 label values capped at 100 (`__other__`) |
+| Metric names and labels follow the registry | `getDomainMeter` / `getServiceMeter`: tier namespace, `_total` / `_seconds` / `_bytes`, prohibited labels and suffixes, registry values and buckets, at most 8 Tier 3 labels besides `domain` / `service` / `environment` → `InvalidMetricError`; Tier 3 label values capped at 100 (`__other__`) |
 | Problem bodies are bounded | Over 1 MiB or not `application/problem+json` → synthetic problem; extension member names validated |
 
 ---
@@ -190,7 +190,7 @@ L2  tracing · logging · metrics     L5  react · testing
 
 | Component | Responsibility |
 |---|---|
-| `PlatformRuntime` (`globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]`) | One registry per page (identity, consent, config, session, token source, flags, permissions, manifest, i18n, change listeners) shared by every SDK copy; a second copy logs one error and binds to it when the major matches |
+| `PlatformRuntime` (`globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]`) | One registry per page (identity, consent, config, session, token source, flags, permissions, manifest, i18n, change listeners) shared by every SDK copy; a second copy logs one error and binds to it when its version is compatible (the same major, or for a pre-release the same version) |
 | OIDC provider (`/auth`) | Holds tokens in a closure; per-tab refresh lineage; `BroadcastChannel('platform-auth')` for `logout` / `workspace-switched` (never a token) |
 | Export pipelines (`/tracing`, `/logging`, `/metrics`) | OTLP/HTTP to `/otel`; drop-oldest bounded queues; consent gates; beacon on page hide |
 | Instrument port (`src/internal/instruments.ts`) | Where `/http`, `/mfe` and `/react` record platform metrics without importing names; a no-op until the Tier 1 names are ratified |
@@ -335,11 +335,15 @@ mockApi({ 'GET /tenders/:id': Response.json(tender), 'PUT /tenders/:id': mockPro
 expect(p.logs.filter((l) => l.level === 'error')).toEqual([]);
 ```
 
-`createTestPlatform` runs the real SDK with fakes only at the edges: in-memory exporters, a signed-in identity provider, a role-map authorizer. `storage(appId)` is scoped to the test workspace, as after a real sign-in (`storageNamespace: 'anon'` tests the signed-out case, where nothing is written). `p.reset()` clears records and undoes `mockApi`.
+`createTestPlatform` runs the real SDK with fakes only at the edges: in-memory exporters, a signed-in identity provider, a role-map authorizer. `storage(appId)` is scoped to the test workspace, as after a real sign-in (`storageNamespace: 'anon'` tests the signed-out case, where nothing is written). Its shell provides `signOut`, so `useSignOut()` works and each call is recorded in `p.signOuts`. `p.reset()` clears records and undoes `mockApi`; a new `createTestPlatform` stops the previous one (unload listeners, logging, tracing, identity provider).
 
 ### 11. Upgrading between alpha versions
 
-During `1.0.0-alpha.N`, a breaking change bumps `N`. Each one is listed in [CHANGELOG.md](CHANGELOG.md). Upgrade the shell first: it shares the SDK as a strict singleton under `^1.0.0-0`, and each remote requires the SDK version it was built against (a shell with an older SDK refuses the remote inside its boundary). `1.0.0` is cut with the first environment, and SemVer is strict from then on.
+During `1.0.0-alpha.N`, a breaking change bumps `N`. Each one is listed in [CHANGELOG.md](CHANGELOG.md). The shell shares the SDK as a strict singleton under `^1.0.0-0`, and each remote requires the SDK version it was built against (a shell with an older SDK refuses the remote inside its boundary), so usually the shell upgrades first. Keep the preset and the SDK at the same version in each app: `SdkVersionPlugin` fails the build otherwise.
+
+**`alpha.3` → `alpha.4`** (pending): rebuild every remote with the new preset and deploy them with the new shell at the same time, since a remote's container global is now `__platform_mfe_<name>` and the new SDK does not read the old one. Before deploying the shell, add the IdP origin to the CSP's `form-action` (sign-out is a form POST). Values saved through `storage()` under the old keys are not read again, a Tier 3 metric may declare at most 8 labels besides the identity ones, and `no-raw-storage` / `no-unsafe-html` report more code. CHANGELOG's `[Unreleased]` lists each change with its upgrade step.
+
+`1.0.0` is cut with the first environment, and SemVer is strict from then on.
 
 ---
 
@@ -426,7 +430,7 @@ pnpm exec vitest run -t "single-flight"
 ### Building the examples
 
 `pnpm build` builds the packages and then `examples/shell` and `examples/remote-tenders` (webpack production builds into their `dist/`). The shell's environment comes from `PLATFORM_ENVIRONMENT` (`pnpm build` passes `dev` when it is unset); building the shell on its own in production mode (`node build.mjs` in `examples/shell`) without it fails, so a deploy never ships a `dev` shell by accident. `pnpm examples:check` then verifies the bundles:
-- the remote defines `window.tenders` and contains no SDK code;
+- the remote defines its container as `window.__platform_mfe_tenders` and contains no SDK code;
 - nothing needs `eval`;
 - source maps are emitted but hidden;
 - `index.html` has no inline script.
@@ -518,7 +522,7 @@ test/
 
 ### Coverage
 
-`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.7% today (1346 tests). Don't lower the threshold.
+`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.7% today (1530 tests in 61 files). Don't lower the threshold.
 
 ---
 
@@ -553,9 +557,9 @@ Build-time constants (shell): `__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack
 | **Identity headers** | Never sent from the browser (dropped by `/http`, reported by the lint rule); the gateway derives identity from the token and strips any it receives |
 | **Sign-in** | PKCE S256, one-time `state` records, RFC 9207 `iss`, ID-token claim checks; refresh tokens never re-sent after an ambiguous failure (reuse would revoke every tab's session) |
 | **Permissions** | `/authz`, flags and `useReadOnly` are UI hints; the gateway authorizes every request |
-| **Content Security Policy** | Works under `script-src 'self'`, `style-src 'self'`, `require-trusted-types-for 'script'` (policies `platform-sdk`, `platform-webpack`, `dompurify`); no `eval` anywhere (checked on the example builds); violations logged after bootstrap, `/csp-report` before |
+| **Content Security Policy** | Works under `script-src 'self'`, `style-src 'self'`, `require-trusted-types-for 'script'` (policies `platform-sdk`, `platform-webpack`, `dompurify`); no `eval` anywhere (checked on the example builds); violations logged after bootstrap, `/csp-report` before; `form-action` must allow the IdP origin (global sign-out is a form POST) |
 | **HTML** | Only through `sanitizeHtml` (DOMPurify + Trusted Types); lint rule `no-unsafe-html` |
-| **Tenant isolation in the browser** | Storage namespaced by realm or `trial:<tenant_id>`; cleared on logout and workspace switch; nothing written before sign-in |
+| **Tenant isolation in the browser** | Storage namespaced by realm or `trial:<tenant_id>` under the SDK's key prefix; cleared on logout and workspace switch, together with the UI permissions, flags and read-only mark; nothing written before sign-in |
 | **Redirects** | Every `returnUrl` and `navigate` target passes `isSafeRedirect` |
 | **Remote code** | Entries only from the page's origin or exact allowed origins, checked twice; SRI on the entry when the manifest gives it, and on every lazily loaded chunk, JS and CSS, in production builds (`ChunkIntegrityPlugin`: the entry carries each chunk's sha384, a chunk without one fails closed; lazily loaded CSS must come through mini-css-extract-plugin, `CssExtractRspackPlugin` or native CSS, or the build fails); the shell's `index.html` pins its scripts and stylesheets; kill switch |
 | **Telemetry** | Redacted with gincommon's rules (sensitive keys, JWT, `Bearer`, URL queries); consent-gated; the collector drops per-browser attributes |
@@ -609,7 +613,7 @@ SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as publi
 
 | Version | Status | Notes |
 |---|---|---|
-| `1.0.0-alpha.N` | Current line; **`1.0.0-alpha.3`** released 2026-11-04 (`alpha.1` and `alpha.2` 2026-11-03) | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`). `alpha.2` added the preset's Rspack and Rsbuild entry points; `alpha.3` fixed `createTestPlatform`'s storage |
+| `1.0.0-alpha.N` | Current line; **`1.0.0-alpha.3`** released 2026-11-04 (`alpha.1` and `alpha.2` 2026-11-03); **`1.0.0-alpha.4`** pending (`[Unreleased]`, not released) | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`). `alpha.2` added the preset's Rspack and Rsbuild entry points; `alpha.3` fixed `createTestPlatform`'s storage; `alpha.4` has breaking changes (container global, `/storage` keys, the CSP `form-action` for the sign-out POST, Tier 3 label limit, stricter lint rules): the shell and every remote upgrade together |
 | `1.0.0` | Cut with the first end-to-end environment | Strict SemVer from then on |
 
 ### Cutting a release
@@ -626,7 +630,7 @@ In changesets v3's pre mode, `version-packages` moves the consumed changesets in
 **Verifying a release** (needs [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) ≥ 2.4):
 
 ```bash
-TAG=v1.0.0-alpha.1
+TAG=v1.0.0-alpha.3
 REPO=BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
 IDENTITY="^https://github\.com/${REPO}/\.github/workflows/release\.yml@refs/(tags/${TAG}|heads/main)$"
 gh release download "$TAG" -R "$REPO" -p checksums.txt -p checksums.txt.sigstore.json -p 'bcbp-solutions-fzc-llc-*.tgz'
@@ -702,7 +706,7 @@ None is deployed yet; [`examples/shell`](examples/shell) and [`examples/remote-t
 | System | Role | On failure |
 |---|---|---|
 | **CloudFront + S3** | Serves the app, `runtime.json`, the manifest, remotes, `/version.json` | `runtime.json` failure is fatal at bootstrap (static page); manifest failure → every remote shows its fallback |
-| **Keycloak** (`auth.bcbpsolutions.com`) | Sign-in, refresh, logout | Refresh outcome unknown → the lineage is dropped and restored silently once reachable; no sign-out |
+| **Keycloak** (`auth.bcbpsolutions.com`) | Sign-in, refresh, logout | Refresh refused unprocessed (429, or 503 with `Retry-After`) → the tokens are kept and the refresh retried with backoff while the access token is valid; outcome unknown (network error, 500, 502, 504, bare 503) → the lineage is dropped and restored silently once reachable; no sign-out |
 | **API gateway** | Validates tokens, injects identity, denies with problem bodies | Calls fail with typed errors; deny codes drive the UI (step-up, read-only, workspace set-up) |
 | **OTel Collector** (`/otel`) | Receives all three signals | Bounded queues drop the oldest items; nothing else is affected |
 | **IAM PUB-1 / P-35** | Workspace resolve; session context | Cached workspaces still work; without the context: deny-all permissions, platform flags only, while the example shell retries a transient failure 3 times (1 s, 2 s, 4 s) |

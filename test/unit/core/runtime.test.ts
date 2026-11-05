@@ -52,7 +52,7 @@ describe('PlatformRuntime', () => {
     const own = copy.getRuntime();
     expect(own).not.toBe(first);
     expect(slot()).toBe(first);
-    expect(error.mock.calls[0]![0]).toContain('Major versions differ');
+    expect(error.mock.calls[0]![0]).toContain('pre-release) versions differ');
   });
 
   it('does not warn when the same copy finds its own runtime after a module reload of a consumer', () => {

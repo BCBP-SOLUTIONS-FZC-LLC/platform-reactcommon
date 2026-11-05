@@ -19,12 +19,12 @@ The flows a change most often touches, in order. Authoritative detail: [LLD §8]
 ## Refresh and Restore
 
 - Timer at `expiresAt − min(60 s, lifetime/3) ± jitter`, `getAccessToken()` near expiry, or `/http`'s 401 path. Single-flight per tab; a replaced refresh token is never resent.
-- `invalid_grant` → `expired`. 429, or 503 with `Retry-After` (refused unprocessed) → keep the tokens, retry with backoff (2 s doubling to 30 s, or `Retry-After`) while the access token is valid; no refresh request before then. Anything ambiguous (may have reached Keycloak: a network error, 500, 502, 504, bare 503) → drop the lineage, wait for `online`, `prompt=none` restore. Cancelled by a navigation away → wait 10 s first (an unloading page never gets there).
+- `invalid_grant` → `expired`. 429, or 503 with `Retry-After` (refused unprocessed) → keep the tokens, retry with backoff (2 s doubling to 30 s with jitter, or `Retry-After` if longer) inside the same single-flight refresh, so `getAccessToken()` and a 401 wait for its answer instead of sending more; the retry must answer 5 s before the access token expires, else a `prompt=none` restore. Anything ambiguous (may have reached Keycloak: a network error, 500, 502, 504, bare 503) → drop the lineage, wait for `online`, `prompt=none` restore. Cancelled by a navigation away → wait 10 s first (an unloading page never gets there).
 - Each tab keeps its own lineage in one Keycloak session; nothing about tokens crosses tabs.
 
 ## Sign-out (global by default)
 
-`logout(o?)` / the shell's `signOut` / `useSignOut()`: drop tokens, `clearAllAppStorage()`, rotate the session id, set the signed-out mark, broadcast `{ type: 'logout' }`, move to `anonymous { signed-out }`; then, **unless `{ global: false }`**, a form POST to the realm's end-session endpoint (`id_token_hint`, `client_id`, `post_logout_redirect_uri=<origin>/` in the body, never the URL). Other tabs follow the broadcast, expired and loading ones included. `switchWorkspace(w)` is a local sign-out of the realm, then `login(w)`.
+`logout(o?)` / the shell's `signOut` / `useSignOut()`: drop tokens, `clearAllAppStorage()`, forget the user (UI authorization subject, flag provider, read-only mark), rotate the session id, set the signed-out mark, broadcast `{ type: 'logout' }`, move to `anonymous { signed-out }`; then, **unless `{ global: false }`**, a form POST (a hidden form, removed once the page leaves) to the realm's end-session endpoint (`id_token_hint`, `client_id`, `post_logout_redirect_uri=<origin>/` in the body, never the URL); the shell's CSP `form-action` must allow the IdP origin. Other tabs follow the broadcast, expired and loading ones included (a sign-in a loading tab was finishing is dropped). `dispose()` stops a provider without signing out (HMR, tests). `switchWorkspace(w)` is a local sign-out of the realm, then `login(w)`.
 
 ## API Call (`createApiClient`)
 
@@ -32,7 +32,7 @@ The flows a change most often touches, in order. Authoritative detail: [LLD §8]
 
 ## Remote Load (`/mfe`)
 
-`loadManifest()` validates each entry (origin, version, registry owner domain, `integrity` required outside local/dev/test). `loadRemote(name, module)`: kill switch → script with `integrity` + Trusted Types URL → container init with the shell's share scope → `get(module)`, with per-attempt timeout and retries; `RemoteDisabledError` / `RemoteLoadError`, contained by `RemoteBoundary`. Lazy chunks carry their sha384 (preset); a chunk-load error reloads once per version.
+`loadManifest()` (with a timeout) validates each entry (origin, version, registry owner domain, `integrity` required outside local/dev/test). `loadRemote(name, module)`: kill switch → script with `integrity` + Trusted Types URL (skipped only when `window.__platform_mfe_<name>` already holds a container) → container init with the shell's share scope → `get(module)`; one timeout covers the whole attempt (entry, `init`, the module's chunks), with retries; containers are cached on the runtime; `RemoteDisabledError` / `RemoteLoadError`, contained by `RemoteBoundary`. Lazy JS and CSS chunks carry their sha384 (preset); a chunk-load error reloads once per version, after the `useBeforeAuthRedirect` listeners run (`src/internal/reload.ts`). `/version.json` polls time out; the interval is at least 1 s.
 
 ## Telemetry on Hide and Close (`src/internal/unload`)
 

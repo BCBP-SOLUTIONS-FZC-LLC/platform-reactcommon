@@ -16,7 +16,7 @@ Commands, CI, releases and the Docker suites. The README's *Local development*, 
 | `pnpm run ci` | What CI's quality and test gates run, with the coverage gate and the audit |
 | `pnpm test` · `pnpm test:coverage` | Vitest (unit, integration, e2e, examples', scripts'); gate 98% statements of `packages/*/src` |
 | `pnpm run test-smoke` | The served example builds (or `SMOKE_BASE_URL`) |
-| `pnpm run test-browser` (`test-browser-install` once) | Playwright × Chromium, Firefox, WebKit under the production CSP; builds the example remote with webpack and with Rspack for the SRI suite (~30 s) |
+| `pnpm run test-browser` (`test-browser-install` once) | Playwright × Chromium, Firefox, WebKit under the production CSP; builds the example remote and the styled test remote (`test/browser/styled-remote`, lazily loaded CSS) with webpack and with Rspack for the SRI suite (~30 s) |
 | `pnpm run test-react-floor` | Typecheck, unit suite, build, examples on React 19.0.0 |
 | `pnpm run test-eslint-9` | The eslint-plugin's tests on ESLint 9 (its peer range's lower major); lockfile restored |
 | `pnpm run test-collector` | `examples/collector` in the Collector image (the version `docker-compose.yml` pins): 2 gateways + 2 aggregators |
@@ -50,7 +50,7 @@ Commands, CI, releases and the Docker suites. The README's *Local development*, 
 
 **The publish gate:** GitHub Team has no environment reviewers for private repos. `npm` accepts only `v*.*.*` tags, and the ruleset "release tags" (admins bypass) restricts creating, moving and deleting `refs/tags/v*`. `check-npm-environment.sh` passes on reviewers or on that tag gate; with an admin token it also rejects a bypass list wider than admins and named teams. A re-run skips versions already published with the same integrity.
 
-Released: `v1.0.0-alpha.1` (2026-11-03). Leaving the alpha: `pnpm changeset pre exit`, then a `1.0.0` release PR.
+Released: `v1.0.0-alpha.1`, `v1.0.0-alpha.2` (2026-11-03), `v1.0.0-alpha.3` (2026-11-04, the latest); `1.0.0-alpha.4` is pending under `[Unreleased]`. Leaving the alpha: `pnpm changeset pre exit`, then a `1.0.0` release PR.
 
 ## Pull Requests
 
@@ -58,7 +58,7 @@ PRs target `main` and are squash-merged. For a stack, retarget each PR to `main`
 
 ## The Integrated Stack (`docker-compose.yml`, `test/stack`)
 
-Keycloak 26 (realms rendered from IAM's `realm-template.json` + the provisioner's mappers, `prepare.mjs`), Envoy (jwt_authn, ext_authz → AuthZ Enrichment), iam-org-membership + seed, go-probe (gincommon), Postgres/PgBouncer, Valkey, floci (S3, CloudFront API, Lambda `/csp-report`, Secrets Manager, WAF API; runs as root for the Docker socket), an edge shim for CloudFront's data-plane gaps, and the Collectors: `otel-gateway` + `otel-aggregator` (the reference config) in front of a file sink (`.state/otel/*.jsonl`). Findings and the run history: [`docs/e2e/integrated-deployment-report.md`](../docs/e2e/integrated-deployment-report.md); known emulator gaps are `E-n` there.
+Keycloak 26 (realms rendered from IAM's `realm-template.json` + the provisioner's mappers, `prepare.mjs`), Envoy (jwt_authn, ext_authz → AuthZ Enrichment), iam-org-membership + seed, go-probe (gincommon), Postgres/PgBouncer, Valkey, floci (S3, CloudFront API, Lambda `/csp-report`, Secrets Manager, WAF API; runs as root for the Docker socket), an edge shim for CloudFront's data-plane gaps, and the Collectors: `otel-gateway` + `otel-aggregator` (the reference config) in front of a file sink (`.state/otel/*.jsonl`). `stack-up` force-recreates the Collectors, Envoy and the edge shim (they read their bind-mounted config only at start). The remote deploys under its package version plus a content hash (`prepare.mjs` `remoteDeployVersion`, `STACK.deployedRemoteVersion` in the tests), and `docker/floci/deploy-web.sh` refuses to redeploy a version with different content (a leftover floci bucket would serve the old remote against the new manifest's SRI). Run long local runs under `caffeinate -i` on a Mac (a sleeping machine fails WebKit tests as offline). Findings and the run history: [`docs/e2e/integrated-deployment-report.md`](../docs/e2e/integrated-deployment-report.md); known emulator gaps are `E-n` there.
 
 ## Claude Code Settings and Hooks (`.claude/settings.json`)
 

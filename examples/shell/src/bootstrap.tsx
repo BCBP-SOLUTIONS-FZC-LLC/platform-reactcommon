@@ -81,10 +81,15 @@ export async function bootstrap(): Promise<void> {
     }
   });
 
+  // A sign-out (here or in another tab) while the steps below await: stop, never mount the app for a
+  // user who is gone. Checked after every await.
+  const signedOut = () => contextRetry.signal.aborted;
+
   // Roles, plan and flags are not in the token (§0 row 10). Without them: deny-all, platform flags only.
   setAuthorizer(roleMapAuthorizer(permissions));
   const context = createStore(await sessionContextSource.load().catch((e) => {
     getLogger().warn('session context unavailable', { error: e }); return undefined; }));
+  if (signedOut()) return;
   const applyContext = () => {
     const c = context.get();
     setAuthzSubject(c && { roles: c.roles, tenantId: c.tenantId });
@@ -95,7 +100,9 @@ export async function bootstrap(): Promise<void> {
   };
   applyContext();
   await initializeI18n({ defaultLocale: cfg.i18n.defaultLocale, supported: cfg.i18n.supportedLocales });
+  if (signedOut()) return;
   await loadManifest().catch((e) => getLogger().error('manifest load failed', { error: e }));
+  if (signedOut()) return;
   startVersionPolling();
 
   app = createRoot(document.getElementById('root')!);

@@ -487,6 +487,40 @@ describe('refresh', () => {
     expect(authorizeParams(page).get('prompt')).toBe('none');
   });
 
+  it('a logout while the restore waits for the network: back online, nothing redirects', async () => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page);
+    page.assigned.length = 0;
+    kc.fetch.mockImplementationOnce(async () => {
+      page.online = false;
+      throw new TypeError('Failed to fetch');
+    });
+    await idp.refresh();
+    await idp.logout({ global: false });
+    page.goOnline();
+    await flush();
+    expect(page.assigned).toEqual([]); // the restore was abandoned by the logout
+    expect(idp.getState()).toMatchObject({ status: 'anonymous', reason: 'signed-out' });
+  });
+
+  it('a restore that cannot start (sessionStorage refuses the PKCE record) is logged and expires the session', async () => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page);
+    page.assigned.length = 0;
+    kc.failures = ['network-after-send'];
+    // The loop guard is set; only the PKCE record (the redirect's state) cannot be stored.
+    const setItem = page.session.setItem.bind(page.session);
+    vi.spyOn(page.session, 'setItem').mockImplementation((k: string, v: string) => {
+      if (k.startsWith(PENDING_PREFIX)) throw new DOMException('quota', 'QuotaExceededError');
+      setItem(k, v);
+    });
+    await idp.refresh();
+    await flush(() => idp.getState().status !== 'authenticated');
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining('silent sign-in could not start'), expect.anything());
+    expect(idp.getState().status).toBe('expired');
+    expect(page.assigned).toEqual([]);
+  });
+
   it('offline at the start keeps the token and refreshes once online', async () => {
     const page = new FakePage('/');
     const { idp } = await signIn(page);
@@ -547,6 +581,30 @@ describe('idle timeout', () => {
     expect((await settled).status).toBe('anonymous');
     expect(getRuntime().storageNamespace).toBe('anon');
     expect(await idp.getAccessToken()).toBeUndefined();
+  });
+
+  it.each([
+    ['this tab\'s logout', (idp: IdentityProvider) => idp.logout({ global: false })],
+    ['this tab\'s workspace switch', (idp: IdentityProvider) => idp.switchWorkspace(GLOBEX)],
+  ])('%s drops the permissions, flags and read-only mark too (review 3)', async (_name, act) => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page);
+    const rt = getRuntime();
+    Object.assign(rt, { authzSubject: { roles: ['admin'] }, flagProvider: { get: () => true }, readOnlyDenied: true });
+    await act(idp);
+    expect([rt.authzSubject, rt.flagProvider, rt.readOnlyDenied, rt.storageNamespace]).toEqual([undefined, undefined, false, 'anon']);
+  });
+
+  it('a sign-out in another tab also drops this tab\'s permissions, flags and read-only mark (review 3)', async () => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page);
+    const rt = getRuntime();
+    let stopped = false;
+    Object.assign(rt, { authzSubject: { roles: ['admin'] }, flagProvider: { get: () => true }, readOnlyDenied: true, stopFlagWatching: () => (stopped = true) });
+    new FakeBroadcastChannel('platform-auth').postMessage({ type: 'logout' });
+    await flush(() => idp.getState().status === 'anonymous');
+    expect([rt.authzSubject, rt.flagProvider, rt.readOnlyDenied, rt.storageNamespace]).toEqual([undefined, undefined, false, 'anon']);
+    expect(stopped).toBe(true);
   });
 
   it('activity in any tab keeps the session alive', async () => {

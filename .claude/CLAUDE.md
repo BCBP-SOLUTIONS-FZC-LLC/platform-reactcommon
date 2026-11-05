@@ -9,16 +9,16 @@ A **pnpm monorepo** of three npm packages released together under one version (c
 | Package | What it is |
 |---|---|
 | `@bcbp-solutions-fzc-llc/frontend-sdk` | 17 subpaths (`/core`, `/config`, `/problem`, `/tracing`, `/logging`, `/metrics`, `/http`, `/auth`, `/authz`, `/storage`, `/mfe`, `/flags`, `/nav`, `/i18n`, `/security`, `/react`, `/testing`); the root import throws (no barrel) |
-| `@bcbp-solutions-fzc-llc/webpack-preset` | Module Federation config for webpack 5, and Rspack / Rsbuild via `/rspack`, `/rsbuild` (v1 protocol, interoperable): shared singletons, `ProvideSdkPlugin`, `ChunkIntegrityPlugin` (sha384 on every lazy JS and CSS chunk and the HTML's scripts and stylesheets) |
+| `@bcbp-solutions-fzc-llc/webpack-preset` | Module Federation config for webpack 5, and Rspack / Rsbuild via `/rspack`, `/rsbuild` (v1 protocol, interoperable): shared singletons, `ProvideSdkPlugin`, `SdkVersionPlugin` (the installed SDK must be the preset's version), `ChunkIntegrityPlugin` (sha384 on every lazy JS and CSS chunk and the HTML's scripts and stylesheets) |
 | `@bcbp-solutions-fzc-llc/eslint-plugin` | Seven rules (`no-identity-headers`, `no-raw-storage`, `no-unsafe-html`, …) and `configs.recommended` |
 
 Node ≥ 22 (`.nvmrc` 22), pnpm 12 (corepack), TypeScript 6, ESM only, **React 19 only** (`^19.0.0`, floor tested in CI). Published to **GitHub Packages** (`@bcbp-solutions-fzc-llc` scope, `read:packages` to install). The repository is **private** on GitHub Team. Nothing here is deployed: `examples/` holds a reference shell, a remote, CloudFront snippets and the reference OTel Collector configuration.
 
-**Status:** **`1.0.0-alpha.3` released 2026-11-04** (tag `v1.0.0-alpha.3`, GitHub pre-release, packages under dist-tag `alpha`; `alpha.1` and `alpha.2` 2026-11-03: `alpha.2` added the preset's `/rspack` and `/rsbuild`, `alpha.3` fixed `createTestPlatform`'s storage). The repo is in changesets pre mode (`alpha`) until the first end-to-end environment, when `1.0.0` is cut. New work goes under `[Unreleased]` in `CHANGELOG.md` with a `.changeset/*.md`. Open items: [LLD §15](../docs/lld/platform-reactcommon-lld.md#15-open-items) (Tier 1 `platform_web_*` metrics await governance ratification; gateway Issues 3, 9, 14 are with Platform).
+**Status:** **`1.0.0-alpha.3` released 2026-11-04** (tag `v1.0.0-alpha.3`, GitHub pre-release, packages under dist-tag `alpha`; `alpha.1` and `alpha.2` 2026-11-03: `alpha.2` added the preset's `/rspack` and `/rsbuild`, `alpha.3` fixed `createTestPlatform`'s storage). **`1.0.0-alpha.4` is pending** under `[Unreleased]` (PRs #41–#46, not released): breaking changes (remote container global `__platform_mfe_<name>`, `/storage` key prefix, CSP `form-action` must allow the IdP origin for the sign-out POST, Tier 3 metrics ≤ 8 labels, stricter `no-raw-storage` / `no-unsafe-html`), so the shell and every remote upgrade together. The repo is in changesets pre mode (`alpha`) until the first end-to-end environment, when `1.0.0` is cut. New work goes under `[Unreleased]` in `CHANGELOG.md` with a `.changeset/*.md`. Open items: [LLD §15](../docs/lld/platform-reactcommon-lld.md#15-open-items) (Tier 1 `platform_web_*` metrics await governance ratification; gateway Issues 3, 9, 14 are with Platform).
 
 **Key responsibilities (the SDK is the sole browser implementation of):**
 - **Page identity and correlation:** `initializeCore` (domain / service / environment from the registry), session id, request id, W3C trace context to the page origin and an exact allowlist only.
-- **Sign-in (IAM's browser side):** Keycloak Authorization Code + PKCE S256, tokens **in memory only**, single-flight refresh, silent restore, cross-tab sign-out over `BroadcastChannel('platform-auth')`. Sign-out is **global by default** (ends the Keycloak session; `{ global: false }` opts out).
+- **Sign-in (IAM's browser side):** Keycloak Authorization Code + PKCE S256, tokens **in memory only**, single-flight refresh, silent restore, cross-tab sign-out over `BroadcastChannel('platform-auth')`. Sign-out is **global by default** (a form POST to the realm's end-session endpoint ends the Keycloak session; `{ global: false }` opts out).
 - **API calls:** `createApiClient`: route templates, identity headers refused, the token on the page origin only, retries for idempotent calls, RFC 9457 problems.
 - **Telemetry:** OTLP/HTTP to same-origin `/otel` (traces, logs, Tier 2/3 metrics), redacted and consent-gated; one keepalive budget for hide and `pagehide` (`src/internal/unload`).
 - **Micro-frontends:** the remote manifest with SRI, `loadRemote`, kill switches, chunk-error reload, app-update polling.
@@ -31,7 +31,7 @@ Node ≥ 22 (`.nvmrc` 22), pnpm 12 (corepack), TypeScript 6, ESM only, **React 1
 pnpm run setup        # install + git hooks (once per clone)
 pnpm verify           # exports, docs, lint, typecheck, tests, build, examples, API reports, depcruise
 pnpm test             # Vitest: unit, integration, e2e (+ examples', scripts' tests)
-pnpm test:coverage    # with coverage of packages/*/src (gate 98% statements; 98.7% today, 1346 tests)
+pnpm test:coverage    # with coverage of packages/*/src (gate 98% statements; 98.7% today, 1530 tests in 61 files)
 pnpm lint / typecheck / build
 pnpm api / api:check  # api-extractor reports (packages/frontend-sdk/api/*.api.md)
 pnpm exports:sync / docs:sync / contracts:sync    # generated files; *:check in CI

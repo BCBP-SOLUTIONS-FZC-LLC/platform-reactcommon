@@ -128,7 +128,8 @@ L5  react ─► anything above         testing ─► anything (dev only)
 - No subpath reads module state of another directly. Cross-module wiring goes through the
   `PlatformRuntime` registry in `/core`, stored at `globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk')]`
   with its version. A second copy of the SDK (a remote that bundled it instead of sharing it)
-  is detected, and the duplicate logs a one-time `error` and binds to the existing runtime when the major version matches.
+  is detected, and the duplicate logs a one-time `error` and binds to the existing runtime when the major version matches
+  (for a pre-release, when the whole version matches: `1.0.0-alpha.3` and `alpha.4` keep separate runtimes; LLD §6.1).
 - Ports (interfaces) live in the lowest layer that needs them: `TokenSource` in `/http`,
   `IdentityProvider` in `/auth`, `Authorizer` in `/authz`, `FlagProvider` in `/flags`,
   `ConsentProvider` in `/core`.
@@ -317,7 +318,8 @@ export function getDomainMeter(scope?: Partial<MfeScope>): {
 };
 /** Tier 3: `<domain>_<service>_<metric>`, prefix built like gincommon `ServicePrefix` (non-alphanumerics → `_`).
  *  Counters must end `_total`; histograms `_seconds` (`_bytes` only for registry metrics with `unit: bytes`, as in
- *  gincommon CheckCustom); gauges never `_total`. */
+ *  gincommon CheckCustom); gauges never `_total`. At most 8 labels besides `domain`, `service`, `environment`
+ *  (`label_vocabulary`; the reference gateway keeps that many per point). */
 export function getServiceMeter(scope?: Partial<MfeScope>): {
   counter(name: string, help: string, labels: readonly string[]): Counter;
   histogram(name: string, help: string, labels: readonly string[], buckets?: readonly number[]): Histogram;
@@ -427,7 +429,10 @@ Browser export rules (they go in the registry PR as `governance_notes`):
 - OTLP metrics use **delta temporality**. The Collector converts them to cumulative (`deltatocumulative`);
   otherwise every tab becomes its own series in Mimir.
 - The Collector allowlists label values and drops per-browser resource attributes (`service.instance.id`,
-  `browser.*`, `user_agent.*`), because anyone can POST to `/otel`.
+  `browser.*`, `user_agent.*`), because anyone can POST to `/otel`. As implemented in the reference
+  Collector, metrics keep no resource attribute at all (the `domain`, `service`, `environment` labels carry
+  the identity; a `service.version` would split one series across a deploy), traces and logs keep the SDK's four,
+  and a Tier 3 metric keeps at most 8 label keys besides the const labels (LLD §7.6).
 - Instrument units are set (`s`, `1`) so the OTLP → Prometheus name translation keeps the registry name
   exactly, with no doubled `_seconds` or `_total`. CI checks the translated names (§C5, drift item 4).
 
@@ -745,6 +750,11 @@ consequences for the refresh code:
   A refresh that fails **before** sending (offline at the start) keeps its token and is retried normally,
   because the token was never sent.
 
+  A refresh the token endpoint refused **without processing it** (429, or 503 with `Retry-After`: Keycloak or
+  its gateway shedding load) also keeps its token: it is retried with backoff (2 s doubling to 30 s, or
+  `Retry-After`) while the access token stays valid, and `getAccessToken` and a 401 wait for it. A 500,
+  502, 504 or bare 503 stays ambiguous and restores as above (LLD §8.5).
+
 Reuse detection compares the token's `iat` in whole seconds (RP LLD v1.45 §12.2); this does not affect a
 client that follows the rules above.
 
@@ -752,8 +762,10 @@ A `BroadcastChannel('platform-auth')` carries `logout` and `workspace-switched` 
 The idle timeout uses activity events (debounced) shared across tabs.
 
 Logout. Every logout drops the tokens, runs `clearAllAppStorage()`, rotates the session id, sets the
-signed-out mark and broadcasts `logout`. A **global** logout then navigates to the realm's `/logout`
-endpoint with `id_token_hint`, `client_id=tender-web` and `post_logout_redirect_uri=<app origin>/`, a URI
+signed-out mark and broadcasts `logout`. A **global** logout then POSTs (a hidden form) to the realm's `/logout`
+endpoint with `id_token_hint`, `client_id=tender-web` and `post_logout_redirect_uri=<app origin>/` in the body,
+never the URL, so the ID token stays out of the browser history and access logs; the shell's CSP
+`form-action` must allow the IdP origin (§C3 headers). The redirect URI is one
 RP #41 registers on `tender-web`. Keycloak 26 requires `id_token_hint` or `client_id` when a post-logout
 redirect is given. This is the only reason the ID token is kept, in memory, next to the access token.
 If no ID token is held, it sends `client_id` alone, and Keycloak shows its logout confirmation page.
@@ -1115,6 +1127,9 @@ index.html ─► bootstrap.ts (async import boundary required by MF)
     isWrongWorkspace(state.workspace, state.user) → wrong-workspace screen (sign out / switch), stop
     idp.subscribe: expired → "session ended" dialog → signInAgain()   runtime only; forceResolve = serverEnded, prompt=login if idle
  8. ctx = await sessionContextSource.load()                           IAM item A; on failure ctx = undefined (deny-all, no tenant flags)
+                                                                      implemented: a transient failure (network, timeout, 429, 5xx) is
+                                                                      retried in the background 3 times (1 s, 2 s, 4 s); on success the
+                                                                      subject, flags and workspace are set and the app re-renders
     setAuthorizer(roleMapAuthorizer(...)); setAuthzSubject(ctx && {roles: ctx.roles, tenantId: ctx.tenantId})
     rememberWorkspace({...workspace, slug: ctx.slug})  (when ctx exists; never for a wrong workspace)   caches it, URL → /t/<slug>/
     setFlagProvider(sessionContextFlagProvider(ctx))  (when ctx exists)
@@ -1163,6 +1178,12 @@ privately and not served), no `eval` devtools in any mode, and content hashing. 
 `publicPath: '/'` with its bundles under `assets/`: `index.html` is served for every deep link (the SPA
 rewrite), so a relative script URL would resolve under `/t/acme/…` or `/auth/callback` and fail. A remote
 keeps `publicPath: 'auto'`: its chunks load relative to its `remoteEntry.js`.
+
+A remote's container global is `__platform_mfe_<name>` (`-` as `_`; `containerName(remote)`), not the bare
+name: browsers expose every element `id` as a `window` property, so a remote named like an element or a
+browser global (`root`, `history`, `status`) would shadow or be shadowed. `loadRemote` reads the same name.
+`SdkVersionPlugin` (every preset) fails a build whose installed SDK is not the preset's version, since the
+shared map and a remote's required range come from that SDK.
 
 **Chunk integrity (production).** The remote manifest pins `remoteEntry.js` with `integrity`, and
 `index.html` pins the shell's entry, but everything those entries load later would run unchecked. The
@@ -1330,6 +1351,8 @@ export async function bootstrap(): Promise<void> {
   // Roles, plan and flags are not in the token (§0 row 10). Without them: deny-all, platform flags only.
   const context = await sessionContextSource.load().catch((e) => {
     getLogger().warn('session context unavailable', { error: e }); return undefined; });
+  // As implemented (examples/shell/src/session-context.ts): a transient failure (network, timeout, 429, 5xx)
+  // is retried in the background 3 times, after 1 s, 2 s and 4 s, and a success re-renders the app.
   setAuthorizer(roleMapAuthorizer(permissions));
   setAuthzSubject(context && { roles: context.roles, tenantId: context.tenantId });
   if (context) setFlagProvider(sessionContextFlagProvider(context));
@@ -1356,7 +1379,7 @@ export async function bootstrap(): Promise<void> {
 ### Remote component (`examples/remote-tenders/src/EditTender.tsx`)
 
 ```tsx
-import { useState } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useApi, useApiClient, useHasPermission, useRouteTemplate, useT,
          MFEErrorBoundary } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
 import { isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@bcbp-solutions-fzc-llc/frontend-sdk/problem';
@@ -1369,41 +1392,61 @@ function EditTenderForm({ id }: { id: string }) {
   const t = useT('tenders');
   const api = useApiClient();
   const canEdit = useHasPermission('update', 'tender');
-  const { data, error, loading } = useApi((c, signal) =>
+  const { data, error, loading, reload } = useApi((c, signal) =>
     c.get<Tender>('/tenders/:id', { params: { id }, signal }).then((r) => r.data), [id]);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
   const [formError, setFormError] = useState<string>();
+  // A save that failed without an answer (timeout, network): thrown while rendering, so MFEErrorBoundary
+  // shows it with its request id. (onSubmit's own rejection would go nowhere: it is not React's action.)
+  const [failed, setFailed] = useState<{ e: unknown }>();
+  // One save at a time: a double click would send the same version twice, and the second is a 409. A ref,
+  // not only state: both clicks of a double click run before the re-render that disables the button.
+  const [saving, setSaving] = useState(false);
+  const inFlight = useRef(false);
+  if (failed) throw failed.e;
 
   if (loading) return <p>{t('loading')}</p>;
   if (error) throw error;                       // MFEErrorBoundary renders traceId/requestId
   if (!data) return null;
 
-  async function onSubmit(form: FormData) {
+  // onSubmit, not <form action>: React 19 resets a form's uncontrolled fields once its action completes,
+  // which would erase the user's edits next to a 422's field errors.
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (inFlight.current) return;
+    inFlight.current = true;
+    const form = new FormData(event.currentTarget);
+    setSaving(true);
     setFieldErrors({}); setFormError(undefined);
     try {
-      await api.put('/tenders/:id', { params: { id }, body: Object.fromEntries(form) });
+      // The version read: a concurrent edit answers 409 Conflict instead of being overwritten.
+      await api.put('/tenders/:id', { params: { id }, body: { ...Object.fromEntries(form), version: data!.version } });
+      reload(); // the saved tender, with its new version
     } catch (e) {
-      if (!isProblemError(e)) throw e;          // Timeout/Network → boundary
+      if (!isProblemError(e)) { setFailed({ e }); return; }   // Timeout/Network → boundary
       if (e.is(PlatformProblemTypes.ValidationFailed)) setFieldErrors(toFieldErrorMap(e));
       else if (e.is(PlatformProblemTypes.Conflict)) setFormError(problemMessage(e));
       else setFormError(problemMessage(e));     // localized by type id, falls back to title
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
     }
   }
 
   return (
-    <form action={onSubmit}>
+    <form onSubmit={(e) => void onSubmit(e)}>
       <input name="title" defaultValue={data.title} disabled={!canEdit} aria-invalid={!!fieldErrors.title} />
       {fieldErrors.title?.map((m) => <span key={m} role="alert">{m}</span>)}
       <input name="deadline" type="date" defaultValue={data.deadline} disabled={!canEdit} />
       {fieldErrors.deadline?.map((m) => <span key={m} role="alert">{m}</span>)}
       {formError && <p role="alert">{formError}</p>}
-      {canEdit && <button type="submit">{t('save')}</button>}
+      {canEdit && <button type="submit" disabled={saving}>{t('save')}</button>}
     </form>
   );
 }
 
 export default function EditTender(props: { id: string }) {
-  return <MFEErrorBoundary mfe="tenders"><EditTenderForm {...props} /></MFEErrorBoundary>;
+  return <MFEErrorBoundary mfe="tenders" resetKeys={[props.id]}><EditTenderForm {...props} /></MFEErrorBoundary>;
 }
 ```
 

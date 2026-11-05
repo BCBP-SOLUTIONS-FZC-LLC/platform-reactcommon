@@ -148,3 +148,12 @@ export function onUnload(sender: UnloadSender): () => void {
     }
   };
 }
+
+/** Test only: removes this runtime's pagehide and visibilitychange listeners and forgets its senders. */
+export function resetUnloadForTests(): void {
+  const s = getRuntime().unload as UnloadState | undefined;
+  if (!s) return;
+  globalThis.removeEventListener?.('pagehide', s.listener);
+  globalThis.document?.removeEventListener?.('visibilitychange', s.hideListener);
+  s.senders.clear();
+}

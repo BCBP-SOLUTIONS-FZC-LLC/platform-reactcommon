@@ -397,6 +397,10 @@ describe('meters', () => {
     expect(ruleOf(() => getServiceMeter().counter('anything', 'X.', []))).toBe('suffix');
     expect(ruleOf(() => getServiceMeter().counter('anything_total', ' ', []))).toBe('registry');
     expect(ruleOf(() => getServiceMeter().counter('anything_total', 'X.', ['user_id']))).toBe('prohibited_label');
+    // At most 8 labels: the reference gateway keeps that many per point and would drop one arbitrarily (review 3).
+    const labels = (n: number) => Array.from({ length: n }, (_, i) => `label_${i}`);
+    expect(() => getServiceMeter().counter('tender_management_web_app_eight_total', 'X.', labels(8))).not.toThrow();
+    expect(ruleOf(() => getServiceMeter().counter('tender_management_web_app_nine_total', 'X.', labels(9)))).toBe('label_vocabulary');
     expect(ruleOf(() => getServiceMeter().histogram('anything_seconds', 'X.', [], [2, 1]))).toBe('registry');
     expect(ruleOf(() => getDomainMeter().histogram('anything'))).toBe('registry');
     expect(ruleOf(() => getDomainMeter().counter('iam_lifecycle_event_lag_seconds'))).toBe('registry');

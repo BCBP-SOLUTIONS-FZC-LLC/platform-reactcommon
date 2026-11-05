@@ -11,16 +11,19 @@ stateDiagram-v2
         refreshing --> idle_timer: 200 → rotate tokens (never reuse a replaced refresh token)
         refreshing --> waiting_online: offline before sending → keep the token
         waiting_online --> refreshing: online event
+        refreshing --> backing_off: 429, or 503 with Retry-After (refused unprocessed)<br/>keep the tokens · getAccessToken and 401s join this refresh
+        backing_off --> refreshing: 2 s doubling to 30 s (jitter) or Retry-After,<br/>when the wait ends over 5 s before the access token expires
     }
 
-    authenticated --> expired_server: invalid_grant before refresh_expires_in<br/>(serverEnded: true, e.g. trial → paid)
-    authenticated --> expired_natural: invalid_grant / refresh token past its expiry<br/>(serverEnded: false)
-    authenticated --> expired_idle: no activity in any tab for idleTimeoutMs<br/>(idle: true; session id rotated)
-    authenticated --> restoring: sent but outcome unknown (timeout, network after send,<br/>non-invalid_grant error, bad ID token) → drop the lineage
+    authenticated --> expired_server: invalid_grant before refresh_expires_in<br/>(serverEnded = true, e.g. trial → paid)
+    authenticated --> expired_natural: invalid_grant / refresh token past its expiry<br/>(serverEnded = false)
+    authenticated --> expired_idle: no activity in any tab for idleTimeoutMs<br/>(idle = true, session id rotated)
+    authenticated --> restoring: sent but outcome unknown (timeout, network after send,<br/>500 · 502 · 504 · bare 503, other errors, bad ID token) → drop the lineage<br/>· or a backoff that would outlast the access token
     restoring --> [*]: wait online → beforeRedirect('restore') → prompt=none redirect
-    authenticated --> anonymous: logout (this tab or a 'logout' broadcast)
+    authenticated --> anonymous: logout (this tab or a 'logout' broadcast)<br/>forget the user (authz subject, flags, read-only) · global = form POST to end-session
+    expired_natural --> anonymous: 'logout' broadcast (expired and loading tabs follow it too)
     authenticated --> expired_natural: 'workspace-switched' broadcast from another tab
 
-    expired_server --> [*]: shell dialog → signInAgain(forceResolve: true)
+    expired_server --> [*]: shell dialog → signInAgain(forceResolve)
     expired_natural --> [*]: shell dialog → signInAgain()
     expired_idle --> [*]: shell dialog → signInAgain(prompt=login)

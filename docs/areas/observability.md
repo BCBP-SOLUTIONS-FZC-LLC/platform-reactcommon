@@ -28,10 +28,10 @@ getServiceMeter({ mfe: 'tenders' })
 ## Guarantees
 
 - **Correlation:** every log carries the active trace, the request id of the call it's about, and the session id. The server's `X-Trace-ID` joins the browser trace.
-- **Redaction:** the same sensitive keys as gincommon; JWT and `Bearer` values masked; URL query strings dropped; stacks capped at 4 KiB.
-- **Consent:** only errors and essential warnings leave the page without `telemetry` consent.
+- **Redaction:** the same sensitive keys as gincommon; JWT and `Bearer` values masked; URL query strings and fragments dropped from every logged string and span attribute; stacks capped at 4 KiB; a record's attributes capped at about 8 KiB.
+- **Consent:** only errors and essential warnings leave the page without `telemetry` consent; withdrawing it drops what was queued under it.
 - **Bounded:** fixed-size queues that drop the oldest items, at most two sends in flight, no retries into a struggling page.
-- **Registry rules at registration time:** a metric name or label that `metricslint` would reject throws in the remote's tests, not in production.
+- **Registry rules at registration time:** a metric name or label that `metricslint` would reject throws in the remote's tests, not in production. A Tier 3 metric declares at most 8 labels besides `domain`, `service`, `environment`.
 
 **Not active yet:** the seven `platform_web_*` metrics (HTTP client, remote loads, errors, web vitals) wait for governance to ratify their names (design doc §D5, §D6 K).
 

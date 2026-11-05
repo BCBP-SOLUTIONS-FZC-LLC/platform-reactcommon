@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { METRIC_REGISTRY } from '../../../packages/frontend-sdk/src/internal/generated/metric-registry.ts';
+import { MAX_SERVICE_LABELS } from '../../../packages/frontend-sdk/src/metrics/checks.ts';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..');
 const gateway = readFileSync(join(ROOT, 'examples/collector/gateway.yaml'), 'utf8');
@@ -69,22 +70,23 @@ describe('examples/collector/gateway.yaml allowlists', () => {
     const prohibited = `^${alternation(METRIC_REGISTRY.prohibitedLabels)}$|${alternation(METRIC_REGISTRY.prohibitedLabelSuffixes)}$`;
     expect(gateway).toContain(`- delete_matching_keys(attributes, "${prohibited}")${notRegistered}`);
     const consts = METRIC_REGISTRY.constLabels.map((l) => `"${l}"`).join(', ');
-    // The SDK sets no cap on a Tier 3 metric's label count; 8 is the gateway's.
-    expect(gateway).toContain(`- limit(attributes, ${METRIC_REGISTRY.constLabels.length + 8}, [${consts}])${notRegistered}`);
+    // The gateway's cap is the SDK's (getServiceMeter refuses a 9th label).
+    expect(gateway).toContain(`- limit(attributes, ${METRIC_REGISTRY.constLabels.length + MAX_SERVICE_LABELS}, [${consts}])${notRegistered}`);
     const prohibitedRe = new RegExp(prohibited);
     for (const k of ['user_id', 'email', 'order_uuid', 'api_token']) expect(prohibitedRe.test(k), k).toBe(true);
     for (const k of ['kind', 'operation', 'domain', 'service', 'environment']) expect(prohibitedRe.test(k), k).toBe(false);
   });
 
-  it('keeps only the resource attributes the SDK sets, on every signal', () => {
+  it('keeps only the resource attributes the SDK sets on traces and logs, and none on metrics (review 3)', () => {
     const sdkResource = ['service.name', 'service.version', 'service.namespace', 'deployment.environment.name'];
     for (const signal of ['tracing/tracing.ts', 'logging/logging.ts', 'metrics/metrics.ts']) {
       const src = readFileSync(join(ROOT, 'packages/frontend-sdk/src', signal), 'utf8');
       const set = /resourceFromAttributes\(\{([^}]+)\}\)/.exec(src)![1]!;
       expect([...set.matchAll(/'([a-z.]+)':/g)].map((m) => m[1]), signal).toEqual(sdkResource);
     }
-    const kept = [...gateway.matchAll(/context: resource\n\s+statements:\n\s+- keep_keys\(attributes, \[([^\]]+)\]\)/g)].map((m) => JSON.parse(`[${m[1]!}]`) as string[]);
-    expect(kept).toEqual([sdkResource, sdkResource, sdkResource]);
+    const kept = [...gateway.matchAll(/context: resource\n\s+statements:\n\s+- keep_keys\(attributes, \[([^\]]*)\]\)/g)].map((m) => JSON.parse(`[${m[1]!}]`) as string[]);
+    // Metrics: domain, service and environment are labels; a resource attribute would split or mint series.
+    expect(kept).toEqual([sdkResource, sdkResource, []]);
     for (const pipeline of ['traces/browser', 'logs/browser', 'metrics/browser']) {
       expect(new RegExp(`${pipeline}:\\n.*\\n\\s+processors: \\[memory_limiter, transform/browser-resource,`).test(gateway), pipeline).toBe(true);
     }
