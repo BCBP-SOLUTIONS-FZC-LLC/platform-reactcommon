@@ -52,6 +52,8 @@ export interface PlatformRuntime {
   trustedTypesPolicy: unknown;
   /** The flag provider (/flags owns its type); undefined means runtime-config flags. */
   flagProvider: unknown;
+  /** Stops the flag provider's subscription (internal/flag-provider.ts). */
+  stopFlagWatching?: (() => void) | undefined;
   /** The shell's router navigation function (/nav owns its type). */
   navigator: unknown;
   /** Locale, namespaces and catalogs (/i18n owns its type). */

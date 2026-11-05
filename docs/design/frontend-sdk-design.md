@@ -1379,7 +1379,7 @@ export async function bootstrap(): Promise<void> {
 ### Remote component (`examples/remote-tenders/src/EditTender.tsx`)
 
 ```tsx
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useApi, useApiClient, useHasPermission, useRouteTemplate, useT,
          MFEErrorBoundary } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
 import { isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@bcbp-solutions-fzc-llc/frontend-sdk/problem';
@@ -1399,6 +1399,10 @@ function EditTenderForm({ id }: { id: string }) {
   // A save that failed without an answer (timeout, network): thrown while rendering, so MFEErrorBoundary
   // shows it with its request id. (onSubmit's own rejection would go nowhere: it is not React's action.)
   const [failed, setFailed] = useState<{ e: unknown }>();
+  // One save at a time: a double click would send the same version twice, and the second is a 409. A ref,
+  // not only state: both clicks of a double click run before the re-render that disables the button.
+  const [saving, setSaving] = useState(false);
+  const inFlight = useRef(false);
   if (failed) throw failed.e;
 
   if (loading) return <p>{t('loading')}</p>;
@@ -1409,7 +1413,10 @@ function EditTenderForm({ id }: { id: string }) {
   // which would erase the user's edits next to a 422's field errors.
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (inFlight.current) return;
+    inFlight.current = true;
     const form = new FormData(event.currentTarget);
+    setSaving(true);
     setFieldErrors({}); setFormError(undefined);
     try {
       // The version read: a concurrent edit answers 409 Conflict instead of being overwritten.
@@ -1420,6 +1427,9 @@ function EditTenderForm({ id }: { id: string }) {
       if (e.is(PlatformProblemTypes.ValidationFailed)) setFieldErrors(toFieldErrorMap(e));
       else if (e.is(PlatformProblemTypes.Conflict)) setFormError(problemMessage(e));
       else setFormError(problemMessage(e));     // localized by type id, falls back to title
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
     }
   }
 
@@ -1430,7 +1440,7 @@ function EditTenderForm({ id }: { id: string }) {
       <input name="deadline" type="date" defaultValue={data.deadline} disabled={!canEdit} />
       {fieldErrors.deadline?.map((m) => <span key={m} role="alert">{m}</span>)}
       {formError && <p role="alert">{formError}</p>}
-      {canEdit && <button type="submit">{t('save')}</button>}
+      {canEdit && <button type="submit" disabled={saving}>{t('save')}</button>}
     </form>
   );
 }

@@ -70,7 +70,7 @@ describe('examples/collector/gateway.yaml allowlists', () => {
     const prohibited = `^${alternation(METRIC_REGISTRY.prohibitedLabels)}$|${alternation(METRIC_REGISTRY.prohibitedLabelSuffixes)}$`;
     expect(gateway).toContain(`- delete_matching_keys(attributes, "${prohibited}")${notRegistered}`);
     const consts = METRIC_REGISTRY.constLabels.map((l) => `"${l}"`).join(', ');
-    // The SDK sets no cap on a Tier 3 metric's label count; 8 is the gateway's.
+    // The gateway's cap is the SDK's (getServiceMeter refuses a 9th label).
     expect(gateway).toContain(`- limit(attributes, ${METRIC_REGISTRY.constLabels.length + MAX_SERVICE_LABELS}, [${consts}])${notRegistered}`);
     const prohibitedRe = new RegExp(prohibited);
     for (const k of ['user_id', 'email', 'order_uuid', 'api_token']) expect(prohibitedRe.test(k), k).toBe(true);

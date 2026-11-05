@@ -8,6 +8,7 @@ import { isOnline, subscribeOnline } from '../internal/online.ts';
 import { isSafeRedirect } from '../internal/redirect.ts';
 import { retryAfterMs } from '../internal/retry-after.ts';
 import { emitRuntime } from '../internal/events.ts';
+import { swapFlagProvider } from '../internal/flag-provider.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { rotateSessionId } from '../internal/session.ts';
 import type { IdentityProvider, SessionState, SessionUser, Workspace, WorkspaceResolver } from './types.ts';
@@ -154,14 +155,12 @@ const log = () => getLogger();
  * mark gone, so a shell that does not unmount cannot show the previous user's permissions or flags.
  */
 function forgetUser(): void {
-  const rt = getRuntime() as ReturnType<typeof getRuntime> & { stopFlagWatching?: (() => void) | undefined };
+  const rt = getRuntime();
   rt.storageNamespace = 'anon';
   rt.authzSubject = undefined;
-  rt.stopFlagWatching?.();
-  rt.stopFlagWatching = undefined;
-  rt.flagProvider = undefined;
   rt.readOnlyDenied = false;
-  for (const topic of ['authz', 'flags', 'read-only'] as const) emitRuntime(topic);
+  swapFlagProvider(undefined); // as setFlagProvider does: the subscription stopped, 'flags' emitted
+  for (const topic of ['authz', 'read-only'] as const) emitRuntime(topic);
 }
 
 function store(area: 'local' | 'session'): Storage | undefined {

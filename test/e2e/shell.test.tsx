@@ -252,8 +252,14 @@ describe('the reference shell', () => {
     net.on('PUT /api/tenders/:id', () => Response.json({ ...TENDER, title: 'Road works, phase 2', version: 4 }));
     net.on('GET /api/tenders/:id', () => Response.json({ ...TENDER, title: 'Road works, phase 2', version: 4 }));
     $<HTMLInputElement>('input[name=title]')!.value = 'Road works, phase 2';
-    await user(() => $<HTMLButtonElement>('button[type=submit]')!.click());
+    const putsBefore = net.sent('/api/tenders/1').filter((r) => r.method === 'PUT').length;
+    await user(() => {
+      // A double click: one save (a second PUT with the same version would come back 409).
+      $<HTMLButtonElement>('button[type=submit]')!.click();
+      $<HTMLButtonElement>('button[type=submit]')!.click();
+    });
     await until(() => $<HTMLInputElement>('input[name=title]')?.defaultValue === 'Road works, phase 2');
+    expect(net.sent('/api/tenders/1').filter((r) => r.method === 'PUT')).toHaveLength(putsBefore + 1);
     expect(text()).not.toContain('Title is required');
     expect(await net.sent('/api/tenders/1').filter((r) => r.method === 'PUT').at(-1)!.json()).toMatchObject({ version: 3 });
 

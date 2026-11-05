@@ -11,6 +11,7 @@ import { RuntimeConfigSchema, setRuntimeConfig, type RuntimeConfig } from '../co
 import { initializeCore, setConsentProvider, type CoreIdentityInput } from '../core/index.ts';
 import { setFlagProvider, type FlagValue } from '../flags/index.ts';
 import { setLoggingInternalsForTests, initializeLogging, shutdownLogging } from '../logging/logging.ts';
+import { shutdownMetrics } from '../metrics/metrics.ts';
 import { PlatformProvider } from '../react/index.ts';
 import { setTracingInternalsForTests, initializeTracing, shutdownTracing } from '../tracing/tracing.ts';
 import { getRuntime, resetRuntimeForTests } from '../internal/runtime.ts';
@@ -115,13 +116,14 @@ export function createTestPlatform(o?: Partial<TestPlatformOptions>): {
   signOuts: { global?: boolean }[];
   reset(): void;
 } {
-  // Start from an empty page, and stop the previous platform first: its unload listeners, batchers and
-  // identity provider would otherwise pile up across a test file, and a hidden-page event would drain old
+  // Start from an empty page, and stop the previous platform first: its unload listeners, batchers, metric
+  // reader and identity provider would otherwise pile up across a test file, and a hidden-page event would drain old
   // runtimes into old arrays.
   const previous = getRuntime();
   resetUnloadForTests();
   void shutdownLogging();
   void shutdownTracing();
+  void shutdownMetrics(); // a test that initialised metrics: its interval would keep exporting
   (previous.identityProvider as IdentityProvider | undefined)?.dispose?.();
   // The OTel globals refuse a second registration until disabled.
   trace.disable();

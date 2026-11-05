@@ -132,7 +132,7 @@ platform-reactcommon/
   .claude/                    Claude Code reference set (CLAUDE.md and topic files)
 ```
 
-`src/internal/` also holds `unload` (the page's keepalive budget for hide and `pagehide`, §7.5), `environments` (which environments are local), `reload` (the listeners run before an SDK-started reload, §8.9) and `retry-after` (`Retry-After` parsing for `/http` and the refresh backoff). `urls` holds `stripUrlQueries` (§7.2). Each package's tarball carries a `README.md` and `engines.node` `>=22`.
+`src/internal/` also holds `unload` (the page's keepalive budget for hide and `pagehide`, §7.5), `environments` (which environments are local), `flag-provider` (the one swap of the runtime's flag provider, for `/flags`' `setFlagProvider` and the sign-out, §8.7), `reload` (the listeners run before an SDK-started reload, §8.9) and `retry-after` (`Retry-After` parsing for `/http` and the refresh backoff). `urls` holds `stripUrlQueries` (§7.2). Each package's tarball carries a `README.md` and `engines.node` `>=22`.
 
 ### 3.1 Library dependencies (direct, `@bcbp-solutions-fzc-llc/frontend-sdk`)
 

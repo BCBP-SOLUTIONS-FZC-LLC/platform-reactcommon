@@ -114,6 +114,7 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  * revalidates with the ETag), within `timeoutMs` (default 10 s). Any failure (network, timeout, HTTP status, JSON, schema) is a
  * RuntimeConfigError; the shell shows its static "unavailable" page. As for setRuntimeConfig, an
  * http origin on a local host is an error unless initializeCore set the local, dev or test environment.
+ * A `timeoutMs` outside 1 to 2147483647 is a programming error: a RangeError, before any request.
  */
 export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<RuntimeConfig> {
   const url = opts?.url ?? DEFAULT_URL;
@@ -127,6 +128,7 @@ export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSig
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) {
     throw new RangeError(`timeoutMs must be an integer from 1 to 2147483647, got ${String(timeoutMs)}`);
   }
+  const timeoutMessage = `${url} did not answer within ${timeoutMs} ms`;
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -142,7 +144,7 @@ export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSig
       res = await fetch(url, { method: 'GET', cache: 'no-cache', credentials: 'same-origin', headers: { accept: 'application/json' }, signal: controller.signal });
     } catch (cause) {
       if (opts?.signal?.aborted) throw cause; // the caller's abort is not a config error
-      throw new RuntimeConfigError(timedOut ? `${url} did not answer within ${timeoutMs} ms` : `${url} could not be loaded`, [], { cause });
+      throw new RuntimeConfigError(timedOut ? timeoutMessage : `${url} could not be loaded`, [], { cause });
     }
     if (!res.ok) {
       await res.body?.cancel().catch(() => {});
@@ -153,7 +155,7 @@ export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSig
       raw = await res.json();
     } catch (cause) {
       if (opts?.signal?.aborted) throw cause;
-      throw new RuntimeConfigError(timedOut ? `${url} did not answer within ${timeoutMs} ms` : `${url} is not valid JSON`, [], { cause });
+      throw new RuntimeConfigError(timedOut ? timeoutMessage : `${url} is not valid JSON`, [], { cause });
     }
     return parseConfig(raw, url);
   } finally {

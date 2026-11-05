@@ -11,7 +11,7 @@ platform-reactcommon/
 │   │   ├── src/<subpath>/index.ts    the only public surface of each of the 17 subpaths
 │   │   ├── src/internal/             shared, private: runtime (PlatformRuntime), events, instruments (the Tier 1 port),
 │   │   │                             batcher, unload (keepalive budget, LLD §7.5), environments, online, redirect,
-│   │   │                             reload (onBeforeReload / reloadPage), retry-after (/http and /auth), locale,
+│   │   │                             reload (onBeforeReload / reloadPage), retry-after (/http and /auth), flag-provider (/flags and /auth), locale,
 │   │   │                             session, ids, urls (stripUrlQueries), generated/ (contracts as TS: never edit)
 │   │   ├── src/root.ts               "." entry: throws (import a subpath)
 │   │   ├── contracts/                generated from pinned backend commits (sources.json): never edit
