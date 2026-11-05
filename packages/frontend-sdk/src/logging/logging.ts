@@ -72,7 +72,8 @@ function intOption(name: string, value: number | undefined, fallback: number, mi
  * Shell only: starts OTLP logging to `${otlpBaseUrl}/v1/logs`. Requires initializeCore (the
  * identity becomes the resource). A second call is a no-op. Loggers obtained earlier start sending.
  * With `telemetry.enabled: false` in the runtime config it is a no-op: no record of any level
- * (errors and essential warnings included) is sent; loggers keep writing to the console in local/dev.
+ * (errors and essential warnings included) is sent; loggers keep writing to the console (every level
+ * in local/dev, warn and error elsewhere).
  */
 export function initializeLogging(o: { otlpBaseUrl: string; level?: LogLevel; batchSize?: number; flushMs?: number }): void {
   const identity = getIdentity();
@@ -161,7 +162,9 @@ function emit(level: LogLevel, msg: string, attrs: Record<string, unknown> | und
   attributes.page_route = getRuntime().pageRoute ?? 'unknown';
   const body = cleanString(typeof msg === 'string' ? msg : String(msg));
 
-  if (isDev()) console[level](`[${attributes.mfe}] ${body}`, attributes);
+  // Local/dev: every level. Elsewhere, while nothing exports (before initializeLogging, telemetry
+  // off, a standalone page without a collector): warn and error, so they are not lost.
+  if (isDev() || (!s && (level === 'warn' || level === 'error'))) console[level](`[${attributes.mfe}] ${body}`, attributes);
   if (!s) return;
   const needsConsent = needsTelemetryConsent(level, essential === true);
   if (needsConsent && !hasConsent('telemetry')) {
@@ -190,9 +193,11 @@ function makeLogger(scope: Record<string, string>): Logger {
 }
 
 /**
- * A logger tagged with `scope.mfe` (default 'shell'). Before initializeLogging it writes to the
- * console in local/dev (or when no identity is set, e.g. a remote run standalone) and is a no-op
- * elsewhere; once logging starts, the same logger sends.
+ * A logger tagged with `scope.mfe` (default 'shell'). It writes every level to the console in
+ * local/dev (or when no identity is set). Elsewhere, while logging is not running (before
+ * initializeLogging, with telemetry off, or on a standalone page without a collector), warn and
+ * error go to the console and debug and info are dropped. Once logging starts, the same logger
+ * sends, and only local/dev keep the console.
  */
 export function getLogger(scope?: Partial<MfeScope>): Logger {
   return makeLogger(scope?.mfe ? { mfe: scope.mfe } : {});

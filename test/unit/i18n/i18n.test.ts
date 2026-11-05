@@ -181,6 +181,32 @@ describe('Intl formatting', () => {
     expect(formatMoney(5)).toContain('د.إ.');
   });
 
+  it('formats a calendar date YYYY-MM-DD as that day in every time zone (a due date, not an instant)', async () => {
+    await initializeI18n({ defaultLocale: 'en', supported: ['en'], detect: () => 'en' });
+    // new Date('2026-10-25') is midnight UTC: Oct 24 west of UTC. The calendar date is not.
+    for (const timeZone of ['America/Los_Angeles', 'UTC', 'Pacific/Kiritimati', undefined]) {
+      expect(formatDate('2026-10-25', { dateStyle: 'medium', ...(timeZone ? { timeZone } : {}) }), timeZone).toBe('Oct 25, 2026');
+    }
+    expect(formatDate('0099-01-02', { year: 'numeric', month: 'long', day: 'numeric' })).toBe('January 2, 99'); // not 1999
+    expect(formatDate('2024-02-29', { dateStyle: 'medium' })).toBe('Feb 29, 2024');
+    for (const bad of ['2026-02-30', '2025-02-29', '2026-13-01', '2026-00-10', '2026-1-5', ' 2026-10-25', '25/10/2026', '']) {
+      expect(formatDate(bad), bad).toBe('');
+    }
+  });
+
+  it('formats an RFC 3339 date-time string with an offset as an instant, and refuses one without', async () => {
+    await initializeI18n({ defaultLocale: 'en', supported: ['en'], detect: () => 'en' });
+    const o = { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' } as const;
+    expect(formatDate('2026-10-25T23:30:00Z', o)).toBe(formatDate(Date.UTC(2026, 9, 25, 23, 30), o));
+    expect(formatDate('2026-10-25T23:30:00.123456789Z', { timeZone: 'UTC', fractionalSecondDigits: 3, second: 'numeric' })).toBe('0.123'); // Go's RFC3339Nano
+    expect(formatDate('2026-10-25T23:30:00.5Z', { timeZone: 'UTC', fractionalSecondDigits: 3, second: 'numeric' })).toBe('0.500');
+    expect(formatDate('2026-10-26T03:30:00.123+04:00', o)).toBe(formatDate(Date.UTC(2026, 9, 25, 23, 30), o));
+    expect(formatDate('2026-10-25T23:30', o)).toBe(''); // local time: a different instant on each viewer's clock
+    expect(formatDate('Oct 25 2026', o)).toBe(''); // engine-specific parsing
+    expect(formatDate('2026-10-25T25:00:00Z', o)).toBe('');
+    expect(formatDate('2026-10-25t23:30:00z', o)).toBe(''); // the ECMAScript date-time format is upper case
+  });
+
   it("uses the config's default locale before initializeI18n", () => {
     expect(formatNumber(1000)).toBe('1,000');
   });

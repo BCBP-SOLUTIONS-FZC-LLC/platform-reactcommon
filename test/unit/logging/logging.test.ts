@@ -468,6 +468,41 @@ describe('console fallback', () => {
     getLogger().info('standalone');
     expect(info).toHaveBeenCalledTimes(2);
   });
+
+  it.each(['test', 'staging', 'prod'])(
+    'writes warn and error (not debug or info) to the console in %s while logging is not running: a standalone page has no collector',
+    (env) => {
+      const spies = Object.fromEntries((['debug', 'info', 'warn', 'error'] as const).map((l) => [l, vi.spyOn(console, l).mockImplementation(() => {})]));
+      resetRuntimeForTests();
+      core(env);
+      const log = getLogger({ mfe: 'dashboard' });
+      log.debug('d');
+      log.info('i');
+      log.warn(`runtime.json unavailable; sign-in URL from the build (${JWT})`);
+      log.error('e');
+      expect(spies.debug).not.toHaveBeenCalled();
+      expect(spies.info).not.toHaveBeenCalled();
+      expect(spies.warn).toHaveBeenCalledWith('[dashboard] runtime.json unavailable; sign-in URL from the build ([REDACTED])', expect.objectContaining({ mfe: 'dashboard' }));
+      expect(spies.error).toHaveBeenCalledWith('[dashboard] e', expect.anything());
+    },
+  );
+
+  it('stops writing warn and error to the console outside local/dev once logging runs', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    start();
+    getLogger().warn('sent, not printed', { essential: true });
+    expect(warn).not.toHaveBeenCalled();
+    expect((await sent()).map((r) => r.body)).toEqual(['sent, not printed']);
+  });
+
+  it('keeps warn and error on the console in prod when the runtime config turns telemetry off', () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    telemetryConfig(false);
+    start();
+    getLogger().error('visible');
+    expect(err).toHaveBeenCalledWith('[shell] visible', expect.anything());
+    expect(exportedUrl).toBeUndefined();
+  });
 });
 
 describe('setRouteTemplate', () => {

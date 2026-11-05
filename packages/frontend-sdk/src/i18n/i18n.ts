@@ -275,12 +275,39 @@ export function formatMoney(v: number, currency = 'AED'): string {
   return numberFormat(state().locale, { style: 'currency', currency }).format(v);
 }
 
-/** A date or epoch milliseconds in the current locale; an invalid date gives ''. */
-export function formatDate(d: Date | number, o?: Intl.DateTimeFormatOptions): string {
-  const date = d instanceof Date ? d : new Date(d);
-  if (Number.isNaN(date.getTime())) return '';
+const CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+/** RFC 3339 date-time with an explicit offset: one instant everywhere (no offset would be local time). */
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/;
+
+/** The day `YYYY-MM-DD` as midnight UTC, or undefined when it is not a real date (2026-02-30). */
+function calendarDay(s: string): Date | undefined {
+  const m = CALENDAR_DATE.exec(s);
+  if (!m) return undefined;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])];
+  const date = new Date(0);
+  date.setUTCFullYear(y, mo, d); // not Date.UTC: it maps years 0–99 to 1900–1999
+  return date.getUTCFullYear() === y && date.getUTCMonth() === mo && date.getUTCDate() === d ? date : undefined;
+}
+
+/**
+ * A date in the current locale; anything invalid gives ''. `d` is an instant (a Date, epoch
+ * milliseconds, or an RFC 3339 date-time string with `Z` or an offset), or a calendar date
+ * `YYYY-MM-DD` (a due date, a birthday): that day, whatever the viewer's or `o`'s time zone.
+ */
+export function formatDate(d: Date | number | string, o?: Intl.DateTimeFormatOptions): string {
+  let date: Date | undefined;
+  let opts = o;
+  if (typeof d === 'string') {
+    date = calendarDay(d);
+    if (date) opts = { ...o, timeZone: 'UTC' }; // the day itself, never shifted by a zone
+    // ECMAScript only guarantees 3 fraction digits; Go's RFC3339Nano sends up to 9.
+    else if (INSTANT.test(d)) date = new Date(d.replace(/\.(\d+)/, (_, f: string) => `.${f.slice(0, 3).padEnd(3, '0')}`));
+  } else {
+    date = d instanceof Date ? d : new Date(d);
+  }
+  if (!date || Number.isNaN(date.getTime())) return '';
   const locale = state().locale;
-  return remember(dateFormats, `${locale}|${JSON.stringify(o ?? {})}`, () => new Intl.DateTimeFormat(locale, o)).format(date);
+  return remember(dateFormats, `${locale}|${JSON.stringify(opts ?? {})}`, () => new Intl.DateTimeFormat(locale, opts)).format(date);
 }
 
 /** `n` in the current locale. */
