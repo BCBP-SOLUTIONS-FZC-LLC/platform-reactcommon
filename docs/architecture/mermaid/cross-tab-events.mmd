@@ -1,0 +1,24 @@
+sequenceDiagram
+    participant A as Tab A (/auth)
+    participant LS as localStorage (shared)
+    participant BC as BroadcastChannel('platform-auth')
+    participant B as Tab B (/auth)
+    participant RT as Tab B PlatformRuntime events
+    participant UI as Tab B React (/react hooks)
+
+    Note over A,B: Each tab keeps its own tokens and refresh lineage, and nothing on the channel or in storage is a token.
+    A->>LS: user activity → auth:last-activity (at most every 5 s)
+    B->>LS: idle check every ≤ 15 s reads the shared last activity
+    A->>A: logout(): drop tokens, clearAllAppStorage(), rotate session id
+    A->>LS: auth:signed-out = true
+    A->>BC: { type: 'logout' }
+    BC-->>B: logout
+    B->>B: drop tokens, forgetUser() (namespace 'anon', authz subject, flags, read-only)
+    B->>RT: emit 'flags' · 'authz' · 'read-only' · 'session'
+    RT-->>UI: useFeatureFlag · useHasPermission · useReadOnly · useSession re-render
+    UI->>UI: shell unmounts the app, shows "You are signed out"
+    A->>A: switchWorkspace(w): drop tokens, clear storage, rotate session id
+    A->>BC: { type: 'workspace-switched' }
+    BC-->>B: workspace-switched
+    B->>B: expire({ serverEnded: false }) → session-ended dialog
+    Note over B: A sign-in this tab was finishing does not undo a logout from another tab (signedOutElsewhere).

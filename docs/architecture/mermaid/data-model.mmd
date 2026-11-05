@@ -1,0 +1,52 @@
+erDiagram
+    RUNTIME_JSON ||--|| PLATFORM_RUNTIME : "loaded, validated, frozen into config"
+    REMOTE_MANIFEST ||--o{ MANIFEST_ENTRY : "one per remote"
+    PLATFORM_RUNTIME ||--|| REMOTE_MANIFEST : "manifest"
+    PLATFORM_RUNTIME ||--o{ STORAGE_KEY : "storageNamespace scopes /storage keys"
+    PLATFORM_RUNTIME ||--o| TOKENS : "tokenSource reads; never stored"
+    WORKSPACE_CACHE ||--o{ WORKSPACE : "≤ 20, newest first"
+
+    RUNTIME_JSON {
+        enum environment "optional: local, dev, test, staging, prod"
+        object api "baseUrl, timeoutMs, propagationAllowlist"
+        object telemetry "enabled, otlpBaseUrl, sampleRatio, logLevel, sendSessionHeader"
+        object auth "idpOrigin, trialRealm, paidRealmPrefix, workspacePathPrefix, clientId, scopes, idleTimeoutMs, redirectPath, signInUrl"
+        object flags "name to boolean, string or number"
+        object remotes "killSwitch, loadTimeoutMs, retries, allowedOrigins"
+        object i18n "defaultLocale, supportedLocales"
+        object appUpdate "pollIntervalMs"
+    }
+    PLATFORM_RUNTIME {
+        string sdkVersion "duplicate-copy detection"
+        object identity "serviceName, domain, environment, buildVersion"
+        object config "RUNTIME_JSON, deep-frozen"
+        string storageNamespace "realm, trial:tenant_id, or anon"
+        object authzSubject "roles, departments from P-35"
+        object flagProvider "runtime config, then session context"
+        object manifest "REMOTE_MANIFEST, frozen"
+        object tracing_logging_metrics "exporters, queues, stats"
+        object unload "keepalive ledger, senders"
+    }
+    MANIFEST_ENTRY {
+        string entry "remoteEntry.js URL"
+        string version "immutable path segment"
+        string ownerDomain "registry domain"
+        string integrity "sha384, required outside local, dev, test"
+    }
+    STORAGE_KEY {
+        string key "frontend-sdk:storage:namespace:appId:key"
+        enum area "local or session"
+    }
+    WORKSPACE {
+        string slug "kebab, at most 63"
+        string realm "tenant-slug or trial"
+        boolean trial "shared trial realm"
+    }
+    WORKSPACE_CACHE {
+        string key "frontend-sdk:workspaces (localStorage)"
+    }
+    TOKENS {
+        string access "memory only"
+        string refresh "memory only, rotated, max reuse 0"
+        string id "memory only, id_token_hint in the logout POST body"
+    }

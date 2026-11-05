@@ -1,0 +1,31 @@
+flowchart LR
+    subgraph page["Browser page (shell + remotes, one SDK runtime)"]
+        cfg["/config"]
+        auth["/auth"]
+        http["/http ApiClient"]
+        mfe["/mfe"]
+        tel["/tracing · /logging · /metrics"]
+        ports["Shell ports:<br/>WorkspaceResolver · SessionContextSource"]
+    end
+
+    subgraph cf["Same origin: CloudFront"]
+        rj["/config/runtime.json<br/>no-cache · 10 s"]
+        man["/remotes/manifest.json<br/>no-cache · remotes.loadTimeoutMs"]
+        re["/remotes/&lt;name&gt;/&lt;version&gt;/…<br/>immutable · SRI"]
+        ver["/version.json<br/>no-cache · appUpdate.pollIntervalMs"]
+        api["/api/* → Envoy → IAM AuthZ Enrichment → services"]
+        otel["/otel/v1/{traces,logs,metrics}<br/>→ OTel Collector gateway"]
+    end
+
+    kc["Keycloak (auth.idpOrigin)<br/>/realms/&lt;realm&gt;/protocol/openid-connect/…"]
+
+    cfg -->|"fatal on failure"| rj
+    mfe -->|"slots show fallbacks"| man
+    mfe -->|"that remote's boundary"| re
+    mfe -->|"ignored; next poll"| ver
+    ports -->|"PUB-1 (no token) · P-35"| http
+    http -->|"token, request id, traceparent"| api
+    tel -->|"dropped and counted"| otel
+    auth -->|"auth: top-level redirect"| kc
+    auth -->|"token: fetch, 15 s"| kc
+    auth -->|"logout: form POST"| kc
