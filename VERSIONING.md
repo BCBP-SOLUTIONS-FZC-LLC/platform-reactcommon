@@ -7,6 +7,8 @@ This repository publishes three **npm packages** consumed by the platform's web 
 
 They always share **one version** (changesets `fixed` group). They're released with a **Git tag** `vX.Y.Z` and a GitHub Release carrying the package tarballs, and described in the root [CHANGELOG.md](CHANGELOG.md), one history for all three ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)). Changesets decide the version bump only; they don't write changelogs.
 
+Nothing here is deployed: what's versioned is the packages and the contract they give the shell and remotes (API, `runtime.json`, wire behaviour, storage keys). This document follows the same SemVer / tag / maintainer-process layout as the platform services' `VERSIONING.md` (for example iam-org-membership's), adapted to npm packages.
+
 ## Semantic versioning (SemVer)
 
 We use [SemVer 2.0.0](https://semver.org/): `MAJOR.MINOR.PATCH` (e.g. `1.2.3`). The bump is declared per change in a `.changeset/*.md` file (`pnpm changeset`). The release takes the largest bump among the pending changesets, and applies it to all three packages.
@@ -30,6 +32,14 @@ We use [SemVer 2.0.0](https://semver.org/): `MAJOR.MINOR.PATCH` (e.g. `1.2.3`). 
 | Telemetry field names and the metric names the SDK emits once ratified | `/testing` internals (its exports are in scope: `createTestPlatform`, `mockApi`, `mockProblem`, `renderMetricInventory`) |
 
 Import **subpaths** only (`@bcbp-solutions-fzc-llc/frontend-sdk/http`). The root and deep paths are not API (`@bcbp-solutions-fzc-llc/eslint-plugin` reports both).
+
+**Retired names are never reused.** A name the SDK stopped using keeps meaning "old", so a new feature never takes it over:
+
+| Retired | Since | Why it stays retired |
+|---|---|---|
+| A remote's bare container global (`<name>`) | `1.0.0-alpha.4` (now `__platform_mfe_<name>`) | An older remote still defines it; reusing it would let the new SDK read an old container |
+| Unprefixed `/storage` keys (`<realm>:<appId>:<key>`, `trial:<uuid>:<appId>:<key>`) | `1.0.0-alpha.4` (now under `@bcbp-solutions-fzc-llc/frontend-sdk:storage:`) | `clearAllAppStorage()` still removes them on sign-out, so a value from before the upgrade never outlives it |
+| The `@platform/*` package scope | Before `1.0.0-alpha.1` | Owned by a third party on npmjs.com (see *Why this scope*) |
 
 ### Module Federation and versions
 
@@ -75,11 +85,28 @@ None. During the alpha, breaking changes are expected and recorded in the CHANGE
 | Version | Status | Supported until |
 |---------|--------|-----------------|
 | `1.0.0-alpha.N` | **Current** pre-release line: latest release `1.0.0-alpha.5` (2026-11-05) (first tag: `v1.0.0-alpha.1`; `1.0.0-alpha.0` was never released) | Until `1.0.0` |
+| `[Unreleased]` → `1.0.0-alpha.6` | **Pending**, not breaking: `runtime.json` `environment` (one shell build for every environment), `formatDate` calendar dates, `warn` / `error` on the console while logging is off | — |
 | `1.x` | Planned, from `1.0.0` | Active once released |
+
+| Release | Dist-tag | Released |
+|---|---|---|
+| `v1.0.0-alpha.1` · `alpha.2` | `alpha` | 2026-11-03 |
+| `v1.0.0-alpha.3` | `alpha` | 2026-11-04 |
+| `v1.0.0-alpha.4` (breaking) · `alpha.5` | `alpha` | 2026-11-05 |
+
+**`1.0.0` is not cut yet, by design.** It waits for the first end-to-end environment. Before it:
+- staging validation on real AWS and Keycloak (the integrated stack emulates AWS);
+- the Tier 1 `platform_web_*` metric names ratified by governance (until then the SDK records none);
+- the gateway issues 3, 9 and 14 and the cold-start P-35 503 (integrated report Issue 12) settled with Platform and IAM;
+- `pnpm changeset pre exit`.
+
+LLD §15 tracks each of them.
 
 When a new **MAJOR** line ships, the previous major receives **security fixes only** for six months after the new major's release ([SECURITY.md](SECURITY.md)).
 
 ## Consume a release
+
+### Install
 
 The packages are published to **GitHub Packages** (the npm registry at `npm.pkg.github.com`), under the organisation's scope:
 
@@ -112,9 +139,19 @@ pnpm add -D @bcbp-solutions-fzc-llc/webpack-preset@1.0.0-alpha.5 @bcbp-solutions
 | `^X.Y.Z` | From `1.0.0` (strict SemVer) |
 | The same version for all three packages | Always: they're released together, and `@bcbp-solutions-fzc-llc/webpack-preset` / `@bcbp-solutions-fzc-llc/eslint-plugin` embed facts about the SDK of the same version (its subpaths, the share range, the forbidden headers); the preset's `SdkVersionPlugin` fails a build whose installed SDK differs |
 
-Dist-tags: a pre-release is published under its identifier (`alpha`, `rc`), and a stable release under `latest`. So `pnpm add @bcbp-solutions-fzc-llc/frontend-sdk` never installs a pre-release by accident.
+### Tag scheme
 
-**Verifying what you install.** Each tarball has a GitHub build-provenance attestation from the release workflow:
+| Git tag | npm version | Dist-tag | GitHub Release |
+|---|---|---|---|
+| `v1.0.0-alpha.N` | `1.0.0-alpha.N` | `alpha` | Pre-release |
+| `v1.0.0-rc.N` | `1.0.0-rc.N` | `rc` | Pre-release |
+| `vX.Y.Z` | `X.Y.Z` | `latest` | Release |
+
+`publish:check` derives the dist-tag from the version, so `pnpm add @bcbp-solutions-fzc-llc/frontend-sdk` never installs a pre-release by accident. There are no floating tags (`v1`, `v1.2`): pin an exact version (below) and let the lockfile hold it. A published version is never overwritten.
+
+### Verify what you install
+
+**Provenance.** Each tarball has a GitHub build-provenance attestation from the release workflow:
 
 ```bash
 npm pack @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.5
@@ -122,6 +159,16 @@ gh attestation verify bcbp-solutions-fzc-llc-frontend-sdk-1.0.0-alpha.5.tgz --re
 ```
 
 The same tarballs are attached to the GitHub Release, with Cosign-signed `checksums.txt` (see *Verifying a release* in the [README](README.md#cutting-a-release)).
+
+### Upgrade a shell and its remotes
+
+1. Read the version's CHANGELOG section: a **Breaking** entry says what to change and whether the shell and remotes must upgrade together.
+2. Upgrade all three packages to the same version in each app (`SdkVersionPlugin` fails a build that mixes them).
+3. **Shell first:** deploy the shell on the new SDK, then the remotes built against it. A remote built on a newer SDK than the shell's is refused at share negotiation and shows its boundary fallback.
+4. **Configuration last:** set a new `runtime.json` key only once the pages run the version that knows it (an older SDK refuses the unknown key).
+5. **Roll back** the shell only to an SDK at or above the newest one any deployed remote was built against.
+
+Per-version steps: README § [Upgrading between alpha versions](README.md#11-upgrading-between-alpha-versions).
 
 ## Publishing
 
@@ -192,6 +239,15 @@ The release workflow (`.github/workflows/release.yml`) automates verification, e
 
 5. **Notify consumers** (the shell and remote teams) with upgrade notes. For a MINOR or MAJOR, say which order to upgrade in (shell first).
 
+**If a release fails:**
+
+| What happened | What to do |
+|---|---|
+| `Verify`: the package version differs from the tag | The tag was pushed before the release PR merged (or on the wrong commit). Nothing was published: delete the tag (`git push origin :refs/tags/vX.Y.Z`, then locally) and tag the release merge commit |
+| A gate fails at the tag | A flaky test: re-run the failed jobs. A real failure, with nothing published yet: fix it on `main`, delete the tag, and tag the commit that contains the fix (the version was never used). Once anything is published, never move or reuse the tag: release a new version |
+| `npm-publish` fails after some packages published | Re-run it: a version already in the registry with the same integrity is skipped; a different tarball under that version is refused |
+| `publish` (GitHub Release) fails after the registry publish | Re-run the failed jobs: `npm-publish` already succeeded and is not run again (and would skip identical versions if it were) |
+
 **Leaving the alpha (`1.0.0`):**
 1. `pnpm changeset pre exit`.
 2. `pnpm run version-packages`, which sets `1.0.0`, and the `## [1.0.0]` CHANGELOG section.
@@ -212,7 +268,9 @@ From then on, releases follow plain SemVer.
 |--------------------|-------------------|----------------------|---------------------------------------|--------|--------------|-------------------------------|
 | `1.0.0-alpha.N` | `^19.0.0` (tested at 19.0.0 and the newest 19.x) | `~1.10.0` (OTel JS 3) | webpack `^5.100.0` · `@rspack/core` `^2.2.0` · `@rsbuild/core` `^2.2.0` | `^9 \|\| ^10` | `≥ 22` | `6.0` |
 
-The SDK targets evergreen browsers (ES2022), with Trusted Types where the browser supports them.
+The SDK targets evergreen browsers (ES2022), with Trusted Types where the browser supports them. CI runs the browser suite in Chromium, Firefox and WebKit (Playwright `1.64.1`); engine-specific limits are recorded in `test/browser/engine-notes.ts`.
+
+**Tested against** (the integrated stack, `docker-compose.yml`): Keycloak `26.8.1`, Envoy `v1.40.2`, the OTel Collector contrib `0.164.0`, and the IAM services at the pinned commits below. A consumer's own versions of these are not pinned by the packages; these are the versions each release was run against.
 
 **Backend contracts.** Each release is built against backend commits pinned in [`packages/frontend-sdk/contracts/sources.json`](packages/frontend-sdk/contracts/sources.json). When a pin moves, the release notes say so. Currently:
 
@@ -237,3 +295,9 @@ A backend change that alters a contract (a new problem type, deny code, registry
 | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Automated release pipeline |
 | [`packages/frontend-sdk/package.json`](packages/frontend-sdk/package.json) | Version, exports map, peer ranges |
 | [`packages/webpack-preset/package.json`](packages/webpack-preset/package.json) | `platformShared` pins (React, OTel API) |
+| [`packages/frontend-sdk/api/`](packages/frontend-sdk/api/) | The public API per subpath (api-extractor): what SemVer applies to |
+| [`packages/frontend-sdk/contracts/sources.json`](packages/frontend-sdk/contracts/sources.json) | The backend commits a release is built against |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Changesets, the documentation checklist, branch and commit conventions |
+| [ARCHITECTURE.md](ARCHITECTURE.md#schema-lifecycle) | Schema lifecycle: how `runtime.json`, the manifest and the API change |
+| [LLD §14](docs/lld/platform-reactcommon-lld.md#14-release-distribution-and-testing) | Release, compatibility per alpha, testing |
+| [`.claude/skills/release/SKILL.md`](.claude/skills/release/SKILL.md) | The `/release` steps, including the checks run before the release PR |
