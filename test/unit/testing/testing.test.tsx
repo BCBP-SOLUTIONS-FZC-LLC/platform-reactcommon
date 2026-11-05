@@ -183,10 +183,10 @@ describe('createTestPlatform storage', () => {
   // mfe-dashboard's report (2026-11-04): storage() dropped every write under createTestPlatform, as if signed out.
   it('persists storage for the signed-in test user', () => {
     createTestPlatform(); // signed in: DEFAULT_USER in workspace { realm: 'tenant-test', slug: 'test' }
-    storage('app2').set('theme', 'dark');
-    expect(storage('app2').get('theme')).toBe('dark');
+    storage('dashboard').set('theme', 'dark');
+    expect(storage('dashboard').get('theme')).toBe('dark');
     expect(getRuntime().storageNamespace).toBe('tenant-test');
-    expect(localStorage.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-test:app2:theme')).not.toBeNull();
+    expect(localStorage.getItem('@bcbp-solutions-fzc-llc/frontend-sdk:storage:tenant-test:dashboard:theme')).not.toBeNull();
   });
 
   it('scopes a trial workspace to the tenant: user.tenantId, else the session context\'s', () => {
@@ -199,16 +199,16 @@ describe('createTestPlatform storage', () => {
   it("storageNamespace: 'anon' tests the signed-out case: nothing is written", () => {
     createTestPlatform({ storageNamespace: 'anon' });
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    storage('app2').set('theme', 'dark');
-    expect(storage('app2').get('theme')).toBeUndefined();
+    storage('dashboard').set('theme', 'dark');
+    expect(storage('dashboard').get('theme')).toBeUndefined();
     expect(localStorage.length).toBe(0);
   });
 
   it('a later workspace does not read an earlier one\'s storage', () => {
     createTestPlatform();
-    storage('app2').set('theme', 'dark');
+    storage('dashboard').set('theme', 'dark');
     createTestPlatform({ workspace: { realm: 'tenant-other', trial: false, slug: 'other' } });
-    expect(storage('app2').get('theme')).toBeUndefined();
+    expect(storage('dashboard').get('theme')).toBeUndefined();
   });
 });
 
