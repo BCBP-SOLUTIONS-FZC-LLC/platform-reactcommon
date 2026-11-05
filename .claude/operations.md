@@ -50,7 +50,7 @@ Commands, CI, releases and the Docker suites. The README's *Local development*, 
 
 **The publish gate:** GitHub Team has no environment reviewers for private repos. `npm` accepts only `v*.*.*` tags, and the ruleset "release tags" (admins bypass) restricts creating, moving and deleting `refs/tags/v*`. `check-npm-environment.sh` passes on reviewers or on that tag gate; with an admin token it also rejects a bypass list wider than admins and named teams. A re-run skips versions already published with the same integrity.
 
-Released: `v1.0.0-alpha.1`, `v1.0.0-alpha.2` (2026-11-03), `v1.0.0-alpha.3` (2026-11-04), `v1.0.0-alpha.4` (2026-11-05, the latest). Leaving the alpha: `pnpm changeset pre exit`, then a `1.0.0` release PR.
+Released: `v1.0.0-alpha.1`, `v1.0.0-alpha.2` (2026-11-03), `v1.0.0-alpha.3` (2026-11-04), `v1.0.0-alpha.4`, `v1.0.0-alpha.5` (2026-11-05, the latest). Leaving the alpha: `pnpm changeset pre exit`, then a `1.0.0` release PR.
 
 ## Pull Requests
 
