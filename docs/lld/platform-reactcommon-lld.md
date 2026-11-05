@@ -18,8 +18,8 @@
 | 1.0 | 2026-10-31 | First LLD, written from the implementation of design-doc steps 0–14 plus the `portal` domain and the CI pipeline (all on `main`). Step 15 (Tier 1 metric binding) is open; see §15 |
 | 1.1 | 2026-11-03 | Aligned with the first release `1.0.0-alpha.1`: GitHub Packages distribution and its publish gate (§14.1), React 19 only, sign-out global by default (§8.7), one keepalive budget for all three signals on hide and `pagehide` (§7.5), metrics sent on page hide (§7.3), the reference two-tier Collector (§7.6), the test layers and nightly integrated run (§14.3), open items (§15) |
 | 1.2 | 2026-11-03 | `@bcbp-solutions-fzc-llc/webpack-preset` supports Rspack 2 (`/rspack`) and Rsbuild 2 (`/rsbuild`) besides webpack 5, interoperable over the v1 Module Federation protocol (§13.1), released in `1.0.0-alpha.2` |
-| 1.4 | 2026-11-05 | `[Unreleased]`: optional `auth.signInUrl` in `runtime.json`; a remote's standalone page is its own host page and may load and set the runtime config (§12.1) |
 | 1.3 | 2026-11-05 | Aligned with `[Unreleased]` (`1.0.0-alpha.4`, PRs #41–#46): container global `__platform_mfe_<name>` and `SdkVersionPlugin` (§13.1), prefixed `/storage` keys (§4.4), refresh backoff on 429 / 503 + `Retry-After` (§8.5), sign-out by form POST and dropping the user's page state (§8.7), whole-attempt remote timeout and fetch timeouts (§5.4.3, §8.9), synthetic 502s and byte bodies (§5.4.1), boundary `resetKeys` (§5.4.4), the global error rate limit (§11.1), Tier 3 label limit and the Collector's label bounds (§7.3, §7.6), CSS SRI (§13.1), runtime sharing per pre-release (§6.1), open items (§15) |
+| 1.4 | 2026-11-05 | `[Unreleased]`: optional `auth.signInUrl` in `runtime.json`; a remote's standalone page is its own host page and may load and set the runtime config (§12.1) |
 
 ### Table of Contents
 
@@ -181,7 +181,7 @@ Generated from `subpaths.json` into the exports map, the ESLint config (`eslint-
 | `environment` | ∈ `ENVIRONMENTS` (`local`, `dev`, `test`, `staging`, `prod`; no aliases) | `InvalidIdentityError('environment')` |
 | `buildVersion` | registry version pattern after sanitizing; `unknown` when empty | — |
 
-Strings are sanitized like gincommon (Go's whitespace trim, control characters removed; the SDK also strips U+2028/2029, a deliberate stricter difference recorded in the identity fixture as `expectedSdk`). A second call with the same normalised identity is a no-op; a different one throws `IdentityMismatchError` naming the field. A remote never calls it: it reads the shell's identity from the runtime.
+Strings are sanitized like gincommon (Go's whitespace trim, control characters removed; the SDK also strips U+2028/2029, a deliberate stricter difference recorded in the identity fixture as `expectedSdk`). A second call with the same normalised identity is a no-op; a different one throws `IdentityMismatchError` naming the field. A remote's code that also runs inside a shell never calls it: it reads the shell's identity from the runtime. A remote's standalone page is its own host page (§12.1).
 
 The **RUM session id** is a random v4 UUID kept in localStorage under `@bcbp-solutions-fzc-llc/frontend-sdk:session-id`, so it is shared by tabs and survives reloads. It is rotated on logout and idle timeout and after 24 hours (`@bcbp-solutions-fzc-llc/frontend-sdk:session-started`), and falls back to a per-page id when storage is blocked. It is sent as `x-session-id` and logged as `session_id`. It is never the IdP session.
 
@@ -251,7 +251,7 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 
 - Subpath imports only; `import '@bcbp-solutions-fzc-llc/frontend-sdk'` throws.
 - Every public symbol is in `api/<subpath>.api.md`. A change is a reviewed diff plus a changeset and a `CHANGELOG.md` entry.
-- "Shell only" functions (`initialize*`, `set*Provider`, `loadManifest`, `startVersionPolling`, `PlatformProvider`, `installGlobalErrorHandlers`, `initializeAuth`) are called once, by the shell. A second `initialize*` call is a no-op, except `initializeCore` with a different identity.
+- "Shell only" functions (`initialize*`, `set*Provider`, `loadManifest`, `startVersionPolling`, `PlatformProvider`, `installGlobalErrorHandlers`, `initializeAuth`, `loadRuntimeConfig`, `setRuntimeConfig`) are called once, by the host page: the shell, or a remote's standalone page when no shell is present (§12.1). A second `initialize*` call is a no-op, except `initializeCore` with a different identity.
 - Functions that need an earlier step throw `NotInitializedError` (for example `initializeTracing` before `initializeCore`). Read paths degrade instead: no-op spans, a console logger, `denyAll`, platform flags.
 - Errors are typed classes (`InvalidIdentityError`, `RuntimeConfigError`, `InvalidMetricError`, `ForbiddenStorageKeyError`, `RemoteDisabledError`, `RemoteLoadError`, `ProblemError` …), never strings.
 

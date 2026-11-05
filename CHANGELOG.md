@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `/config`: optional `auth.signInUrl` in `runtime.json`: where users sign in (the shell's page), an absolute https URL in normal form (http only on a local host, in the local, dev and test environments), without user info or fragment. No default. For pages without a shell: a remote run standalone sends a signed-out user there instead of a URL fixed at build time (mfe-dashboard LLD §15 item 14).
+- `/config`: optional `auth.signInUrl` in `runtime.json`: where users sign in (the shell's page), an absolute https URL in normal form (http only on a local host, in the local, dev and test environments), without user info or fragment. No default. For pages without a shell: a remote run standalone sends a signed-out user there instead of a URL fixed at build time (mfe-dashboard LLD §15 item 14). Set it in `runtime.json` only once the shell (or standalone page) runs this version: earlier versions refuse the unknown key.
 - `initializeCore`, `loadRuntimeConfig` and `setRuntimeConfig` are documented for the host page: the shell, or a remote's own standalone page when no shell is present.
 
 ## [1.0.0-alpha.4] - 2026-11-05

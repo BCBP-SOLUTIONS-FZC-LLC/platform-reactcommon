@@ -20,7 +20,7 @@ setRuntimeConfig(await loadRuntimeConfig());
 setConsentProvider(cmp);
 ```
 
-A remote never initializes anything; it reads: `getIdentity()`, `tryGetConfig()`, `hasConsent('telemetry')`. Errors from an API call are matched by type:
+A remote's code that also runs inside a shell never initializes anything; it reads: `getIdentity()`, `tryGetConfig()`, `hasConsent('telemetry')`. A remote's own standalone page, when no shell is present, is its host page: it runs `initializeCore`, `loadRuntimeConfig` and `setRuntimeConfig` itself ([LLD §12.1](../lld/platform-reactcommon-lld.md#121-runtimejson)). Errors from an API call are matched by type:
 
 ```ts
 if (isProblemError(e) && e.is(PlatformProblemTypes.ValidationFailed)) setErrors(toFieldErrorMap(e));

@@ -240,7 +240,7 @@ graph LR
 
 ## Shell bootstrap
 
-The shell (never a remote) runs the bootstrap once (design doc §C2). Steps 2–3 are fatal: they fall back to a static page, and no SDK telemetry is possible yet. Step 5 is never fatal. Step 7 is fatal only for routes that need auth. If step 9 fails, every remote slot shows its fallback. `examples/shell/src/bootstrap.tsx` follows the §C4 code; when step 8 failed transiently, the shell renders deny-all and retries P-35 in the background (`examples/shell/src/session-context.ts`). A sign-out in any tab during the steps stops the bootstrap before the app is mounted.
+The shell runs the bootstrap once (a remote's code inside a shell never does) (design doc §C2). Steps 2–3 are fatal: they fall back to a static page, and no SDK telemetry is possible yet. Step 5 is never fatal. Step 7 is fatal only for routes that need auth. If step 9 fails, every remote slot shows its fallback. `examples/shell/src/bootstrap.tsx` follows the §C4 code; when step 8 failed transiently, the shell renders deny-all and retries P-35 in the background (`examples/shell/src/session-context.ts`). A sign-out in any tab during the steps stops the bootstrap before the app is mounted.
 
 > Source: [`docs/architecture/mermaid/shell-bootstrap.mmd`](docs/architecture/mermaid/shell-bootstrap.mmd)
 
@@ -270,7 +270,7 @@ flowchart TD
     render -->|"P-35 failed transiently (network, timeout, 429, 5xx)"| ctxretry["retry P-35 3 times (after 1 s, 2 s, 4 s); on success:<br/>setAuthzSubject · session flags · rememberWorkspace · re-render<br/>(a sign-out stops the retries)"]
 ```
 
-A remote run on its own skips all of this. Every API then returns a no-op or an anonymous default (`denyAll`, empty flags, the console logger), and remotes read the config only through `tryGetConfig()`.
+Remote code that also runs inside a shell skips all of this and reads the config only through `tryGetConfig()`. A remote's own standalone page (no shell) is its host page: it may run steps 2–3 itself (`initializeCore`, `loadRuntimeConfig`, `setRuntimeConfig`) and read `auth.signInUrl` to send a signed-out user to the shell. Without them every API returns a no-op or an anonymous default (`denyAll`, empty flags, the console logger).
 
 ---
 
