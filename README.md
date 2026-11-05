@@ -8,7 +8,7 @@ The platform's shared **frontend SDK for React micro-frontends**: the browser-si
 It is also the browser's side of IAM: Keycloak sign-in with tokens kept in memory only, workspace (realm) choice, session restore, step-up MFA.
 
 **Repository:** `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon`
-**Packages:** `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin`. pnpm monorepo, Node ≥ 22, TypeScript 6, ESM only, React 19. One version for all three (`1.0.0-alpha.N` until the first environment); the latest release is **`v1.0.0-alpha.3`** (2026-11-04; `alpha.1` was the first, 2026-11-03), on GitHub Packages, and `1.0.0-alpha.4` is pending under `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md). **Never deployed**: consumers install the packages; `examples/` holds a reference shell and remote that are built and checked in CI, never run in production.
+**Packages:** `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin`. pnpm monorepo, Node ≥ 22, TypeScript 6, ESM only, React 19. One version for all three (`1.0.0-alpha.N` until the first environment); the latest release is **`v1.0.0-alpha.4`** (2026-11-05; `alpha.1` was the first, 2026-11-03), on GitHub Packages; see [CHANGELOG.md](CHANGELOG.md). **Never deployed**: consumers install the packages; `examples/` holds a reference shell and remote that are built and checked in CI, never run in production.
 **Design:**
 - **Decisions:** [`docs/design/frontend-sdk-design.md`](docs/design/frontend-sdk-design.md) is the decision record, including the public API per subpath.
 - **Implementation:** [ARCHITECTURE.md](ARCHITECTURE.md) and the [LLD](docs/lld/platform-reactcommon-lld.md) describe what's built.
@@ -341,7 +341,7 @@ expect(p.logs.filter((l) => l.level === 'error')).toEqual([]);
 
 During `1.0.0-alpha.N`, a breaking change bumps `N`. Each one is listed in [CHANGELOG.md](CHANGELOG.md). The shell shares the SDK as a strict singleton under `^1.0.0-0`, and each remote requires the SDK version it was built against (a shell with an older SDK refuses the remote inside its boundary), so usually the shell upgrades first. Keep the preset and the SDK at the same version in each app: `SdkVersionPlugin` fails the build otherwise.
 
-**`alpha.3` → `alpha.4`** (pending): rebuild every remote with the new preset and deploy them with the new shell at the same time, since a remote's container global is now `__platform_mfe_<name>` and the new SDK does not read the old one. Before deploying the shell, add the IdP origin to the CSP's `form-action` (sign-out is a form POST). Values saved through `storage()` under the old keys are not read again, a Tier 3 metric may declare at most 8 labels besides the identity ones, and `no-raw-storage` / `no-unsafe-html` report more code. CHANGELOG's `[Unreleased]` lists each change with its upgrade step.
+**`alpha.3` → `alpha.4`**: rebuild every remote with the new preset and deploy them with the new shell at the same time, since a remote's container global is now `__platform_mfe_<name>` and the new SDK does not read the old one. Before deploying the shell, add the IdP origin to the CSP's `form-action` (sign-out is a form POST). Values saved through `storage()` under the old keys are not read again, a Tier 3 metric may declare at most 8 labels besides the identity ones, and `no-raw-storage` / `no-unsafe-html` report more code. CHANGELOG's `[Unreleased]` lists each change with its upgrade step.
 
 `1.0.0` is cut with the first environment, and SemVer is strict from then on.
 
@@ -613,7 +613,7 @@ SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as publi
 
 | Version | Status | Notes |
 |---|---|---|
-| `1.0.0-alpha.N` | Current line; **`1.0.0-alpha.3`** released 2026-11-04 (`alpha.1` and `alpha.2` 2026-11-03); **`1.0.0-alpha.4`** pending (`[Unreleased]`, not released) | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`). `alpha.2` added the preset's Rspack and Rsbuild entry points; `alpha.3` fixed `createTestPlatform`'s storage; `alpha.4` has breaking changes (container global, `/storage` keys, the CSP `form-action` for the sign-out POST, Tier 3 label limit, stricter lint rules): the shell and every remote upgrade together |
+| `1.0.0-alpha.N` | Current line; **`1.0.0-alpha.4`** released 2026-11-05 (`alpha.1` and `alpha.2` 2026-11-03, `alpha.3` 2026-11-04) | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`). `alpha.2` added the preset's Rspack and Rsbuild entry points; `alpha.3` fixed `createTestPlatform`'s storage; `alpha.4` has breaking changes (container global, `/storage` keys, the CSP `form-action` for the sign-out POST, Tier 3 label limit, stricter lint rules): the shell and every remote upgrade together |
 | `1.0.0` | Cut with the first end-to-end environment | Strict SemVer from then on |
 
 ### Cutting a release
@@ -630,7 +630,7 @@ In changesets v3's pre mode, `version-packages` moves the consumed changesets in
 **Verifying a release** (needs [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) ≥ 2.4):
 
 ```bash
-TAG=v1.0.0-alpha.3
+TAG=v1.0.0-alpha.4
 REPO=BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
 IDENTITY="^https://github\.com/${REPO}/\.github/workflows/release\.yml@refs/(tags/${TAG}|heads/main)$"
 gh release download "$TAG" -R "$REPO" -p checksums.txt -p checksums.txt.sigstore.json -p 'bcbp-solutions-fzc-llc-*.tgz'

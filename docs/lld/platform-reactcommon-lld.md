@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Packages | `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin` (one version, changesets `fixed`) |
-| Version | `1.0.0-alpha.3` (tag `v1.0.0-alpha.3`, 2026-11-04, GitHub Packages, dist-tag `alpha`), after `1.0.0-alpha.1` (the first release) and `1.0.0-alpha.2` on 2026-11-03; `1.0.0-alpha.N` until the first end-to-end environment. This LLD also describes `[Unreleased]` in `CHANGELOG.md` (to ship as `1.0.0-alpha.4`, not yet released; breaking: shell and remotes upgrade together, §14.2) |
+| Version | `1.0.0-alpha.4` (tag `v1.0.0-alpha.4`, 2026-11-05, GitHub Packages, dist-tag `alpha`; breaking: shell and remotes upgrade together, §14.2), after `1.0.0-alpha.1` (the first release) and `1.0.0-alpha.2` on 2026-11-03 and `1.0.0-alpha.3` on 2026-11-04; `1.0.0-alpha.N` until the first end-to-end environment |
 | Runtime | Evergreen browsers (ES2022, Trusted Types where supported); build tooling on Node ≥ 22 |
 | Peers | `react` / `react-dom` `^19.0.0` (one major; floor tested in CI), `@opentelemetry/api` `~1.10.0`, `webpack` `^5.100.0`, `@rspack/core` `^2.2.0`, `@rsbuild/core` `^2.2.0` (the preset's bundler peers, each optional: an app installs the one it builds with; `/rsbuild` uses the Rspack inside `@rsbuild/core`), `eslint` `^9 \|\| ^10` |
 | Design record | [`docs/design/frontend-sdk-design.md`](../design/frontend-sdk-design.md) (decisions, public API per subpath, contracts, backend changes) |
@@ -749,7 +749,7 @@ The packages are released together with one version (changesets `fixed`):
 4. `npm-publish` publishes the three tarballs to **GitHub Packages** (`@bcbp-solutions-fzc-llc/*`, dist-tag from `publish:check`: `alpha`, `rc` or `latest`), with a build-provenance attestation each. It runs in the `npm` environment and refuses to publish unless publishing is gated (`.github/scripts/check-npm-environment.sh`): required reviewers, or (this private repository on GitHub Team) the environment accepts only release tags and an active tag ruleset limits creating, moving and deleting `v*` tags to admins and named teams. A version already published with the same integrity is skipped; a different one is refused.
 5. It publishes a GitHub Release with the three tarballs, a CycloneDX SBOM, and `checksums.txt` with a Cosign keyless signature bundle. Pre-release tags (`v1.0.0-alpha.N`) are marked as pre-releases.
 
-The first release is `v1.0.0-alpha.1` (2026-11-03); the latest is `v1.0.0-alpha.3` (2026-11-04). `[Unreleased]` (PRs #41–#46) is to ship as `1.0.0-alpha.4`, not yet released. Changesets v3's pre mode moves consumed changesets into `.changeset/pre/`; `changelog-check.yml` recognises that as a release PR.
+The first release is `v1.0.0-alpha.1` (2026-11-03); the latest is `v1.0.0-alpha.4` (2026-11-05; PRs #41–#46). Changesets v3's pre mode moves consumed changesets into `.changeset/pre/`; `changelog-check.yml` recognises that as a release PR.
 
 ### 14.2 Compatibility
 - **During the alpha:** breaking changes bump `N` and are listed in the CHANGELOG. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`. Two pre-release SDK copies share the runtime only at the same version (§6.1).
