@@ -1,6 +1,6 @@
 // The shell bootstrap of design doc §C4 (sequence: §C2), as written there.
 import { initializeCore, setConsentProvider } from '@bcbp-solutions-fzc-llc/frontend-sdk/core';
-import { loadRuntimeConfig, setRuntimeConfig } from '@bcbp-solutions-fzc-llc/frontend-sdk/config';
+import { RuntimeConfigError, loadRuntimeConfig, setRuntimeConfig } from '@bcbp-solutions-fzc-llc/frontend-sdk/config';
 import { initializeTracing } from '@bcbp-solutions-fzc-llc/frontend-sdk/tracing';
 import { initializeLogging, getLogger } from '@bcbp-solutions-fzc-llc/frontend-sdk/logging';
 import { initializeMetrics, startWebVitals } from '@bcbp-solutions-fzc-llc/frontend-sdk/metrics';
@@ -25,11 +25,16 @@ import { createStore, retrySessionContext } from './session-context';
 
 export async function bootstrap(): Promise<void> {
   installTrustedTypesPolicy();
+  // Built once for every environment: runtime.json names the environment, so it is loaded first
+  // (checked against its own environment) and the identity takes the environment from it.
+  const cfg = await loadRuntimeConfig();
+  if (cfg.environment === undefined) {
+    throw new RuntimeConfigError('/config/runtime.json is invalid: environment: required (the shell is built once for every environment)',
+                                 [{ path: 'environment', message: 'required (the shell is built once for every environment)' }]);
+  }
   // app.bcbpsolutions.com fronts tenders, IAM administration and the dashboard: a multi-domain shell (§D1).
   initializeCore({ serviceName: 'web-app', domain: 'portal',
-                   environment: __ENVIRONMENT__, buildVersion: __BUILD_VERSION__ });
-
-  const cfg = await loadRuntimeConfig();
+                   environment: cfg.environment, buildVersion: __BUILD_VERSION__ });
   setRuntimeConfig(cfg);
   setConsentProvider(cmp);
 

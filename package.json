@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "PLATFORM_ENVIRONMENT=${PLATFORM_ENVIRONMENT:-dev} pnpm -r build",
+    "build": "pnpm -r build",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p test/tsconfig.json --noEmit && pnpm -r typecheck",

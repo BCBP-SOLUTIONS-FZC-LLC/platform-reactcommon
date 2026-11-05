@@ -192,6 +192,7 @@ export function sanitizeFields(f: Record<string, unknown>): Record<string, unkno
 ```ts
 export const RuntimeConfigSchema: z.ZodMiniType<RuntimeConfig>; // zod/mini (≈10 KB gz vs ≈90 KB for classic zod); strict: unknown keys rejected
 export interface RuntimeConfig {
+  readonly environment?: Environment /* no default: one build for every environment (§C2 step 2) */;
   readonly api: { readonly baseUrl: string /* must be same-origin path, e.g. '/api' */;
                   readonly timeoutMs: number /* default 35000 */;
                   readonly propagationAllowlist: readonly string[] /* exact origins */ };
@@ -219,8 +220,9 @@ export function setRuntimeConfig(c: RuntimeConfig): void;   // host page only (t
 
 Every exact origin (`auth.idpOrigin`, `api.propagationAllowlist`, `remotes.allowedOrigins`) and the `auth.signInUrl` URL is `https:`. An
 `http:` origin on `localhost`, `127.0.0.1` or `[::1]` is accepted only when the page environment is `local`,
-`dev` or `test` (CI and integration runs against local servers), checked by `loadRuntimeConfig` and `setRuntimeConfig`; so `initializeCore` runs first, and a
-leftover dev origin in a production `runtime.json` fails the load. `telemetry.enabled: false` (for a
+`dev` or `test` (CI and integration runs against local servers), checked by `loadRuntimeConfig` and `setRuntimeConfig` against the page environment: the identity's
+(`initializeCore`), else, for `loadRuntimeConfig` only, the file's own `environment`, so a shell built once for every environment loads the config first. With
+neither the environment is unknown and a local http origin is refused; a leftover dev origin in a production `runtime.json` fails the load. `telemetry.enabled: false` (for a
 Collector incident) makes `initializeTracing`, `initializeLogging` and `initializeMetrics` no-ops, errors
 and essential warnings included (the dev console stays); `setRuntimeConfig` runs before them.
 
@@ -1111,9 +1113,11 @@ export function renderMetricInventory(): string;
 ```
 index.html ─► bootstrap.ts (async import boundary required by MF)
  1. installTrustedTypesPolicy()                                       /security
- 2. initializeCore({serviceName,domain,environment,buildVersion})     build-time constants; throws → static error page
- 3. cfg = await loadRuntimeConfig()                                   GET /config/runtime.json (no-cache) → zod → freeze
-    setRuntimeConfig(cfg)                                             failure → static "unavailable" page + console only
+ 2. cfg = await loadRuntimeConfig()                                   GET /config/runtime.json (no-cache) → zod; checked against its own environment
+                                                                      failure → static "unavailable" page + console only
+ 3. initializeCore({serviceName,domain,environment: cfg.environment,  one build for every environment; throws → static error page
+                   buildVersion})
+    setRuntimeConfig(cfg)                                             → freeze; cfg.environment must equal the identity's
  4. setConsentProvider(cmp)                                           before any telemetry export
  5. initializeTracing / initializeLogging / initializeMetrics         exporters to /otel; never throw outward
     installGlobalErrorHandlers(); startWebVitals()
@@ -1284,7 +1288,7 @@ written exception, and the only exception ever granted is `'unsafe-inline'` on `
 
 ```tsx
 import { initializeCore, setConsentProvider } from '@bcbp-solutions-fzc-llc/frontend-sdk/core';
-import { loadRuntimeConfig, setRuntimeConfig } from '@bcbp-solutions-fzc-llc/frontend-sdk/config';
+import { RuntimeConfigError, loadRuntimeConfig, setRuntimeConfig } from '@bcbp-solutions-fzc-llc/frontend-sdk/config';
 import { initializeTracing } from '@bcbp-solutions-fzc-llc/frontend-sdk/tracing';
 import { initializeLogging, getLogger } from '@bcbp-solutions-fzc-llc/frontend-sdk/logging';
 import { initializeMetrics, startWebVitals } from '@bcbp-solutions-fzc-llc/frontend-sdk/metrics';
@@ -1307,11 +1311,12 @@ import { App } from './App';
 
 export async function bootstrap(): Promise<void> {
   installTrustedTypesPolicy();
+  // Built once for every environment: runtime.json names the environment, so it is loaded first.
+  const cfg = await loadRuntimeConfig();
+  if (cfg.environment === undefined) throw new RuntimeConfigError('/config/runtime.json is invalid: environment: required');
   // app.bcbpsolutions.com fronts tenders, IAM administration and the dashboard: a multi-domain shell (§D1).
   initializeCore({ serviceName: 'web-app', domain: 'portal',
-                   environment: __ENVIRONMENT__, buildVersion: __BUILD_VERSION__ });
-
-  const cfg = await loadRuntimeConfig();
+                   environment: cfg.environment, buildVersion: __BUILD_VERSION__ });
   setRuntimeConfig(cfg);
   setConsentProvider(cmp);
 

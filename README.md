@@ -220,8 +220,8 @@ The shell runs the bootstrap once, in this order (design doc §C2; [`examples/sh
 
 ```ts
 installTrustedTypesPolicy();
-initializeCore({ serviceName: 'web-app', domain: 'portal', environment: __ENVIRONMENT__, buildVersion: __BUILD_VERSION__ });
-const cfg = await loadRuntimeConfig();
+const cfg = await loadRuntimeConfig();   // first: runtime.json names the environment, so one build serves every environment
+initializeCore({ serviceName: 'web-app', domain: 'portal', environment: cfg.environment!, buildVersion: __BUILD_VERSION__ }); // the reference shell checks it is set first (bootstrap.tsx)
 setRuntimeConfig(cfg);
 setConsentProvider(cmp);
 initializeTracing({ otlpBaseUrl: cfg.telemetry.otlpBaseUrl, sampleRatio: cfg.telemetry.sampleRatio, propagationAllowlist: cfg.api.propagationAllowlist });
@@ -431,7 +431,7 @@ pnpm exec vitest run -t "single-flight"
 
 ### Building the examples
 
-`pnpm build` builds the packages and then `examples/shell` and `examples/remote-tenders` (webpack production builds into their `dist/`). The shell's environment comes from `PLATFORM_ENVIRONMENT` (`pnpm build` passes `dev` when it is unset); building the shell on its own in production mode (`node build.mjs` in `examples/shell`) without it fails, so a deploy never ships a `dev` shell by accident. `pnpm examples:check` then verifies the bundles:
+`pnpm build` builds the packages and then `examples/shell` and `examples/remote-tenders` (webpack production builds into their `dist/`). The shell is built once for every environment: its environment comes from `runtime.json` at runtime, and a `runtime.json` without `environment` stops it at the "unavailable" page. `examples/shell/public/config/runtime.json` is a base with no `environment` on purpose: each environment's file sets its own, so a copied base fails closed instead of running as another environment. `pnpm examples:check` then verifies the bundles:
 - the remote defines its container as `window.__platform_mfe_tenders` and contains no SDK code;
 - nothing needs `eval`;
 - source maps are emitted but hidden;
@@ -534,6 +534,7 @@ The SDK reads no environment variables in the browser. Its configuration is one 
 
 | Key | Default | Purpose |
 |---|---|---|
+| `environment` | none | `local` · `dev` · `test` · `staging` · `prod`. Lets one shell build serve every environment: load the config first and pass it to `initializeCore`; when the identity is already set, they must match |
 | `api.baseUrl` | — (**required**) | Same-origin API path (`/api`) |
 | `api.timeoutMs` | `35000` | Client deadline per call (above gincommon's 30 s server timeout) |
 | `api.propagationAllowlist` | `[]` | Exact origins, besides the page's, that get correlation and trace headers |
@@ -548,7 +549,7 @@ The SDK reads no environment variables in the browser. Its configuration is one 
 | `i18n.defaultLocale` · `supportedLocales` | — (**required**) | Canonical BCP 47 tags |
 | `appUpdate.pollIntervalMs` | — (**required**) | `/version.json` polling (≥ 10 s) |
 
-Build-time constants (shell): `__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`), passed to `initializeCore`. Fail a production build that has no environment rather than defaulting it (the example shell's `environment.mjs`).
+Build-time constant (shell): `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`), passed to `initializeCore`. The environment is not a build-time constant: it comes from `runtime.json` (`environment`), so one build is promoted through every environment.
 
 ---
 

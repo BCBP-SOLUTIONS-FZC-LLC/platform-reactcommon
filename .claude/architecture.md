@@ -25,7 +25,7 @@ platform-reactcommon/
 │   └── eslint-plugin/                src/rules.ts; src/generated/{sdk,forbidden-headers}.ts generated; README.md
 ├── examples/
 │   ├── shell/                        reference shell: bootstrap.tsx (the design doc's order), session-context.ts (P-35 retry),
-│   │                                 ShellRoot.tsx, environment.mjs, IAM ports, session screens
+│   │                                 ShellRoot.tsx, IAM ports, session screens (one build: the environment is in runtime.json)
 │   ├── remote-tenders/               reference remote (exposes ./EditTender)
 │   ├── cloudfront/                   behaviors, response-headers policy (csp.mjs), SPA rewrite (static extensions only), /csp-report Lambda
 │   └── collector/                    reference OTel Collector: gateway.yaml + aggregator.yaml, README (Mimir series limits) (+ test/: allowlists = registry)
@@ -84,4 +84,4 @@ One `PlatformRuntime` per page on `globalThis[Symbol.for('@bcbp-solutions-fzc-ll
 
 ## Examples
 
-`examples/shell` is the reference integration: bootstrap order (Trusted Types → core → runtime config → consent → tracing, logging, metrics → error handlers → flags → auth → session context → i18n → manifest → render), the IAM ports (PUB-1 workspace resolve, P-35 session context, retried in the background after a transient failure), `ShellRoot` (the provider with the live locale and context), `environment.mjs` (a production build needs `PLATFORM_ENVIRONMENT`), and the session screens (signed out, device clock, session ended, wrong workspace). `examples:check` asserts CSP and sharing on its build.
+`examples/shell` is the reference integration: bootstrap order (Trusted Types → runtime config → core with its environment → consent → tracing, logging, metrics → error handlers → flags → auth → session context → i18n → manifest → render), the IAM ports (PUB-1 workspace resolve, P-35 session context, retried in the background after a transient failure), `ShellRoot` (the provider with the live locale and context), one build for every environment (the environment comes from `runtime.json`; one without it stops at the "unavailable" page), and the session screens (signed out, device clock, session ended, wrong workspace). `examples:check` asserts CSP and sharing on its build.

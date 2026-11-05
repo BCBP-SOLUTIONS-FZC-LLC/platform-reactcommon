@@ -2,6 +2,7 @@
 // validated strictly (unknown keys rejected at every level) so a typo fails the bootstrap instead
 // of being silently ignored. Defaults exist only where the design doc names one.
 import * as z from 'zod/mini';
+import { ENVIRONMENTS, type Environment } from '../core/index.ts';
 
 // zod/mini: the same validation core as zod, tree-shakable, without the method-chaining API and
 // its default English messages (~90 KB gz → see the PR measuring it). Zod's fast path probes `new Function('')` on first parse. Under the CSP's script-src 'self' (design
@@ -11,6 +12,12 @@ z.config({ jitless: true });
 
 /** The page's runtime configuration, loaded once by the shell. */
 export interface RuntimeConfig {
+  /**
+   * The deployment environment this file belongs to (registry vocabulary); no default. With it, one
+   * build serves every environment: the host page loads the config first and passes this to
+   * initializeCore. When the page identity is already set, the two must be equal.
+   */
+  readonly environment?: Environment | undefined;
   readonly api: {
     /** Same-origin path the API is served under, e.g. '/api'. */
     readonly baseUrl: string;
@@ -175,6 +182,7 @@ const canonicalLocale = z.string().check(
 );
 
 const schema = z.strictObject({
+  environment: z.optional(z.enum(ENVIRONMENTS as unknown as [Environment, ...Environment[]])),
   api: z.strictObject({
     baseUrl: sameOriginPath,
     timeoutMs: z._default(intMs(1_000, 300_000), 35_000),

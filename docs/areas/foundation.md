@@ -15,8 +15,9 @@ What every other area stands on: who the page is, what the user consented to, ho
 The shell, once:
 
 ```ts
-initializeCore({ serviceName: 'web-app', domain: 'portal', environment: __ENVIRONMENT__, buildVersion: __BUILD_VERSION__ });
-setRuntimeConfig(await loadRuntimeConfig());
+const cfg = await loadRuntimeConfig();   // runtime.json names the environment: one build for every environment
+initializeCore({ serviceName: 'web-app', domain: 'portal', environment: cfg.environment!, buildVersion: __BUILD_VERSION__ }); // the reference shell checks it is set first (bootstrap.tsx)
+setRuntimeConfig(cfg);
 setConsentProvider(cmp);
 ```
 

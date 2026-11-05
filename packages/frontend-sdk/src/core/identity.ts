@@ -108,7 +108,8 @@ function validate(input: CoreIdentityInput): CoreIdentity {
 
 /**
  * Host page only (the shell, or a remote's own standalone page when no shell is present): sets the page identity. Idempotent for an equal identity (after normalisation);
- * a different one throws IdentityMismatchError, because a page emits one identity.
+ * a different one throws IdentityMismatchError, because a page emits one identity. When the runtime
+ * config is already set and names an environment, a different environment throws.
  */
 export function initializeCore(input: CoreIdentityInput): CoreIdentity {
   const attempted = validate(input);
@@ -118,6 +119,14 @@ export function initializeCore(input: CoreIdentityInput): CoreIdentity {
     const same = (Object.keys(attempted) as (keyof CoreIdentity)[]).every((k) => existing[k] === attempted[k]);
     if (!same) throw new IdentityMismatchError(existing, attempted);
     return existing;
+  }
+  // A config set first (setRuntimeConfig before initializeCore) names its environment; the page
+  // must not run as another one. /core reads the runtime slot only: it does not import /config.
+  const configEnv = (rt.config as { environment?: string } | undefined)?.environment;
+  if (configEnv !== undefined && configEnv !== attempted.environment) {
+    throw new Error(
+      `@bcbp-solutions-fzc-llc/frontend-sdk: initializeCore environment ${JSON.stringify(attempted.environment)} differs from the runtime config's ${JSON.stringify(configEnv)}`,
+    );
   }
   rt.identity = attempted;
   return attempted;
