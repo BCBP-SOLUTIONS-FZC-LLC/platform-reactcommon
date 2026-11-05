@@ -55,7 +55,7 @@ export function sessionContextFlagProvider(ctx: { featureFlags: readonly string[
 /** Shell only: the provider every getFlag call uses (e.g. sessionContextFlagProvider once the context loads). */
 export function setFlagProvider(p: FlagProvider): void {
   // /react re-renders flag readers on the runtime 'flags' topic: the provider changed, or its values did.
-  swapFlagProvider(p ?? undefined);
+  swapFlagProvider(p);
 }
 
 function provider(): FlagProvider {

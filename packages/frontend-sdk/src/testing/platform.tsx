@@ -123,7 +123,7 @@ export function createTestPlatform(o?: Partial<TestPlatformOptions>): {
   resetUnloadForTests();
   void shutdownLogging();
   void shutdownTracing();
-  void shutdownMetrics(); // a test that initialised metrics: its interval would keep exporting
+  void shutdownMetrics({ discardLastInterval: true }); // a test that initialised metrics: no more exports, not even its last interval
   (previous.identityProvider as IdentityProvider | undefined)?.dispose?.();
   // The OTel globals refuse a second registration until disabled.
   trace.disable();

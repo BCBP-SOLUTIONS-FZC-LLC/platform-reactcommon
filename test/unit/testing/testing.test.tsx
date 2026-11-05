@@ -9,6 +9,7 @@ import { getRuntime } from '../../../packages/frontend-sdk/src/internal/runtime.
 import { getLogger } from '../../../packages/frontend-sdk/src/logging/index.ts';
 import { shutdownLogging } from '../../../packages/frontend-sdk/src/logging/logging.ts';
 import { getServiceMeter } from '../../../packages/frontend-sdk/src/metrics/index.ts';
+import { initializeMetrics, metricsState, setMetricsInternalsForTests } from '../../../packages/frontend-sdk/src/metrics/metrics.ts';
 import { PlatformProblemTypes, isProblemError, parseProblemResponse } from '../../../packages/frontend-sdk/src/problem/index.ts';
 import { useBeforeAuthRedirect, useCurrentUser, useSessionContext, useSignOut, useStepUp, useSwitchWorkspace, useWorkspace } from '../../../packages/frontend-sdk/src/react/index.ts';
 import { storage } from '../../../packages/frontend-sdk/src/storage/index.ts';
@@ -297,5 +298,33 @@ describe('createTestPlatform, review 3', () => {
     const pagehide = added.mock.calls.filter(([type]) => type === 'pagehide').map(([, l]) => l);
     createTestPlatform();
     for (const l of pagehide) expect(removed).toHaveBeenCalledWith('pagehide', l);
+  });
+
+  it('a new platform stops the previous one\'s metrics: its reader no longer exports (review 4)', () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
+    createTestPlatform();
+    initializeMetrics({ otlpBaseUrl: '/otel' });
+    const previous = metricsState();
+    expect(previous.provider).toBeDefined();
+    getServiceMeter().counter('tender_management_test_app_saves_total', 'Saves.', []).add(1); // an interval to send
+    createTestPlatform();
+    expect(previous.provider).toBeUndefined();
+  });
+
+  it('the previous platform\'s last metrics interval is discarded, never exported into the next test (review 4)', async () => {
+    const exported: unknown[] = [];
+    setMetricsInternalsForTests({
+      exporter: () => ({ export: (m, cb) => (exported.push(m), cb({ code: 0 })), forceFlush: async () => {}, shutdown: async () => {} }),
+    });
+    try {
+      createTestPlatform();
+      initializeMetrics({ otlpBaseUrl: '/otel' });
+      getServiceMeter().counter('tender_management_test_app_saves_total', 'Saves.', []).add(1); // an interval to send
+      createTestPlatform(); // the next test starts: consent granted again on the new page
+      await new Promise((r) => setTimeout(r, 100)); // the old provider's shutdown settles
+      expect(exported).toEqual([]);
+    } finally {
+      setMetricsInternalsForTests({ exporter: undefined }); // the production exporter again
+    }
   });
 });
