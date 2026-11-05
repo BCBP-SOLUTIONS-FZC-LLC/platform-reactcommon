@@ -229,7 +229,7 @@ Branch off the latest `main` and target `main` (squash merges). Don't stack PRs 
 - [ ] New behaviour is covered by tests under `test/` (mirroring `src/`); coverage stays ≥ 98%
 - [ ] New public symbols have TSDoc comments, and `api/*.api.md` is updated (`pnpm api`)
 - [ ] A changeset (`pnpm changeset`) for a change to a published package
-- [ ] `CHANGELOG.md` `[Unreleased]` section updated (the *Changelog check* workflow requires both)
+- [ ] `CHANGELOG.md` `[Unreleased]` section updated (the *Changelog check* workflow requires both): under a dated topic heading (`### Added (YYYY-MM-DD — topic)`), naming the subpath, files and tests, with *Previously:* for a changed behaviour; update *Known gaps* when you open or close one
 - [ ] The documentation update checklist above reviewed
 - [ ] For a change to the SDK, the preset or the examples: the `invariant-reviewer` subagent run on the diff; for a change to the public surface or a default: `api-change-reviewer`
 - [ ] For a change to auth, unload, CSP or remote loading: `pnpm run test-browser` passes; for one that touches the gateway or deployment path: the integrated stack
