@@ -22,7 +22,7 @@ export interface RuntimeConfig {
   readonly telemetry: {
     /**
      * Off switch for the page's telemetry; default true. When false, tracing, logging and metrics
-     * send nothing to the collector (their initialize calls are no-ops; dev console logging stays).
+     * send nothing to the collector (their initialize calls are no-ops; loggers keep the console: every level in local/dev, warn and error elsewhere).
      */
     readonly enabled: boolean;
     /** Same-origin path of the OTLP/HTTP collector; default '/otel'. */

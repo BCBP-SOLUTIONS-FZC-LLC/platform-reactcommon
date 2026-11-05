@@ -276,7 +276,7 @@ export interface Logger {
   child(scope: Partial<MfeScope> & Record<string, string>): Logger;
 }
 export function initializeLogging(o: { otlpBaseUrl: string; level?: LogLevel; batchSize?: number; flushMs?: number }): void;
-export function getLogger(scope?: Partial<MfeScope>): Logger;  // no-op (console in dev) before init
+export function getLogger(scope?: Partial<MfeScope>): Logger;  // before init: console (every level in dev; warn/error elsewhere)
 export function setRouteTemplate(template: string): void;     // called by /react router glue; also adds it to PlatformRuntime.routeTemplates (/metrics)
 export function serializeError(e: unknown): { name: string; message: string; stack?: string }; // sanitized
 ```
@@ -997,7 +997,7 @@ export function setLocale(locale: string): Promise<void>;  // sets <html lang di
 export function registerNamespace(mfe: string, loader: (locale: string) => Promise<Record<string, string>>): void;
 export function t(ns: string, key: string, vars?: Record<string, string | number>): string;
 export function formatMoney(v: number, currency?: string /* 'AED' */): string;
-export function formatDate(d: Date | number, o?: Intl.DateTimeFormatOptions): string;
+export function formatDate(d: Date | number | string, o?: Intl.DateTimeFormatOptions): string; // string: 'YYYY-MM-DD' (that day in every zone) or RFC 3339 with Z/offset; else ''
 export function formatNumber(n: number, o?: Intl.NumberFormatOptions): string;
 export function problemMessage(p: ProblemError): string;   // key `problem.<typeId>` → fallback p.title
 ```

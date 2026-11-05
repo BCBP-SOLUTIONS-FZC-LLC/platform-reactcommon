@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `/i18n`: `formatDate` accepts a string. A calendar date `YYYY-MM-DD` (a due date, a birthday) is formatted as that day in every time zone; `new Date('2026-10-25')` is midnight UTC, which showed Oct 24 west of UTC. An RFC 3339 date-time with `Z` or an offset is an instant (fractions past milliseconds, as Go's RFC3339Nano sends, are cut). Any other string, a date-time without an offset, or a day that does not exist gives `''`. From mfe-dashboard's SDK audit.
+
+### Changed
+
+- `/logging`: while logging is not running (before `initializeLogging`, with `telemetry.enabled: false`, or on a remote's standalone page, which has no collector), `warn` and `error` now go to the console in every environment, redacted; before, they were dropped outside local and dev. `debug` and `info` still go to the console only in local and dev, and once logging runs nothing changes. From mfe-dashboard's SDK audit: a standalone page's warning that `runtime.json` is unavailable was lost in test, staging and prod.
+
 ## [1.0.0-alpha.5] - 2026-11-05
 
 ### Added

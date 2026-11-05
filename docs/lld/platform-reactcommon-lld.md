@@ -20,6 +20,7 @@
 | 1.2 | 2026-11-03 | `@bcbp-solutions-fzc-llc/webpack-preset` supports Rspack 2 (`/rspack`) and Rsbuild 2 (`/rsbuild`) besides webpack 5, interoperable over the v1 Module Federation protocol (§13.1), released in `1.0.0-alpha.2` |
 | 1.3 | 2026-11-05 | Aligned with `[Unreleased]` (`1.0.0-alpha.4`, PRs #41–#46): container global `__platform_mfe_<name>` and `SdkVersionPlugin` (§13.1), prefixed `/storage` keys (§4.4), refresh backoff on 429 / 503 + `Retry-After` (§8.5), sign-out by form POST and dropping the user's page state (§8.7), whole-attempt remote timeout and fetch timeouts (§5.4.3, §8.9), synthetic 502s and byte bodies (§5.4.1), boundary `resetKeys` (§5.4.4), the global error rate limit (§11.1), Tier 3 label limit and the Collector's label bounds (§7.3, §7.6), CSS SRI (§13.1), runtime sharing per pre-release (§6.1), open items (§15) |
 | 1.4 | 2026-11-05 | `[Unreleased]`: optional `auth.signInUrl` in `runtime.json`; a remote's standalone page is its own host page and may load and set the runtime config (§12.1) |
+| 1.5 | 2026-11-05 | `[Unreleased]`: `formatDate` takes calendar dates and RFC 3339 strings (§8.10); `warn` and `error` reach the console in every environment while logging is not running (§7.2) |
 
 ### Table of Contents
 
@@ -415,13 +416,15 @@ Every record carries the envelope `trace_id`, `span_id` (active span), `request_
 - stacks are cut to 4 KiB;
 - a record's attributes are capped at about 8 KiB (`[TRUNCATED]` past it), so one record always fits the unload budget.
 
+**Console.** Local and dev (or no identity): every level, before and after `initializeLogging`. Elsewhere, while logging is not running (before `initializeLogging`, with `telemetry.enabled: false`, or on a remote's standalone page, which has no collector): `warn` and `error` only, redacted like an exported record; `debug` and `info` are dropped. Once logging runs, nothing goes to the console outside local and dev.
+
 | Level | Leaves the page when |
 |---|---|
 | `error` | always |
 | `warn` | `essential: true`, or `telemetry` consent |
 | `info`, `debug` | `telemetry` consent (and `level` allows) |
 
-The export uses batch 50, flush 5 s, queue 1 000 (drop oldest), and at most 2 sends in flight. On page hide and `pagehide`, the newest queued records that fit what is left of the page budget go in one `navigator.sendBeacon`, first among the signals after the metrics share (§7.5); a record too big for it alone is skipped. The rest, and anything the browser refuses, go back to the queue for fetch (a task later when hidden); their estimated size counts against the budget, since the exporter sends them with `keepalive` while the browser allows. Records that needed `telemetry` consent are dropped from the queue, before any send, once it is withdrawn. Before `initializeLogging`, loggers write to the console in `local`/`dev` (and when there's no identity) and are no-ops otherwise.
+The export uses batch 50, flush 5 s, queue 1 000 (drop oldest), and at most 2 sends in flight. On page hide and `pagehide`, the newest queued records that fit what is left of the page budget go in one `navigator.sendBeacon`, first among the signals after the metrics share (§7.5); a record too big for it alone is skipped. The rest, and anything the browser refuses, go back to the queue for fetch (a task later when hidden); their estimated size counts against the budget, since the exporter sends them with `keepalive` while the browser allows. Records that needed `telemetry` consent are dropped from the queue, before any send, once it is withdrawn. Before `initializeLogging` (or with telemetry off), loggers write to the console as **Console.** above describes.
 
 ### 7.3 Metrics (`/metrics`)
 
@@ -546,6 +549,7 @@ See §5.4.3 and ARCHITECTURE.md § Remote loading.
 - **Setup:** `initializeI18n({ defaultLocale, supported, detect? })` negotiates the locale: the exact tag, then the same language, then the default. It sets `<html lang dir>`.
 - **Catalogs:** `registerNamespace(ns, loader)` registers a loader and loads that namespace for the current locale. `initializeI18n` and `setLocale` load every registered namespace for the chosen locale. Concurrent loads of one namespace and locale share one promise, and `subscribeI18n` listeners (`/react`'s `useT`) are notified when they finish. `t(ns, key, vars)` never loads: it looks the key up in the current locale, then the default one, and returns the key itself while no catalog has it. A loader that does not answer within 10 s counts as failed; a failed catalog is retried 2 s, 4 s and 8 s later while its locale is shown.
 - **Formatting:** messages use ICU-lite (`{name}`, `{n, plural, …}`, `{x, select, …}`). An invalid message is shown as is, with a dev warning.
+- **Dates:** `formatDate` takes an instant (a `Date`, epoch milliseconds, or an RFC 3339 date-time string with `Z` or an offset; fractions past milliseconds are cut) or a calendar date `YYYY-MM-DD` (a due date): that day in every time zone, the formatter's `timeZone` forced to UTC. A date-time without an offset, any other string, or a day that does not exist (`2026-02-30`) gives `''`.
 - **Lookup:** own properties only, so `constructor` and other prototype keys never resolve.
 - **Direction:** `dir` is `rtl` for Arabic, Hebrew, Persian, Urdu and the other right-to-left languages.
 
