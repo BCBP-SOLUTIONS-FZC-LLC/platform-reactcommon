@@ -29,13 +29,23 @@ function deepFreeze<T>(value: T): T {
 }
 
 /**
- * http origins on a local host (a dev setup) are accepted only when the page identity's
- * environment is local, dev or test (CI and integration runs against local servers); anywhere else (or before initializeCore) a leftover dev entry
- * would weaken a deployed config, so it is an issue.
+ * http origins on a local host (a dev setup) are accepted only when the page's environment is
+ * local, dev or test (CI and integration runs against local servers); anywhere else a leftover dev
+ * entry would weaken a deployed config, so it is an issue. The page's environment is the identity's
+ * (initializeCore), else, for loadRuntimeConfig only, the file's own `environment`; with neither, it
+ * is unknown and refused.
+ * A config whose `environment` differs from the identity's is an issue.
  */
 
-function environmentIssues(c: RuntimeConfig): { path: string; message: string }[] {
-  const env = getIdentity()?.environment;
+function environmentIssues(c: RuntimeConfig, trustOwnEnvironment: boolean): { path: string; message: string }[] {
+  const pageEnv = getIdentity()?.environment;
+  if (pageEnv !== undefined && c.environment !== undefined && c.environment !== pageEnv) {
+    return [{ path: 'environment', message: `must equal the page identity's environment ${JSON.stringify(pageEnv)}, got ${JSON.stringify(c.environment)}` }];
+  }
+  // Before initializeCore, loadRuntimeConfig (which stores nothing) uses the file's own environment: a
+  // host page built once loads the config first. setRuntimeConfig does not: it stores the config, and
+  // a config set before the identity must not vouch for itself.
+  const env = pageEnv ?? (trustOwnEnvironment ? c.environment : undefined);
   if (isLocalEnvironment(env)) return [];
   const origins: [string, string][] = [
     ['auth.idpOrigin', c.auth.idpOrigin],
@@ -47,7 +57,7 @@ function environmentIssues(c: RuntimeConfig): { path: string; message: string }[
     .filter(([, o]) => isLocalHttpOrigin(o))
     .map(([path, o]) => ({
       path,
-      message: `http origins are allowed only in the local, dev and test environments (page environment: ${env ?? 'unknown, initializeCore not called'}), got ${JSON.stringify(o)}`,
+      message: `http origins are allowed only in the local, dev and test environments (page environment: ${env ?? 'unknown: initializeCore not called and no environment in the config'}), got ${JSON.stringify(o)}`,
     }));
 }
 
@@ -95,10 +105,10 @@ export function describeIssue(i: Issue): string {
 }
 
 /** Validates `raw` against the schema and the page's environment; issues name every offending key path. */
-function parseConfig(raw: unknown, source: string): RuntimeConfig {
+function parseConfig(raw: unknown, source: string, trustOwnEnvironment = false): RuntimeConfig {
   const result = RuntimeConfigSchema.safeParse(raw);
   const issues = result.success
-    ? environmentIssues(result.data)
+    ? environmentIssues(result.data, trustOwnEnvironment)
     : result.error.issues.map((i) => ({ path: i.path.map(String).join('.'), message: describeIssue(i as Issue) }));
   if (result.success && issues.length === 0) return result.data;
   throw new RuntimeConfigError(
@@ -114,7 +124,9 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  * Host page only (the shell, or a remote's own standalone page when no shell is present): fetches and validates the runtime config (no HTTP cache: `cache: 'no-cache'`
  * revalidates with the ETag), within `timeoutMs` (default 10 s). Any failure (network, timeout, HTTP status, JSON, schema) is a
  * RuntimeConfigError; the shell shows its static "unavailable" page. As for setRuntimeConfig, an
- * http origin on a local host is an error unless initializeCore set the local, dev or test environment.
+ * http origin on a local host is an error unless the page's environment (initializeCore's, else the
+ * file's `environment`) is local, dev or test. A host page built once for every environment calls it
+ * before initializeCore and passes the file's `environment` to it.
  * A `timeoutMs` outside 1 to 2147483647 is a programming error: a RangeError, before any request.
  */
 export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<RuntimeConfig> {
@@ -158,7 +170,7 @@ export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSig
       if (opts?.signal?.aborted) throw cause;
       throw new RuntimeConfigError(timedOut ? timeoutMessage : `${url} is not valid JSON`, [], { cause });
     }
-    return parseConfig(raw, url);
+    return parseConfig(raw, url, true);
   } finally {
     clearTimeout(timer);
     opts?.signal?.removeEventListener('abort', onAbort);
@@ -167,9 +179,10 @@ export async function loadRuntimeConfig(opts?: { url?: string; signal?: AbortSig
 
 /**
  * Host page only (the shell, or a remote's own standalone page when no shell is present): makes
- * `c` the page's config, validated and deep-frozen. Call initializeCore first:
- * http origins on a local host are accepted only when the page environment is local, dev or test. Set once: setting an equal
- * config again is a no-op, a different one throws.
+ * `c` the page's config, validated and deep-frozen. Call initializeCore first: the config's
+ * `environment`, when set, must equal the identity's, and http origins on a local host are accepted
+ * only when the page environment is local, dev or test. Set once: setting an equal config again is
+ * a no-op, a different one throws.
  */
 export function setRuntimeConfig(c: RuntimeConfig): void {
   const parsed = deepFreeze(parseConfig(c, 'runtime config'));

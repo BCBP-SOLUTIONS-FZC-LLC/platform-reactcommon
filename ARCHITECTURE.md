@@ -248,11 +248,11 @@ The shell runs the bootstrap once (a remote's code inside a shell never does) (d
 flowchart TD
     html["index.html (external scripts only)"] --> idx["index.ts: import('./bootstrap')<br/>(the async boundary Module Federation needs)"]
     idx --> tt["1. installTrustedTypesPolicy()  —  /security"]
-    tt --> core["2. initializeCore({ serviceName, domain: 'portal', environment, buildVersion })<br/>build-time constants, validated against the registry vocabulary"]
-    core -->|throws| fatal["static 'unavailable' page, console only"]
-    core --> cfg["3. loadRuntimeConfig() → GET /config/runtime.json (no-cache, 10 s timeout) → zod (strict) → freeze<br/>setRuntimeConfig(cfg)"]
-    cfg -->|fails| fatal
-    cfg --> consent["4. setConsentProvider(cmp)  —  before any export"]
+    tt --> cfg["2. cfg = loadRuntimeConfig() → GET /config/runtime.json (no-cache, 10 s timeout) → zod (strict)<br/>checked against its own environment (one build for every environment)"]
+    cfg -->|fails| fatal["static 'unavailable' page, console only"]
+    cfg --> core["3. initializeCore({ serviceName, domain: 'portal', environment: cfg.environment, buildVersion })<br/>validated against the registry vocabulary · setRuntimeConfig(cfg) → freeze"]
+    core -->|throws| fatal
+    core --> consent["4. setConsentProvider(cmp)  —  before any export"]
     consent --> tel["5. initializeTracing · initializeLogging · initializeMetrics → /otel<br/>installGlobalErrorHandlers() · startWebVitals()  (never fatal)"]
     tel --> flags["6. setFlagProvider(runtimeConfigFlagProvider())"]
     flags --> auth["7. idp = createOidcProvider(cfg.auth, workspaceResolver)<br/>setTokenSource(initializeAuth(idp)) · state = await idp.init()"]
@@ -329,6 +329,51 @@ sequenceDiagram
 | `x-request-id`, `x-session-id`, `traceparent` / `tracestate` | the page's origin and the exact origins in `api.propagationAllowlist` / tracing's allowlist |
 | `Idempotency-Key` | every `POST` (an automatic UUID unless given) |
 | `x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode` | **never**: dropped with a warn log, and a `TypeError` in local/dev |
+
+---
+
+## Workspace resolution before sign-in (PUB-1)
+
+Every paid tenant has its own Keycloak realm (`tenant-<slug>`), and trial tenants share one (`trial`). The authorize URL names the realm, so the SDK must know the workspace **before** the redirect. `chooseWorkspace` decides it from the URL, the workspace cache and PUB-1. PUB-1 is called through the shell's `WorkspaceResolver` port over an `ApiClient`, without a token. A resolved realm is accepted only if it fits the slug, so a wrong or hostile answer can't send the user to another tenant's login page.
+
+> Source: [`docs/architecture/mermaid/workspace-resolution.mmd`](docs/architecture/mermaid/workspace-resolution.mmd)
+
+```mermaid
+flowchart TD
+    start(["Sign in needed: anonymous, no session to restore"]) --> lr{"session.reason = login-required<br/>(a silent restore named its workspace)?"}
+    lr -- yes --> use["Use that workspace"]
+    lr -- no --> force{"forceResolve?<br/>(the server ended the session)"}
+    force -- yes --> pub1
+    force -- no --> slug{"URL /t/&lt;slug&gt;/…<br/>(auth.workspacePathPrefix)?"}
+    slug -- no --> recent{"Workspace cache<br/>(localStorage, ≤ 20 entries, newest first)"}
+    recent -- "an entry" --> use
+    recent -- empty --> ask
+    slug -- yes --> cached{"Cached entry for this slug?"}
+    cached -- yes --> use
+    cached -- no --> pub1["PUB-1 resolve(slug)<br/>shell port WorkspaceResolver over ApiClient<br/>GET /api/v1/public/tenants/resolve, no token"]
+    pub1 -- "found" --> fits{"realm fits the slug?<br/>paid: paidRealmPrefix + slug · trial: trialRealm"}
+    fits -- yes --> cache["Cache { slug, realm, trial }"] --> use
+    fits -- no --> ask
+    pub1 -- "not found" --> ask["undefined → the shell's identifier-first screen<br/>(a different cached workspace is never used)"]
+    pub1 -- "unreachable / 429" --> fallback{"Cached entry for this slug?"}
+    fallback -- yes --> use
+    fallback -- no --> ask
+    ask -- "user types an identifier" --> pub1
+    use --> login["idp.login({ workspace, returnUrl })<br/>→ Keycloak /realms/&lt;realm&gt;/…/auth (PKCE S256)"]
+    login --> after["After sign-in: rememberWorkspace({ ...workspace, slug })<br/>trial slug from P-35 · an invitation's trial result has no slug and is not cached"]
+```
+
+| Situation | Workspace used |
+|---|---|
+| A silent restore failed with `login_required` | The workspace it tried |
+| The server ended the session (`forceResolve`) | PUB-1 again, skipping the cache |
+| `/t/<slug>/…`, cached | The cached entry |
+| `/t/<slug>/…`, not cached | PUB-1; cached when the realm fits |
+| PUB-1 unreachable or rate-limited | The cached entry for that slug, else the identifier-first screen |
+| PUB-1 says "not found" | The identifier-first screen; never another cached workspace |
+| No slug in the URL | The most recent cached workspace, else the identifier-first screen |
+
+After sign-in the shell calls `rememberWorkspace`, with the trial slug taken from P-35. A trial workspace reached from an invitation email has no slug and is never cached. LLD §8.2.
 
 ---
 
@@ -500,9 +545,231 @@ flowchart TD
 
 ---
 
+## Integration touchpoints
+
+Everything the SDK calls outside the page, and what happens when it fails. All of it is same-origin through CloudFront except Keycloak. Only a missing `runtime.json` stops the page; every other failure degrades a part of it.
+
+> Source: [`docs/architecture/mermaid/integration-touchpoints.mmd`](docs/architecture/mermaid/integration-touchpoints.mmd)
+
+```mermaid
+flowchart LR
+    subgraph page["Browser page (shell + remotes, one SDK runtime)"]
+        cfg["/config"]
+        auth["/auth"]
+        http["/http ApiClient"]
+        mfe["/mfe"]
+        tel["/tracing · /logging · /metrics"]
+        ports["Shell ports:<br/>WorkspaceResolver · SessionContextSource"]
+    end
+
+    subgraph cf["Same origin: CloudFront"]
+        rj["/config/runtime.json<br/>no-cache · 10 s"]
+        man["/remotes/manifest.json<br/>no-cache · remotes.loadTimeoutMs"]
+        re["/remotes/&lt;name&gt;/&lt;version&gt;/…<br/>immutable · SRI"]
+        ver["/version.json<br/>no-cache · appUpdate.pollIntervalMs"]
+        api["/api/* → Envoy → IAM AuthZ Enrichment → services"]
+        otel["/otel/v1/{traces,logs,metrics}<br/>→ OTel Collector gateway"]
+    end
+
+    kc["Keycloak (auth.idpOrigin)<br/>/realms/&lt;realm&gt;/protocol/openid-connect/…"]
+
+    cfg -->|"fatal on failure"| rj
+    mfe -->|"slots show fallbacks"| man
+    mfe -->|"that remote's boundary"| re
+    mfe -->|"ignored; next poll"| ver
+    ports -->|"PUB-1 (no token) · P-35"| http
+    http -->|"token, request id, traceparent"| api
+    tel -->|"dropped and counted"| otel
+    auth -->|"auth: top-level redirect"| kc
+    auth -->|"token: fetch, 15 s"| kc
+    auth -->|"logout: form POST"| kc
+```
+
+| Call | Made by | When | Bound | On failure |
+|---|---|---|---|---|
+| `GET /config/runtime.json` | `loadRuntimeConfig` | Bootstrap step 2 | 10 s | Fatal: the static "unavailable" page |
+| Keycloak `…/auth` | `login`, silent restore (`prompt=none`), step-up, switch | Top-level redirect | — | `?error=` on the callback → `anonymous` |
+| Keycloak `…/token` | Code exchange, refresh | `fetch` | 15 s | Exchange: `anonymous`. Refresh: 429 or 503 with `Retry-After` → backoff with tokens kept; anything ambiguous → lineage dropped, silent restore |
+| Keycloak `…/logout` | `logout()` (global by default) | Hidden form POST | — | The local sign-out has already happened |
+| PUB-1 `GET /api/v1/public/tenants/resolve` | Shell `WorkspaceResolver` | Before sign-in | `api.timeoutMs` | Cached entry for the slug, else the identifier-first screen |
+| P-35 `GET /api/v1/me/session-context` | Shell `SessionContextSource` | After sign-in | `api.timeoutMs` | Deny-all permissions, platform flags only; the example shell retries a transient failure 3 times |
+| `/api/*` | `ApiClient` | App calls | `api.timeoutMs` (35 s) per attempt | Idempotent calls retried (default 2, at most 5); RFC 9457 `ProblemError` |
+| `GET /remotes/manifest.json` | `loadManifest` | Bootstrap step 9 | `remotes.loadTimeoutMs` | Every remote slot shows its fallback |
+| `remoteEntry.js` and chunks | `loadRemote` | A slot's first render | `remotes.loadTimeoutMs` per attempt, `remotes.retries` | That remote's boundary fallback |
+| `GET /version.json` | `startVersionPolling` | Every `appUpdate.pollIntervalMs` | — | Ignored until the next poll |
+| `POST /otel/v1/{traces,logs,metrics}` | The exporters | Batches, page hide, `pagehide` | Bounded queues, 60 KiB keepalive budget | Dropped and counted |
+
+---
+## Cache strategy
+
+The SDK never caches an API response: identical GETs in flight share one request, and nothing outlives the response. What it keeps is what a page or the next sign-in needs, each with a bound. Tokens are memory-only on purpose, so every page load restores the session with one silent round trip instead of reading a stored token.
+
+> Source: [`docs/architecture/mermaid/cache-strategy.mmd`](docs/architecture/mermaid/cache-strategy.mmd)
+
+```mermaid
+flowchart TD
+    subgraph memory["Memory only (one page, gone on reload)"]
+        m1["Tokens: access · refresh · ID<br/>/auth closure; never storage, channel, log or span"]
+        m2["In-flight GETs: one per URL + token + headers<br/>dedupe until the response; no response cache"]
+        m3["Remote containers: one per remote per page<br/>a failed or timed-out load is forgotten"]
+        m4["i18n catalogs per namespace + locale<br/>load ≤ 10 s; failed: retried 2, 4, 8 s while shown"]
+        m5["Intl formatters: ≤ 200 per kind, then cleared<br/>key = locale + options"]
+        m6["Manifest · runtime config · flags · authz subject<br/>on the PlatformRuntime, frozen"]
+    end
+
+    subgraph local["localStorage (shared by tabs, outlives the page)"]
+        l1["Workspace cache: ≤ 20 { slug, realm, trial }<br/>kept by clearAllAppStorage: the next sign-in needs it"]
+        l2["RUM session id: 24 h, rotated on logout, switch, idle"]
+        l3["auth: signed-out mark · last activity · last user (SHA-256)"]
+        l4["/storage values: storage:&lt;namespace&gt;:&lt;appId&gt;:&lt;key&gt;<br/>cleared on logout, switch, another user"]
+    end
+
+    subgraph session["sessionStorage (one tab)"]
+        s1["Pending login per state: 10 min"]
+        s2["Restore loop guard · chunk-reload guard (per version)"]
+        s3["/storage area 'session' (drafts)"]
+    end
+
+    subgraph http["HTTP caches (CloudFront + browser)"]
+        h1["no-cache + ETag: runtime.json · manifest.json · version.json · index.html"]
+        h2["immutable, 1 year: /assets/* (content-hashed) · /remotes/&lt;name&gt;/&lt;version&gt;/*"]
+        h3["CachingDisabled: /api/* · /otel/* · /csp-report"]
+    end
+```
+
+| Cache | Where | Bound | Cleared or refreshed by |
+|---|---|---|---|
+| Tokens | `/auth` closure | Access token lifetime; refreshed 60 s before expiry (at most a third of the lifetime), ± up to 10 s | Logout, switch, expiry, page unload |
+| In-flight GETs | `/http` | Until the response | Each subscriber's abort; the fetch aborts when all have |
+| Remote containers | `PlatformRuntime` | One per remote per page | A failed or timed-out load is forgotten |
+| i18n catalogs | `/i18n` | One per namespace and locale | `setLocale`; a failed load retried 2, 4 and 8 s later while shown |
+| Intl formatters | `/i18n` | 200 per kind, then cleared | — |
+| Workspace cache | localStorage | 20 entries, newest first | Kept on logout: the next sign-in needs it |
+| RUM session id | localStorage | 24 h | Logout, workspace switch, idle timeout |
+| `/storage` values | local or session | Per workspace namespace | Logout, switch, a different user signing in |
+| Pending login | sessionStorage | 10 min per `state` | The callback deletes it before the exchange |
+| `runtime.json`, manifest, `version.json`, `index.html` | HTTP | `no-cache` + ETag | Every load revalidates |
+| `/assets/*`, `/remotes/<name>/<version>/*` | HTTP | Immutable, 1 year | A new build has new names |
+
+---
+## Data model
+
+The SDK has no server-side data. Its state is in three places, all on the user's device: the `PlatformRuntime` object (memory, one per page, shared by every SDK copy), `localStorage` (shared by the tabs of one origin) and `sessionStorage` (one tab). Two files configure it: `runtime.json` and the remote manifest. Their schemas are strict, and the full key lists are LLD §12.1 (`runtime.json`) and §12.3 (storage keys).
+
+> Source: [`docs/architecture/mermaid/data-model.mmd`](docs/architecture/mermaid/data-model.mmd)
+
+```mermaid
+erDiagram
+    RUNTIME_JSON ||--|| PLATFORM_RUNTIME : "loaded, validated, frozen into config"
+    REMOTE_MANIFEST ||--o{ MANIFEST_ENTRY : "one per remote"
+    PLATFORM_RUNTIME ||--|| REMOTE_MANIFEST : "manifest"
+    PLATFORM_RUNTIME ||--o{ STORAGE_KEY : "storageNamespace scopes /storage keys"
+    PLATFORM_RUNTIME ||--o| TOKENS : "tokenSource reads; never stored"
+    WORKSPACE_CACHE ||--o{ WORKSPACE : "≤ 20, newest first"
+
+    RUNTIME_JSON {
+        enum environment "optional: local, dev, test, staging, prod"
+        object api "baseUrl, timeoutMs, propagationAllowlist"
+        object telemetry "enabled, otlpBaseUrl, sampleRatio, logLevel, sendSessionHeader"
+        object auth "idpOrigin, trialRealm, paidRealmPrefix, workspacePathPrefix, clientId, scopes, idleTimeoutMs, redirectPath, signInUrl"
+        object flags "name to boolean, string or number"
+        object remotes "killSwitch, loadTimeoutMs, retries, allowedOrigins"
+        object i18n "defaultLocale, supportedLocales"
+        object appUpdate "pollIntervalMs"
+    }
+    PLATFORM_RUNTIME {
+        string sdkVersion "duplicate-copy detection"
+        object identity "serviceName, domain, environment, buildVersion"
+        object config "RUNTIME_JSON, deep-frozen"
+        string storageNamespace "realm, trial:tenant_id, or anon"
+        object authzSubject "roles, departments from P-35"
+        object flagProvider "runtime config, then session context"
+        object manifest "REMOTE_MANIFEST, frozen"
+        object tracing_logging_metrics "exporters, queues, stats"
+        object unload "keepalive ledger, senders"
+    }
+    MANIFEST_ENTRY {
+        string entry "remoteEntry.js URL"
+        string version "immutable path segment"
+        string ownerDomain "registry domain"
+        string integrity "sha384, required outside local, dev, test"
+    }
+    STORAGE_KEY {
+        string key "frontend-sdk:storage:namespace:appId:key"
+        enum area "local or session"
+    }
+    WORKSPACE {
+        string slug "kebab, at most 63"
+        string realm "tenant-slug or trial"
+        boolean trial "shared trial realm"
+    }
+    WORKSPACE_CACHE {
+        string key "frontend-sdk:workspaces (localStorage)"
+    }
+    TOKENS {
+        string access "memory only"
+        string refresh "memory only, rotated, max reuse 0"
+        string id "memory only, id_token_hint in the logout POST body"
+    }
+```
+
+- **Reserved keys** are under `@bcbp-solutions-fzc-llc/frontend-sdk:`. App code reaches storage only through `storage(appId)`, which adds the workspace namespace (lint rule `no-raw-storage`).
+- **Tokens are not in the model.** They exist only inside the `/auth` closure; `/storage` refuses token-like keys, and tests scan storage and the channel for them.
+- **`runtime.json` is validated strictly:** an unknown key, a wrong type or an http origin outside local, dev and test fails the load with every offending path named.
+
+---
+## Cross-tab and in-page events
+
+Two event paths, neither carrying data a later reader could misuse. Between tabs, `BroadcastChannel('platform-auth')` carries two message types, `logout` and `workspace-switched`, and `localStorage` shares the signed-out mark and the last activity time. Inside a page, the `PlatformRuntime` publishes five topics that the `/react` hooks subscribe to, so a change made by the shell (or by another tab's sign-out) re-renders every remote without them importing the shell.
+
+> Source: [`docs/architecture/mermaid/cross-tab-events.mmd`](docs/architecture/mermaid/cross-tab-events.mmd)
+
+```mermaid
+sequenceDiagram
+    participant A as Tab A (/auth)
+    participant LS as localStorage (shared)
+    participant BC as BroadcastChannel('platform-auth')
+    participant B as Tab B (/auth)
+    participant RT as Tab B PlatformRuntime events
+    participant UI as Tab B React (/react hooks)
+
+    Note over A,B: Each tab keeps its own tokens and refresh lineage, and nothing on the channel or in storage is a token.
+    A->>LS: user activity → auth:last-activity (at most every 5 s)
+    B->>LS: idle check every ≤ 15 s reads the shared last activity
+    A->>A: logout(): drop tokens, clearAllAppStorage(), rotate session id
+    A->>LS: auth:signed-out = true
+    A->>BC: { type: 'logout' }
+    BC-->>B: logout
+    B->>B: drop tokens, forgetUser() (namespace 'anon', authz subject, flags, read-only)
+    B->>RT: emit 'flags' · 'authz' · 'read-only' · 'session'
+    RT-->>UI: useFeatureFlag · useHasPermission · useReadOnly · useSession re-render
+    UI->>UI: shell unmounts the app, shows "You are signed out"
+    A->>A: switchWorkspace(w): drop tokens, clear storage, rotate session id
+    A->>BC: { type: 'workspace-switched' }
+    BC-->>B: workspace-switched
+    B->>B: expire({ serverEnded: false }) → session-ended dialog
+    Note over B: A sign-in this tab was finishing does not undo a logout from another tab (signedOutElsewhere).
+```
+
+| Signal | Path | Effect |
+|---|---|---|
+| `logout` | Channel | The receiving tab drops its tokens and forgets the user, then shows "You are signed out" |
+| `workspace-switched` | Channel | The receiving tab expires its session (`serverEnded: false`): the session-ended dialog |
+| `auth:signed-out` | localStorage | The next sign-in in any tab uses `prompt=login`, never the live SSO session |
+| `auth:last-activity` | localStorage | Idle timeout counts activity in every tab (written at most every 5 s, checked every ≤ 15 s) |
+| `session` | Runtime topic | `useSession`, `useCurrentUser`, `useWorkspace` |
+| `flags` | Runtime topic | `useFeatureFlag` |
+| `authz` | Runtime topic | `useHasPermission`, `<Can>` |
+| `read-only` | Runtime topic | `useReadOnly` |
+| `i18n` | Runtime topic | `useT`, `useLocale` |
+
+Listeners are snapshotted before they are notified, and a throwing listener never stops the others. Without `BroadcastChannel`, other tabs learn of a sign-out at their next refresh.
+
+---
+
 ## Telemetry pipeline
 
-Logs, traces and metrics leave the page over OTLP/HTTP to the same-origin `/otel` path. CloudFront forwards it to the OTel Collector; there is no Faro SDK and no second pipeline. When the page is hidden or closing, the three signals share one 60 KiB keepalive budget in a fixed order (metrics' share, logs, spans), and every request that must outlive the tab starts inside the listener (`src/internal/unload`, LLD §7.5). The reference Collector configuration is two-tier (`examples/collector`, LLD §7.6): a gateway that scrubs, allowlists and routes each metric stream to one aggregator, which converts delta to cumulative. Everything is redacted with the same rules as gincommon's log sanitizer, gated on consent, and queued with fixed bounds, so a slow or unreachable collector costs a fixed amount of memory. See [docs/observability](docs/observability/README.md).
+Logs, traces and metrics leave the page over OTLP/HTTP to the same-origin `/otel` path. CloudFront forwards it to the OTel Collector; there is no Faro SDK and no second pipeline. When the page is hidden or closing, the three signals share one 60 KiB keepalive budget in a fixed order (metrics' share, logs, spans), and every request that must outlive the tab starts inside the listener (`src/internal/unload`, LLD §7.5). The reference Collector configuration is two-tier (`examples/collector`, LLD §7.6): a gateway that scrubs, allowlists and routes each metric stream to one aggregator, which converts delta to cumulative. Everything is redacted with the same rules as gincommon's log sanitizer, gated on consent, and queued with fixed bounds, so a slow or unreachable collector costs a fixed amount of memory. Nothing is printed to the console outside local and dev while logging runs; before it starts, with telemetry off, or on a remote's standalone page (no collector), `warn` and `error` go to the console, redacted (LLD §7.2). See [docs/observability](docs/observability/README.md).
 
 > Source: [`docs/architecture/mermaid/telemetry-pipeline.mmd`](docs/architecture/mermaid/telemetry-pipeline.mmd)
 
@@ -547,6 +814,41 @@ graph LR
 ```
 
 Identity on every signal is the **page** identity (`initializeCore`: `domain` / `service` / `environment`, e.g. `portal` / `web-app`). Remotes are told apart by the `mfe` attribute or label, never by a second `domain`. The one exception is a remote's own Tier 2/3 metrics, which carry its manifest `ownerDomain` (design doc §D1).
+
+---
+
+## Workspace isolation in the browser
+
+The browser counterpart of the services' row-level security. One device can be used by several people and several workspaces, so everything the SDK stores for an app is scoped to the signed-in workspace and removed when that person leaves. The gateway enforces the real tenant isolation; this keeps one tenant's leftovers out of the next session on the same device.
+
+> Source: [`docs/architecture/mermaid/workspace-isolation.mmd`](docs/architecture/mermaid/workspace-isolation.mmd)
+
+```mermaid
+flowchart TD
+    signin["Signed in to a workspace"] --> ns{"Namespace"}
+    ns -- "paid realm" --> nsp["tenant-acme"]
+    ns -- "trial realm" --> nst["trial:&lt;tenant_id&gt;<br/>(the realm alone would mix tenants)"]
+    ns -- "not signed in" --> anon["anon: set() is a no-op with a dev warning<br/>nothing is written a later tenant could read"]
+    nsp & nst --> keys["storage(appId).set(k, v)<br/>→ frontend-sdk:storage:&lt;namespace&gt;:&lt;appId&gt;:&lt;k&gt;<br/>token-like keys refused (ForbiddenStorageKeyError)"]
+
+    subgraph clear["What clears it (clearAllAppStorage + forgetUser)"]
+        c1["logout(): every /storage key, both areas; session id rotated; signed-out mark"]
+        c2["switchWorkspace(): same, then a new sign-in"]
+        c3["Sign-in by another user: SHA-256(realm + sub) differs from auth:last-user"]
+        c4["Another tab's logout or switch: forgetUser() in this tab"]
+    end
+    keys --> clear
+    clear --> kept["Kept: workspace cache, RUM session id (rotated), keys other code wrote"]
+```
+
+| Rule | Mechanism |
+|---|---|
+| Keys are per workspace | Namespace = paid realm, or `trial:<tenant_id>` in the shared trial realm, or `anon` before sign-in |
+| Nothing is written before sign-in | `set()` in `anon` is a no-op with a dev warning |
+| A sign-out removes everything | `clearAllAppStorage()` (both areas, every workspace and app, keys from `alpha.3` and earlier too), session id rotated, signed-out mark set, other tabs told |
+| A different person clears the previous one's data | SHA-256 of realm + `sub` compared with `auth:last-user` at sign-in |
+| Another tab's sign-out reaches this tab | `forgetUser()`: namespace `anon`, authz subject, flags and read-only cleared |
+| No credentials in storage | Token-like keys refused (`ForbiddenStorageKeyError`) |
 
 ---
 
@@ -695,6 +997,51 @@ The browser is single-threaded; concurrency here means overlapping promises and 
 | The ID token never lands in a URL | Global sign-out is a form POST (`id_token_hint` in the body); CSP `form-action` allows the IdP origin |
 | Contracts are generated, never edited | `contracts:check`, `docs:check` in CI |
 
+## Deployment
+
+Nothing in this repository is deployed. It publishes three packages (see *Release and distribution*), and each app built with them is deployed by its own pipeline to S3 behind CloudFront. `examples/cloudfront` holds what that infrastructure must do, tested here: the response headers (`csp.mjs`), the SPA rewrite, the `/csp-report` Lambda and the behaviors table.
+
+> Source: [`docs/architecture/mermaid/deployment.mmd`](docs/architecture/mermaid/deployment.mmd)
+
+```mermaid
+flowchart LR
+    subgraph build["Build once (CI of each app)"]
+        shell["Shell build<br/>index.html + /assets/* (content-hashed, SRI-pinned)<br/>no environment inside"]
+        remote["Remote build<br/>remoteEntry.js + chunks (sha384 in the entry)"]
+    end
+
+    subgraph s3["S3 (per environment)"]
+        o1["/remotes/&lt;name&gt;/&lt;version&gt;/… (never overwritten)"]
+        o2["/remotes/manifest.json { entry, version, ownerDomain, integrity }"]
+        o3["/assets/* · index.html"]
+        o4["/config/runtime.json (names its own environment)"]
+        o5["/version.json (written last)"]
+    end
+
+    remote -->|"1. upload"| o1
+    o1 -->|"2. manifest after every remote"| o2
+    shell -->|"3. hashed files, index.html last"| o3
+    o4 -.->|"per environment, from the deploy pipeline"| o4
+    o3 -->|"4. version.json: open tabs see an update"| o5
+
+    subgraph cdn["CloudFront (one distribution per environment)"]
+        b1["Default (*): spa-rewrite.js → index.html, no-cache"]
+        b2["/assets/*, /remotes/*: immutable"]
+        b3["runtime.json, manifest.json, version.json: no-cache + ETag"]
+        b4["/api/* → gateway · /otel/* → Collector · /csp-report → Lambda"]
+        hdr["Response headers: CSP (Trusted Types, form-action IdP), HSTS, …<br/>examples/cloudfront/csp.mjs"]
+    end
+    s3 --> cdn
+    cdn --> browser["Browser: one shell build in every environment"]
+```
+
+- **Build once.** The shell build carries no environment: `runtime.json` names it, so one build is promoted through every environment. Each environment's deploy writes its own `runtime.json`, and its pipeline should check `environment` equals the target (LLD §15).
+- **Deploy order.** Remotes under a new `/remotes/<name>/<version>/` (never overwritten), then the manifest with each entry's `integrity`, then the shell (hashed files first, `index.html` last), then `/version.json`, which tells open tabs to update.
+- **Chain of trust.** The manifest's sha384 pins `remoteEntry.js`, which pins each of its chunks (`ChunkIntegrityPlugin`). `index.html` pins the shell's scripts and stylesheets.
+- **Headers.** The CSP allows scripts from `'self'` only, requires Trusted Types (policies `platform-sdk`, `platform-webpack`, `dompurify`) and lets `form-action` reach the IdP origin for the sign-out POST.
+
+---
+
 ## Release and distribution
 
 All three packages share one version (`fixed`). The release flow:
@@ -704,7 +1051,7 @@ All three packages share one version (`fixed`). The release flow:
 4. `npm-publish` publishes the three packages to **GitHub Packages** (`@bcbp-solutions-fzc-llc/*`), with a build-provenance attestation each, only if publishing is gated: required reviewers, or (this private repository on GitHub Team) an `npm` environment limited to release tags plus a tag ruleset over who may push them (`check-npm-environment.sh`).
 5. A **GitHub Release** carries the tarballs, a CycloneDX SBOM and Cosign-signed checksums.
 
-The first release is `v1.0.0-alpha.1` (2026-11-03); `v1.0.0-alpha.4` (2026-11-05)'s breaking changes (the container global, the `/storage` key prefix, the CSP `form-action` for the sign-out POST, at most 8 Tier 3 labels, stricter lint rules) mean the shell and every remote upgrade together. The latest is `v1.0.0-alpha.5` (2026-11-05): the optional `auth.signInUrl`, not breaking (the shell upgrades first).
+The first release is `v1.0.0-alpha.1` (2026-11-03); `v1.0.0-alpha.4` (2026-11-05)'s breaking changes (the container global, the `/storage` key prefix, the CSP `form-action` for the sign-out POST, at most 8 Tier 3 labels, stricter lint rules) mean the shell and every remote upgrade together. The latest is `v1.0.0-alpha.5` (2026-11-05): the optional `auth.signInUrl`, not breaking (the shell upgrades first). Pending under `[Unreleased]` (the next release, `1.0.0-alpha.6`, not breaking): `runtime.json` names the `environment`, so one shell build serves every environment; `formatDate` takes calendar dates; `warn` and `error` reach the console while logging is not running.
 
 During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`, so a shell with an older SDK refuses it at share negotiation. `1.0.0` is cut with the first environment, and SemVer is strict from then on (design doc §C3 "Versioning").
 
@@ -735,7 +1082,8 @@ A shell or remote conforms when:
 - It builds with `platformWebpackConfig({ role, name, exposes })`, `platformRspackConfig(…)` or Rsbuild's `pluginPlatform(…)`, and adds no other shared config for React, OTel or the SDK (with Rsbuild: no `moduleFederation` option).
 - **Shell:**
   - it runs the bootstrap in order, implements `WorkspaceResolver` and `SessionContextSource` as ports, and passes the PUB-1/P-35 contract cases;
-  - it shows its own signed-out, session-ended and wrong-workspace screens, and never signs in automatically after a logout.
+  - it shows its own signed-out, session-ended and wrong-workspace screens, and never signs in automatically after a logout;
+  - it is built once for every environment: it loads `runtime.json` before `initializeCore` and takes `environment` from it, and each environment's deployed `runtime.json` sets its own `environment` (the deploy pipeline checks it matches the target).
 - **Remote:**
   - it wraps its root in `MFEErrorBoundary` (or is loaded through `RemoteBoundary`);
   - it uses `useApi` / `useApiClient` with route templates;
@@ -743,6 +1091,44 @@ A shell or remote conforms when:
 - Its own metrics use `getServiceMeter()` (Tier 3), and its CI runs `metricslint check` on `renderMetricInventory()`.
 - It serves the CloudFront response headers of `examples/cloudfront` (CSP with the three Trusted Types policies, and `form-action` allowing the IdP origin).
 - Its SDK and preset are the same version (`SdkVersionPlugin`); the shell and its remotes upgrade together across a breaking alpha.
+
+## Schema lifecycle
+
+Two kinds of schema. Backend-shaped data (registry vocabulary, log fields, redaction rules, problem types, header names, gateway deny codes, the PUB-1 and P-35 cases) is **generated** from pinned commits of the platform and IAM repositories (`contracts/sources.json`) and never edited by hand. The browser-facing schemas, `runtime.json`, the manifest and the public API, are owned here and change under versioning rules.
+
+> Source: [`docs/architecture/mermaid/schema-lifecycle.mmd`](docs/architecture/mermaid/schema-lifecycle.mmd)
+
+```mermaid
+flowchart TD
+    subgraph backend["Backend sources (pinned commits, contracts/sources.json)"]
+        g["platform: gincommon, fastapicommon, events, pgcommon, interop-tests<br/>registry vocab, log fields, redaction, problem types, headers, metric registry"]
+        i["IAM: authz-enrichment, org-membership<br/>gateway headers and deny codes, PUB-1 / P-35 cases"]
+    end
+    g & i -->|"pnpm contracts:sync"| gen["packages/frontend-sdk/contracts/*.json<br/>src/internal/generated/*.ts (never edited)"]
+    gen -->|"contracts:check in CI"| ci1["Drift fails Validate / Contracts"]
+
+    subgraph runtime["Browser-facing schemas the SDK owns"]
+        rj["runtime.json: RuntimeConfigSchema<br/>strict: unknown keys fail"]
+        mf["remotes/manifest.json: entry, version, ownerDomain, integrity"]
+        apir["Public API: api/*.api.md (api-extractor, LF)"]
+    end
+
+    rj --> add["A new key: optional, no default that changes behaviour → minor changeset<br/>deploy order: pages run the new SDK first, then the files set the key<br/>(an older SDK refuses the unknown key)"]
+    rj --> brk["A stricter or removed key → breaking: alpha bumps N; from 1.0.0 a major"]
+    apir --> ver["api:check in CI · changeset + CHANGELOG for every report diff"]
+    mf --> mfr["Invalid entries dropped with an error log; integrity required outside local, dev, test"]
+```
+
+| Schema | Owner | Changes by | Check |
+|---|---|---|---|
+| `contracts/*.json`, `src/internal/generated/*` | Backend repos (pinned) | `pnpm contracts:sync` after moving a pin | `contracts:check` (Validate / Contracts) |
+| `runtime.json` (`RuntimeConfigSchema`) | This repo | A new optional key is minor; a stricter or removed key is breaking | Unit tests; API report |
+| `remotes/manifest.json` | This repo | As above | `loadManifest` drops an invalid entry with an error log |
+| Public API (`api/*.api.md`) | This repo | Changeset + CHANGELOG for every diff | `api:check` |
+
+A new `runtime.json` key reaches pages in two steps: the pages upgrade to the SDK that knows it, then the deployed files set it. An older SDK refuses the unknown key and stops at the "unavailable" page.
+
+---
 
 ## Threat model
 
@@ -772,6 +1158,22 @@ A shell or remote conforms when:
 | `pnpm metrics:parity` | SDK checks vs gincommon `metricslint` |
 | `pnpm examples:check` | CSP and sharing checks of the example builds |
 | `pnpm changeset` | Record a change to a published package |
+
+## Implementation decisions
+
+Judgment calls made while implementing, where the design doc was silent or the integrated run showed it was wrong. Each is also recorded at its point in the code and in the CHANGELOG.
+
+1. **The environment comes from `runtime.json`.** A build-time environment meant one shell build per environment. The host page loads the config first and passes `cfg.environment` to `initializeCore`. Only `loadRuntimeConfig`, which stores nothing, trusts the file's own environment; `setRuntimeConfig` before `initializeCore` does not, and `initializeCore` refuses another environment than a config already set. Otherwise a config could vouch for itself.
+2. **A remote's standalone page is its own host page.** With no shell, it may call `initializeCore`, `loadRuntimeConfig` and `setRuntimeConfig`. Code that also runs inside a shell only reads (`tryGetConfig`). `auth.signInUrl` tells such a page where to send a signed-out user.
+3. **Sign-out is global and a form POST.** A local sign-out left the Keycloak session alive, so the next person on a shared device was signed in as the previous one (integrated report Issue 10). A POST keeps the ID token, which carries the user's name and email, out of URLs and logs; it needs the IdP origin in CSP `form-action`.
+4. **A refresh is retried only on 429, or 503 with `Retry-After`.** Those say the request was not processed. Retrying after a 502, a 504 or a bare 503 could reuse a refresh token Keycloak had already rotated, which revokes the whole session.
+5. **The remote container global is `__platform_mfe_<name>`.** A bare name could be shadowed by an element id or a browser global.
+6. **Pre-release SDK copies share the runtime only at the same version.** `alpha.N` may break `alpha.N-1`; sharing across them would mix incompatible state.
+7. **`warn` and `error` reach the console while logging is not running.** A standalone page has no collector; before, its warnings were lost in test, staging and prod.
+8. **`formatDate('YYYY-MM-DD')` formats in UTC.** A calendar date is a day, not an instant; `new Date('2026-10-25')` showed Oct 24 west of UTC.
+9. **API reports use LF.** api-extractor's CRLF default left the reports with mixed endings that flipped on regeneration.
+
+---
 
 ## Documentation assets
 

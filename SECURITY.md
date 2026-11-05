@@ -25,7 +25,22 @@ Include:
 - The browser and version, if the issue depends on one (Trusted Types, BroadcastChannel and storage behave differently between browsers).
 - Any suggested fix, if you have one.
 
-You will receive an acknowledgement within **2 business days** and a resolution timeline within **5 business days**.
+### Response timeline
+
+| Step | Target |
+|------|--------|
+| Initial acknowledgement | 48 hours |
+| Severity assessment | 5 business days |
+| Fix released (critical / high) | 14 days |
+| Public disclosure | After the fix ships and the shell and remotes have been told to upgrade |
+
+We follow responsible disclosure, and credit reporters in the release notes unless they ask to stay anonymous.
+
+### How a fix ships
+
+1. A fix PR on a private branch, with a test that fails without it.
+2. The next release of all three packages (`1.0.0-alpha.N+1` during the alpha, a patch from `1.0.0`), with the fix under `### Security` in the CHANGELOG.
+3. The shell and remote teams are told to rebuild, shell first. Until every app on a page is rebuilt, the page runs the shell's SDK (see *Supported versions*).
 
 ## Trust model and known limitations
 
@@ -44,8 +59,33 @@ The SDK runs in the **browser, which is untrusted**. It protects the user's sess
 | The CSP is set by CloudFront, not by the SDK | Without the headers in `examples/cloudfront` (`script-src 'self'`, Trusted Types policies `platform-sdk`, `platform-webpack`, `dompurify`), the SDK's XSS defences are weaker. The SDK itself works under that CSP and never needs `eval` |
 | `/otel` is unauthenticated by design (pre-login errors must be reported) | Anyone can post telemetry. The Collector must allowlist label values and drop per-browser attributes, and CloudFront's WAF rate-limits the path. Never alert on browser telemetry as if it were trusted |
 | Browser storage on a shared device is namespaced, not encrypted | `/storage` keeps tenants apart (realm or `trial:<tenant_id>` namespaces, cleared on logout and switch), and refuses token-like keys. Don't store personal data there: anyone with the device can read it |
+| `runtime.json`'s `environment` decides how strict the page is | `local`, `dev` and `test` accept http origins on a local host and remote entries without an integrity hash. The deploy pipeline owns this key: a production file that says `dev` weakens the page, so the pipeline should check it equals the target environment. The SDK refuses a config whose `environment` differs from the page identity's |
 | Sign-in needs `sessionStorage` | With storage blocked (some private modes, strict policies), sign-in fails with a clear error instead of falling back to something weaker |
 | `examples/` and `examples/cloudfront` are reference implementations | They're built and checked in CI but not deployed from here. Production shells, remotes and infrastructure must apply the same controls themselves |
+
+## Areas of particular sensitivity
+
+Where a mistake costs the most, and the control that guards it:
+
+- **The token closure and refresh lineage (`/auth`).** Tokens exist only inside the OIDC provider. A token in storage, a log, the channel or a URL outlives the page; a resent refresh token makes Keycloak revoke the whole session. Guarded by `test/unit/auth/oidc.test.ts` against a Keycloak fake that revokes on any reuse.
+- **Header and origin rules (`/http`).** The token goes to the page's own origin only; correlation headers to the exact allowlist only; identity headers never. A slip sends a credential or spoofs identity to a backend reachable around the gateway.
+- **HTML and the Trusted Types policy (`/security`).** `sanitizeHtml` (DOMPurify) and the `platform-sdk` policy are the only way untrusted HTML reaches the DOM. A bypass is XSS, and XSS acts as the user.
+- **Remote loading (`/mfe`, `@bcbp-solutions-fzc-llc/webpack-preset`).** Allowed origins, the manifest's sha384 and `ChunkIntegrityPlugin` decide what code runs with the page's privileges.
+- **Storage namespaces (`/storage`).** Per-workspace keys and the clearing on sign-out keep one person's or tenant's data from the next session on a shared device.
+- **Redaction (`/logging`, `/tracing`, `/core`).** Telemetry leaves the device; the redaction rules (shared with gincommon) keep secrets and personal data out of it.
+- **The runtime configuration (`/config`).** It names the IdP, the API allowlist, the remotes and, from `alpha.6`, the environment. Its validation is strict and environment-aware.
+- **The lint rules (`@bcbp-solutions-fzc-llc/eslint-plugin`).** `no-identity-headers`, `no-raw-storage` and `no-unsafe-html` catch consumer code that would bypass the SDK; a gap in a rule is a gap in every app.
+
+## How the code is kept secure
+
+| Control | Where |
+|---|---|
+| The invariants above are tested (a security fix needs a test that fails without it) | `test/unit`, `test/browser` (CSP, Trusted Types, SRI in real engines), the integrated stack |
+| A review of every SDK, preset or example change against the invariants | The `invariant-reviewer` subagent (`.claude/agents/`) |
+| Dependency vulnerabilities | `pnpm audit` (`pnpm run ci`), Trivy (CI and release), Dependabot |
+| Supply chain of the build | Actions pinned to commit SHAs (pre-commit check); one version per package, never overwritten |
+| Supply chain of a release | A build-provenance attestation per tarball, an SBOM, Cosign-signed checksums (VERSIONING.md) |
+| Who can publish | Only admins can push `v*` tags, and only a tag reaches the `npm` environment |
 
 ## Scope
 
@@ -62,6 +102,8 @@ The following are in scope for vulnerability reports:
 - Sensitive data in telemetry that the redaction rules should have removed (`/logging`, `/tracing`, `/core`)
 - SDK or `@bcbp-solutions-fzc-llc/webpack-preset` output that needs `eval`, inline script or a policy outside the CSP
 - Denial-of-service conditions in the SDK: unbounded queues or memory, reload or redirect loops, retry storms
+- A `runtime.json` the SDK accepts although it should refuse it: an unknown key, an http origin outside local, dev and test, or an `environment` that differs from the page identity's (`/config`)
+- A lint rule (`no-identity-headers`, `no-raw-storage`, `no-unsafe-html`) that misses a pattern it documents (`@bcbp-solutions-fzc-llc/eslint-plugin`)
 
 Out of scope:
 - **Attacks that need control of the platform:** the attacker already controls the API gateway, Keycloak, CloudFront or S3, or the source or build of a deployed remote.

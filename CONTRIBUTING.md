@@ -62,7 +62,9 @@ L0 core · problem · authz  →  L1 config · security · storage  →  L2 trac
 
 A subpath imports only lower subpaths that it lists in `imports`, and only through their `index.ts`. Subpaths never read each other's module state; they share it through the `PlatformRuntime`. Only `/react` and `/testing` import React; only `/tracing`, `/logging` and `/metrics` import OpenTelemetry.
 
-## Adding a new subpath
+## Extending the library
+
+### Adding a new subpath
 
 1. Add the entry to `packages/frontend-sdk/subpaths.json`: `name`, `layer`, `area` (one of the seven functional areas) and the `imports` it needs.
 2. Implement it in `packages/frontend-sdk/src/<name>/index.ts`. Only what that file exports is public; put helpers in other files of the folder or in `src/internal/`.
@@ -73,20 +75,20 @@ A subpath imports only lower subpaths that it lists in `imports`, and only throu
 
 Adding an export to an existing subpath is steps 2, 4 and 5.
 
-## Adding a metric
+### Adding a metric
 
 - **The SDK's own metrics (Tier 1)** are recorded through the instrument port (`src/internal/instruments.ts`): `/http`, `/mfe` and `/react` never import metric names. The real implementation is a no-op until governance ratifies the names (design doc step 15). Add a method to `PlatformInstruments`, never a direct meter call.
 - **A remote's metrics (Tiers 2 and 3)** go through `getDomainMeter` / `getServiceMeter`, which apply gincommon's naming and label rules. A change to those rules must keep `pnpm metrics:parity` green: it checks the SDK against gincommon's `metricslint`.
 - Keep label values bounded: labels known to be unbounded (ids, raw paths) are refused with `InvalidMetricError`, and the exporter caps the values per label.
 
-## Adding a lint rule
+### Adding a lint rule
 
 1. Implement it in `packages/eslint-plugin/src/rules.ts` with the `rule(...)` helper, and register it in `src/index.ts`.
 2. Add valid and invalid cases to `test/unit/eslint-plugin/rules.test.ts`.
 3. Decide whether it joins `configs.recommended`: a rule added there is a **MAJOR** change for consumers ([VERSIONING.md](VERSIONING.md)).
 4. If it relies on SDK facts (subpaths, forbidden headers), read them from the generated `src/generated/` files (`sdk.ts`, `forbidden-headers.ts`) rather than copying them.
 
-## Contracts
+### Moving a contract pin
 
 The files under `packages/frontend-sdk/contracts/` and `src/internal/generated/` are generated from the backend repos (gincommon, fastapicommon, platform-interop-tests, the IAM services). Never edit them by hand.
 
@@ -97,6 +99,36 @@ pnpm docs:sync                      # generated registry docs
 ```
 
 Review the diff: a contract change that alters public behaviour (a new problem type, deny code, registry domain or header) needs a changeset and a CHANGELOG entry like any other change.
+
+### Adding a `runtime.json` key
+
+1. Add it to `RuntimeConfig` and the schema in `packages/frontend-sdk/src/config/schema.ts`. Make it **optional, with no default that changes behaviour**: an existing `runtime.json` must still load. A required key, or a stricter rule on an existing one, is breaking.
+2. If it holds an origin or URL, apply the same rule as the others (https; http only on a local host, and only in local, dev and test): `environmentIssues` in `runtime-config.ts`.
+3. Test it in `test/unit/config/config.test.ts`: accepted and refused values, absent by default, and the environment rule if it applies.
+4. Run `pnpm build && pnpm api` (the `RuntimeConfig` type is in `api/config.api.md`), add a **minor** changeset and a CHANGELOG entry that says when a deployed file may set it (only once its pages run the new version: an older SDK refuses the unknown key).
+5. Document it in the README's *Runtime configuration* table, LLD §12.1 and the design doc's `RuntimeConfig`.
+
+### Adding a reserved browser storage key
+
+1. Prefix it `@bcbp-solutions-fzc-llc/frontend-sdk:` and declare it next to its owner (as `SIGNED_OUT_KEY` in `/auth`). Never store a token or anything token-like.
+2. Decide what clears it: `clearAllAppStorage()` removes only `/storage` values; a reserved key that must not outlive a sign-out is cleared in `logout()` / `switchWorkspace()`.
+3. Add it to LLD §12.3 and `.claude/wire-contracts.md`.
+
+### Adding a cross-tab message or a runtime topic
+
+- **Channel messages** (`BroadcastChannel('platform-auth')`) carry a `type` only, never a token, an id or user data. Handle the message in every session state, including `expired` and `loading`, and add a test with two providers.
+- **Runtime topics** (`RuntimeTopic` in `src/internal/events.ts`): add the topic, emit it from the owning subpath, and subscribe from the `/react` hook. Update ARCHITECTURE.md § Cross-tab and in-page events.
+
+### Adding an architecture diagram
+
+1. Write `docs/architecture/mermaid/<name>.mmd`, and render-check it with `ghcr.io/mermaid-js/mermaid-cli/mermaid-cli:11.4.2`.
+2. Add a `> Source:` line and an empty ```` ```mermaid ```` block to `ARCHITECTURE.md`, and a row to `docs/architecture/README.md`.
+3. Run `pnpm docs:sync`: it fills the block, and `docs:check` (CI) fails while a diagram is missing, unlisted or different.
+
+### Adding a build, test or CI environment variable
+
+1. Read it with a default in the script or test that needs it (`test/testenv` for values every suite shares).
+2. Add it to the README's *Environment variables* table. A secret is never written to a file or printed: pass it as an environment variable or a BuildKit secret (as `stack-up` does with `gh auth token`).
 
 ## Testing requirements
 
@@ -116,10 +148,32 @@ Review the diff: a contract change that alters public behaviour (a new problem t
 | ESLint 9 | CI `eslint-9` job (`pnpm run test-eslint-9`) | The eslint-plugin's tests on ESLint 9, the lower major of its peer range (a release gate too) |
 | Collector | CI `collector` job (`pnpm run test-collector`) | The reference two-tier Collector in its image (Docker) |
 
-- Statement coverage of `packages/*/src` must stay **≥ 98%** (`pnpm test:coverage`, gated in CI). Don't lower the threshold.
-- Don't break the canonical tests listed in the [README](README.md#canonical-tests-do-not-break) (OIDC refresh, header rules, redaction, problem parsing, CSP-safe config, dependency rules).
-- A security-relevant change (tokens, headers, redirects, storage, HTML) needs a test that would fail without it.
+- A security-relevant change (tokens, headers, redirects, storage, HTML) needs a test that would fail without it. Check that it does: revert the fix and run the test.
+- A regression test names what it covers (an integrated-report issue, a review item, a known browser bug).
 - Run one test file or test name with `pnpm exec vitest run test/unit/http` or `pnpm exec vitest run -t "single-flight"`.
+
+### Canonical test cases
+
+Don't break the tests listed in the [README](README.md#canonical-tests-do-not-break): OIDC refresh (single flight, no refresh-token reuse across tabs or failures, tokens never in storage or the channel), `/http`'s header and token rules, the identity and redaction fixtures shared with Go and Python, problem parsing, a config parse that never builds a `Function`, the dependency rules, the shell's IAM ports against the contract cases, the real webpack, Rspack and Rsbuild builds, and the CloudFront CSP. Change one only together with the invariant it protects, and say so in the PR.
+
+### Coverage gate
+
+`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. Don't lower the threshold.
+
+```bash
+pnpm test:coverage            # text summary; HTML report in coverage/
+```
+
+Aim for coverage where it matters (the OIDC state machine, `/http` retries and headers, redaction, the unload budget) rather than lines for their own sake.
+
+### Docker-based suites
+
+`test/collector` and `test/stack` need Docker; `test/stack` also needs `gh auth login` (private Go modules for the IAM images) and the IAM repositories checked out (`IAM_ROOT`). `pnpm test` never starts Docker. Step-by-step: [README § Running the integrated stack locally](README.md#running-the-integrated-stack-locally).
+
+### Timing in tests
+
+CI runs on 2-core runners. Wait on a condition with a real-time bound, never on a fixed number of fake-clock turns. In the browser suite, skip only on an engine limit recorded in `test/browser/engine-notes.ts`.
+
 
 ## Linting and API reports
 
@@ -132,25 +186,80 @@ pnpm api:check   # fails if a public API changed without an updated api/*.api.md
 
 Give new public symbols a TSDoc comment; it ends up in the API report (api-extractor marks the ones without one `(undocumented)`). Never weaken the security rules in the lint config, and never add `eval`, `new Function` or inline script: the SDK runs under `script-src 'self'` with Trusted Types.
 
+## Guardrails and forbidden patterns
+
+- **No token ever leaves memory.** Not to `localStorage`, `sessionStorage`, the `BroadcastChannel`, a log, a span or a URL. `test/unit/auth/oidc.test.ts` asserts it.
+- **The browser never sends identity headers** (`FORBIDDEN_REQUEST_HEADERS`: `x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`). The gateway injects them.
+- **Never edit generated files** (`packages/frontend-sdk/contracts/`, `src/internal/generated/`, `docs/observability/metric-registry.md`, the embedded diagram blocks). Change the source and run the sync command.
+- **CSP-safe always:** no `eval`, `new Function`, inline script or runtime CSS-in-JS; HTML only through `sanitizeHtml`.
+- **Unload requests start inside the listener.** Anything sent on `pagehide` is `sendBeacon` / keepalive started synchronously within the shared budget (`onUnload`, LLD §7.5); never `await` before it.
+- **A refresh is never retried on an ambiguous answer** (network error, 500, 502, 504, bare 503): Keycloak may already have rotated the token, and reusing it revokes the session.
+- **Respect the layers** (`subpaths.json`): no imports upward or into another subpath's files; shared state goes through the `PlatformRuntime`.
+- **Sibling repositories are read-only from here** (`../../go/*`, `../../python/*`, the IAM services). Read and build them; check pinned commits in scratch clones.
+- **Do not commit `.env`** (ignored), and never write `GO_PRIVATE_TOKEN` or any token to a file.
+
+## Documentation update checklist
+
+| What changed | Update |
+|---|---|
+| Public API (an `api/*.api.md` diff) | Changeset + CHANGELOG; LLD §5; README API overview; `docs/areas/<area>.md`; `.claude/api-reference.md` (`pnpm docs:sync`) |
+| A breaking change | CHANGELOG `### Changed` "**Breaking:**" with the opt-out; README *Upgrading between alpha versions*; VERSIONING.md; LLD §14.2 |
+| A `runtime.json` key | README *Runtime configuration*; LLD §12.1; design doc `RuntimeConfig` |
+| A storage key, channel message, header or OTLP path | LLD §12.3; `.claude/wire-contracts.md`; ARCHITECTURE.md (Data model, Cross-tab events or Integration touchpoints) |
+| A flow (bootstrap, sign-in, refresh, sign-out, remote load) | ARCHITECTURE.md section and its `.mmd`; `.claude/request-flows.md`; LLD §8 |
+| A build, test or CI environment variable | README *Environment variables* |
+| A CI job or required check | README *CI*; `.claude/operations.md` (required check names never change) |
+| An open item opened or closed | LLD §15; `.claude/CLAUDE.md` status |
+| A finding from the integrated stack | `docs/e2e/integrated-deployment-report.md`; `.claude/skills/ci-triage/known-causes.md` if it can recur |
+
+## Branch naming
+
+- `feat/<topic>`: a new capability
+- `fix/<topic>`: a bug fix
+- `docs/<topic>`: documentation only
+- `test/<topic>`: tests only
+- `chore/<topic>`: dependencies, tooling, CI, refactors with no behavioural change
+- `release/vX.Y.Z`: the release PR (`/release` skill)
+
+Branch off the latest `main` and target `main` (squash merges). Don't stack PRs on each other's branches without retargeting each to `main` before it merges.
+
 ## Pull request checklist
 
 - [ ] `pnpm run ci` passes locally (`pnpm verify` + the coverage gate and the audit)
 - [ ] New behaviour is covered by tests under `test/` (mirroring `src/`); coverage stays ≥ 98%
 - [ ] New public symbols have TSDoc comments, and `api/*.api.md` is updated (`pnpm api`)
 - [ ] A changeset (`pnpm changeset`) for a change to a published package
-- [ ] `CHANGELOG.md` `[Unreleased]` section updated (the *Changelog check* workflow requires both)
-- [ ] If public API or behaviour changed: design doc, README and `VERSIONING.md` impact assessed
+- [ ] `CHANGELOG.md` `[Unreleased]` section updated (the *Changelog check* workflow requires both): under a dated topic heading (`### Added (YYYY-MM-DD — topic)`), naming the subpath, files and tests, with *Previously:* for a changed behaviour; update *Known gaps* when you open or close one
+- [ ] The documentation update checklist above reviewed
+- [ ] For a change to the SDK, the preset or the examples: the `invariant-reviewer` subagent run on the diff; for a change to the public surface or a default: `api-change-reviewer`
+- [ ] For a change to auth, unload, CSP or remote loading: `pnpm run test-browser` passes; for one that touches the gateway or deployment path: the integrated stack
 - [ ] No tokens in storage, no identity headers (`x-user-id`, `x-tenant-id`, …), no production secrets
 
 ## Commit style
 
-Use a short imperative subject line (≤ 72 chars). Reference the area (a subpath, a package or `ci` / `docs`):
+[Conventional Commits](https://www.conventionalcommits.org/). Use a short imperative subject line (≤ 72 chars) naming the area (a subpath, a package, or `ci` / `docs` / `build`), and say *why* in the body, with the LLD section or report issue when it helps:
+
+```
+fix(auth): retry a refresh only when Keycloak says it was not processed
+
+A 502, 504 or bare 503 may come after Keycloak rotated the refresh token;
+retrying with the old one revokes the whole session. 429 and 503 with
+Retry-After are safe to retry. (LLD §8.5, review 3.)
+```
+
+More subjects:
 
 ```
 fix(http): stop retrying a POST without an idempotency key
 feat(mfe): add the per-attempt remote timeout
+feat(config): runtime.json names the environment
 docs: describe the workspace switch in the LLD
+build(api): write the API reports with LF line endings
 ```
+
+## Deployment
+
+Nothing in this repository is deployed. It publishes three packages to GitHub Packages (below); each app built with them is deployed by its own pipeline to S3 behind CloudFront, as [`examples/cloudfront`](examples/cloudfront/README.md) and ARCHITECTURE.md § Deployment describe (build once, deploy order, the integrity chain, the headers).
 
 ## Cutting a release
 

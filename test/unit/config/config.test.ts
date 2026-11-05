@@ -8,7 +8,7 @@ import {
   tryGetConfig,
   type RuntimeConfig,
 } from '../../../packages/frontend-sdk/src/config/index.ts';
-import { NotInitializedError, initializeCore, type Environment } from '../../../packages/frontend-sdk/src/core/index.ts';
+import { NotInitializedError, getIdentity, initializeCore, type Environment } from '../../../packages/frontend-sdk/src/core/index.ts';
 import { resetRuntimeForTests } from '../../../packages/frontend-sdk/src/internal/runtime.ts';
 
 /** The fields a runtime.json must always spell out; everything else has a design-doc default. */
@@ -110,6 +110,12 @@ describe('RuntimeConfigSchema', () => {
     ['', false],
   ])('accepts %s as auth.signInUrl: %s', (url, ok) => {
     expect(parse(withPatch('auth.signInUrl', url)).success).toBe(ok);
+  });
+
+  it('takes an optional environment from the registry vocabulary, no aliases', () => {
+    expect(parse(minimal()).data).not.toHaveProperty('environment');
+    for (const env of ['local', 'dev', 'test', 'staging', 'prod']) expect(parse({ ...minimal(), environment: env }).data?.environment).toBe(env);
+    for (const bad of ['production', 'PROD', '', 1]) expect(issuePaths({ ...minimal(), environment: bad }), String(bad)).toEqual(['environment']);
   });
 
   it('has no auth.signInUrl unless runtime.json sets one', () => {
@@ -275,6 +281,49 @@ describe('http origins on a local host', () => {
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify(withPatch('auth.signInUrl', 'https://app.example.com/')))));
     setRuntimeConfig(await loadRuntimeConfig());
     expect(tryGetConfig()?.auth.signInUrl).toBe('https://app.example.com/');
+  });
+
+  it("follow the file's own environment before initializeCore: a host page built once for every environment", async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ...withLocal('http://localhost:8080'), environment: 'dev' }))));
+    const cfg = await loadRuntimeConfig();
+    expect(cfg.environment).toBe('dev');
+    identity(cfg.environment!);
+    setRuntimeConfig(cfg);
+    expect(getConfig().auth.idpOrigin).toBe('http://localhost:8080');
+
+    resetRuntimeForTests();
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ...withLocal('http://localhost:8080'), environment: 'prod' }))));
+    const err = await loadRuntimeConfig().catch((e: unknown) => e);
+    expect((err as RuntimeConfigError).issues.map((i) => i.path)).toEqual(LOCAL_PATHS);
+    expect((err as Error).message).toContain('page environment: prod');
+  });
+
+  it('do not let a config set before initializeCore vouch for itself: only loadRuntimeConfig, which stores nothing, uses the file\'s environment', () => {
+    expect(() => setRuntimeConfig({ ...withLocal('http://localhost:8080'), environment: 'dev' } as unknown as RuntimeConfig)).toThrow(/initializeCore not called/);
+    expect(tryGetConfig()).toBeUndefined();
+  });
+
+  it('make initializeCore refuse another environment than the config set before it', () => {
+    setRuntimeConfig({ ...minimal(), environment: 'staging' } as unknown as RuntimeConfig);
+    expect(() => identity('prod')).toThrow(/initializeCore environment "prod" differs from the runtime config's "staging"/);
+    expect(getIdentity()).toBeUndefined();
+    expect(identity('staging').environment).toBe('staging');
+  });
+
+  it("refuse a config whose environment differs from the page identity's", async () => {
+    identity('prod');
+    const err = (() => {
+      try {
+        setRuntimeConfig({ ...withPatch('auth.idpOrigin', 'https://auth.example.com'), environment: 'staging' } as unknown as RuntimeConfig);
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect((err as RuntimeConfigError).issues).toEqual([{ path: 'environment', message: `must equal the page identity's environment "prod", got "staging"` }]);
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ...minimal(), environment: 'dev' }))));
+    await expect(loadRuntimeConfig()).rejects.toThrow(/must equal the page identity's environment "prod", got "dev"/);
+    setRuntimeConfig({ ...minimal(), environment: 'prod' } as unknown as RuntimeConfig);
+    expect(getConfig().environment).toBe('prod');
   });
 
   it('do not affect https origins in prod', () => {

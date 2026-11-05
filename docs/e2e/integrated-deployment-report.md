@@ -295,6 +295,7 @@ The same thing happened when the Keycloak container was recreated (new keys) dur
 ### Issue 12 — The first request after an AuthZ cache miss can be denied 503
 
 - **Status: fixed upstream** (iam-authz-enrichment #40, `fae20d1`, AE-48, LLD rev 1.49). With no cached entry to fall back on, the I-8 call waits up to `ORG_MEMBERSHIP_COLD_TIMEOUT` (120 ms) instead of 40 ms, inside the 250 ms ext_authz budget; with a stale entry it keeps 40 ms and serves the stale entry on failure. It also keeps 64 idle connections to org-membership (Go's default was 2). The stack sets `ORG_MEMBERSHIP_COLD_TIMEOUT` explicitly; tests 1, 8 and 10 now fail on any 503 (they used to retry, reload or expect it), and the contract pin moved to `fae20d1` (no contract change).
+- **Recurred 2026-11-06** (a fresh stack on a laptop, `fae20d1`): the first P-35 was still denied 503. authz-enrichment logged `membership rebuild failed, no stale entry available … org-membership … unavailable`: a cold I-8 took longer than 120 ms. The SDK's retry of the idempotent GET answered 200 and sign-in completed; test 1 failed on the 503, test 10 passed in the other browsers once the pool was warm. 120 ms covers a warm pool, not a cold one: the readiness warm-up (I-8 pool min connections) from the suggested fix is still needed. A non-idempotent first call would still fail. **Reopened** for IAM.
 - **Symptom:** `DENY_SERVICE_UNAVAILABLE` (503, `ext_authz_denied`, `UAEX`) on a user's first API call.
 - **Evidence:** authz-enrichment log:
 

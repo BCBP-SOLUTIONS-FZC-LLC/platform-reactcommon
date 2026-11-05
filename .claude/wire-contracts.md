@@ -45,7 +45,7 @@ Every API error is an RFC 9457 problem decoded as gincommon's client does (`cont
 
 ## Static Paths the Shell Reads (CloudFront)
 
-`/config/runtime.json` (no-cache, strict schema), `/remotes/manifest.json` (no-cache; entries carry `integrity`), `/remotes/<name>/<version>/remoteEntry.js` (immutable), `/version.json` (no-cache, app-update polling), `/assets/*` (immutable, pinned by `integrity` in `index.html`), `/csp-report` (Lambda, `x-origin-verify`). Behaviours: [`examples/cloudfront/README.md`](../examples/cloudfront/README.md).
+`/config/runtime.json` (no-cache, strict schema; one per environment, naming its own `environment`: the shell is built once), `/remotes/manifest.json` (no-cache; entries carry `integrity`), `/remotes/<name>/<version>/remoteEntry.js` (immutable), `/version.json` (no-cache, app-update polling), `/assets/*` (immutable, pinned by `integrity` in `index.html`), `/csp-report` (Lambda, `x-origin-verify`). Behaviours: [`examples/cloudfront/README.md`](../examples/cloudfront/README.md).
 
 ## Telemetry (`/otel`)
 

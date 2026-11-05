@@ -3,7 +3,7 @@
 // .state at the repository root (gitignored). Nothing here talks to Docker; the containers
 // (docker-compose.yml) read .state.
 //
-//   .state/web/shell/          the example shell, built for this environment (PLATFORM_ENVIRONMENT=staging)
+//   .state/web/shell/          the example shell (one build; the environment comes from runtime.json)
 //   .state/web/remote/         the tenders remote
 //   .state/web/runtime.json    /config/runtime.json for this environment
 //   .state/lambda/csp-report.zip   examples/cloudfront/csp-report/handler.mjs bundled with the SDK (esbuild)
@@ -59,8 +59,8 @@ async function buildWeb() {
   }
   log('building examples/remote-tenders');
   await webpackBuild('remote-tenders', join(STATE, 'web/remote'), {});
-  log(`building examples/shell (PLATFORM_ENVIRONMENT=${STACK.environment}, BUILD_VERSION=${STACK.shellVersion})`);
-  await webpackBuild('shell', join(STATE, 'web/shell'), { PLATFORM_ENVIRONMENT: STACK.environment, BUILD_VERSION: STACK.shellVersion });
+  log(`building examples/shell (BUILD_VERSION=${STACK.shellVersion}; one build for every environment)`);
+  await webpackBuild('shell', join(STATE, 'web/shell'), { BUILD_VERSION: STACK.shellVersion });
   // The shell's public/ (config/runtime.json) is NOT copied: this environment uploads its own runtime.json.
 
   log('bundling the /csp-report Lambda (esbuild, node22, ESM)');
@@ -85,9 +85,11 @@ async function buildWeb() {
 // ── 2. runtime.json, CSP and the CloudFront inputs ─────────────────────────────────────────────
 function runtimeJson() {
   const base = JSON.parse(readFileSync(join(ROOT, 'examples/shell/public/config/runtime.json'), 'utf8'));
-  // Only what differs per environment: the IdP origin, and sampleRatio 1 so every trace is kept for the assertions.
+  // Only what differs per environment: the environment (never inherited: the example base has none,
+  // so a config that forgets it stops the shell), the IdP origin, and sampleRatio 1 so every trace is kept for the assertions.
   return {
     ...base,
+    environment: STACK.environment,
     telemetry: { ...base.telemetry, sampleRatio: 1 },
     auth: { ...base.auth, idpOrigin: STACK.authOrigin },
   };

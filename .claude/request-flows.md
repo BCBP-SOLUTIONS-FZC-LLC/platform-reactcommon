@@ -4,8 +4,8 @@ The flows a change most often touches, in order. Authoritative detail: [LLD §8]
 
 ## Shell Bootstrap (`examples/shell/src/bootstrap.tsx`)
 
-1. `installTrustedTypesPolicy()`, then `initializeCore({ serviceName, domain, environment, buildVersion })`.
-2. `loadRuntimeConfig()` → `setRuntimeConfig(cfg)` (strict schema, deep-frozen), `setConsentProvider(cmp)`.
+1. `installTrustedTypesPolicy()`, then `cfg = await loadRuntimeConfig()` (strict schema, checked against its own `environment`).
+2. `initializeCore({ serviceName, domain, environment: cfg.environment, buildVersion })` (one build for every environment), `setRuntimeConfig(cfg)` (deep-frozen), `setConsentProvider(cmp)`.
 3. `initializeTracing`, `initializeLogging`, `initializeMetrics` (all to `cfg.telemetry.otlpBaseUrl`, same origin), `installGlobalErrorHandlers()`, `startWebVitals()`, `setFlagProvider(runtimeConfigFlagProvider())`.
 4. `createOidcProvider(cfg.auth, workspaceResolver)` → `setTokenSource(initializeAuth(idp))` → `await idp.init()`. `init()` may redirect once (`prompt=none`) and never settle.
 5. Anonymous: choose a workspace and `idp.login(...)`, unless the reason is `signed-out` (show "You are signed out") or `device-clock` (show "Check your device's clock"): never an automatic login there.

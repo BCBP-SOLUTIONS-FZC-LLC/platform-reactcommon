@@ -24,6 +24,7 @@ function main(): void {
       packageJsonFullPath: join(SDK_DIR, 'package.json'),
       configObject: {
         projectFolder: SDK_DIR,
+        newlineKind: 'lf', // the default is CRLF, which left the reports with mixed endings
         mainEntryPointFilePath: entry,
         compiler: { tsconfigFilePath: join(SDK_DIR, 'tsconfig.json') },
         apiReport: {

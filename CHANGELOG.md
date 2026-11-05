@@ -5,15 +5,59 @@ All notable changes to this project are documented in this file. The three packa
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html); see [VERSIONING.md](VERSIONING.md) (pre-release `1.0.0-alpha.N` until the first environment).
 
+How this file is organised:
+- **One section per release**, newest first. A released section is frozen: it is the release's GitHub Release notes (`extract-release-notes.sh`), and breaking entries say how to upgrade.
+- **`[Unreleased]`** collects what the next release will contain, grouped by date and topic (`### Added (YYYY-MM-DD — topic)`), as the platform services' changelogs do. Each entry names the subpath or package, the files, the tests, and what it replaced (*Previously:*). It ends with the gaps still open, so the release notes say what is not done yet.
+- The release PR renames `[Unreleased]` to the version (`.claude/skills/release/release-changelog.mjs`); every change to a published package also carries a `.changeset/*.md` (the *Changelog check* workflow requires both).
+
 ## [Unreleased]
 
-### Added
+Not breaking. The shell upgrades first: a remote built against this version requires it (`^<this version>`).
 
-- `/i18n`: `formatDate` accepts a string. A calendar date `YYYY-MM-DD` (a due date, a birthday) is formatted as that day in every time zone; `new Date('2026-10-25')` is midnight UTC, which showed Oct 24 west of UTC. An RFC 3339 date-time with `Z` or an offset is an instant (fractions past milliseconds, as Go's RFC3339Nano sends, are cut). Any other string, a date-time without an offset, or a day that does not exist gives `''`. From mfe-dashboard's SDK audit.
+### Added (2026-11-06 — `runtime.json` names the environment: one shell build for every environment)
 
-### Changed
+- **`/config`: optional `environment` in `runtime.json`** (`local`, `dev`, `test`, `staging`, `prod`, the registry vocabulary; no aliases). One shell build is promoted through every environment instead of one build per environment, as the Frontend Architecture Constitution's "build once, deploy everywhere" requires. A host page loads the config first, passes `cfg.environment` to `initializeCore`, then calls `setRuntimeConfig`. Existing configs without it, and shells that call `initializeCore` first, keep working. Set it in a deployed `runtime.json` only once the page runs this version: earlier versions refuse the unknown key.
+  - `loadRuntimeConfig` (which stores nothing) checks local http origins against the file's own `environment` when no identity is set yet. `setRuntimeConfig` does not: a config set before `initializeCore` must not vouch for itself (`packages/frontend-sdk/src/config/runtime-config.ts`, `schema.ts`).
+  - Once the identity is set, a config whose `environment` differs is a `RuntimeConfigError` (`environment: must equal the page identity's environment`).
+  - Tests: `test/unit/config/config.test.ts` (the vocabulary, load-before-identity, set-before-identity refused, a mismatch on both paths).
 
-- `/logging`: while logging is not running (before `initializeLogging`, with `telemetry.enabled: false`, or on a remote's standalone page, which has no collector), `warn` and `error` now go to the console in every environment, redacted; before, they were dropped outside local and dev. `debug` and `info` still go to the console only in local and dev, and once logging runs nothing changes. From mfe-dashboard's SDK audit: a standalone page's warning that `runtime.json` is unavailable was lost in test, staging and prod.
+### Changed (2026-11-06 — the identity and the example shell follow the runtime environment)
+
+- **`/core`: `initializeCore` throws when the runtime config is already set and names another environment** (`packages/frontend-sdk/src/core/identity.ts`; it reads the runtime slot, so `/core` still imports nothing from `/config`). Together with the entry above, a page can't end up running as one environment with a config written for another. Test: `make initializeCore refuse another environment than the config set before it`.
+  *(Previously: `initializeCore` did not look at the config.)*
+- **`examples/shell` is built once for every environment.** `bootstrap.tsx` loads `runtime.json`, refuses one without `environment` (the "unavailable" page), then calls `initializeCore` with it. `__ENVIRONMENT__`, `PLATFORM_ENVIRONMENT` and `environment.mjs` are gone from the shell's build; `__BUILD_VERSION__` stays. The example base `examples/shell/public/config/runtime.json` has no `environment` on purpose, so a deployed file copied from it fails closed instead of running as another environment. Test: `test/e2e/shell.test.tsx` (the identity takes the file's environment; a file without one stops at the static page), replacing review 2 item 1's build-time check.
+  *(Previously: a production build without `PLATFORM_ENVIRONMENT` failed, and each environment needed its own build.)*
+- **The integrated stack builds the shell once** and writes `environment` into the environment's `runtime.json` (`test/stack/scripts/prepare.mjs`). Run on 2026-11-06: 61 passed; the one failure is integrated report Issue 12 (IAM, below).
+
+### Added (2026-11-05 — calendar dates in `formatDate`, from mfe-dashboard's SDK audit)
+
+- **`/i18n`: `formatDate` accepts a string** (`packages/frontend-sdk/src/i18n/i18n.ts`):
+  - a calendar date `YYYY-MM-DD` (a due date, a birthday) is that day in every time zone, formatted in UTC so neither the viewer's zone nor `o.timeZone` can shift it; days that don't exist (`2026-02-30`) give `''`, and years 0–99 stay themselves;
+  - an RFC 3339 date-time with `Z` or an offset is an instant; fractions past milliseconds (Go's RFC3339Nano) are cut, since ECMAScript only guarantees three digits;
+  - any other string, or a date-time without an offset (local time, a different instant on each viewer's clock), gives `''`.
+  Tests: `test/unit/i18n/i18n.test.ts`. PR #54.
+  *(Previously: `formatDate(d: Date | number)` only. `new Date('2026-10-25')` is midnight UTC, which showed **Oct 24** west of UTC; mfe-dashboard had its own `calendarDate()` helper.)*
+
+### Changed (2026-11-05 — warnings reach the console while logging is off, from mfe-dashboard's SDK audit)
+
+- **`/logging`: `warn` and `error` go to the console in every environment while logging is not running** (before `initializeLogging`, with `telemetry.enabled: false`, or on a remote's standalone page, which has no collector), redacted like an exported record. `debug` and `info` still reach the console only in local and dev; once logging runs, nothing changes (`packages/frontend-sdk/src/logging/logging.ts`). Tests: `test/unit/logging/logging.test.ts`. PR #54.
+  *(Previously: dropped outside local and dev, so a standalone page's "`runtime.json` unavailable" warning was lost in test, staging and prod.)*
+
+### Changed (2026-11-06 — repository: API reports, documentation, security policy)
+
+- **API reports are written with LF line endings** (`newlineKind: 'lf'` in `scripts/api-report.ts`); five reports that were CRLF are normalised, with no content change. *(Previously: api-extractor's CRLF default left mixed endings that flipped on regeneration.)*
+- **Documentation modelled on iam-org-membership's:** ARCHITECTURE.md gains nine sections with a diagram each (workspace resolution, integration touchpoints, cache strategy, data model, cross-tab events, workspace isolation, deployment, schema lifecycle, implementation decisions); the README gains browser storage and messaging, SDK events, rate limits and backoff, background activity, running the integrated stack, environment variables, alerts and dashboards, Docker; CONTRIBUTING, VERSIONING and SECURITY gain their missing sections.
+- **One security response timeline.** `SECURITY.md` and `.github/SECURITY.md` (the page GitHub shows reporters) gave different targets; both now say 48 hours to acknowledge, 5 business days to assess, 14 days to a fix for critical or high.
+
+### Known gaps (open at this point)
+
+The full register is LLD §15. The ones that block `1.0.0`:
+- **Staging validation on real AWS and Keycloak.** The integrated stack emulates AWS (floci).
+- **Tier 1 `platform_web_*` metric names** await governance ratification; until then the SDK records none of them.
+- **Integrated report Issue 12 reopened (IAM):** on a fresh stack, AuthZ Enrichment's first membership lookup can exceed its 120 ms cold timeout and the first P-35 is denied 503. The SDK's retry hides it for that GET; a non-idempotent first call would fail.
+- **Gateway issues 3, 9 and 14** (Envoy's own errors are not problem+json; JWKS caching on key rotation; `x-request-id` rewritten), with Platform.
+- **The deploy pipeline's `environment` check:** each environment's `runtime.json` must name its own environment; the SDK trusts the deployed file.
+- **No bundle-size budget** in CI (measured 2026-11-06: the example shell's JavaScript is about 198 KB gzipped), and no load or soak testing yet.
 
 ## [1.0.0-alpha.5] - 2026-11-05
 

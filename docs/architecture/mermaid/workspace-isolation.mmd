@@ -1,0 +1,15 @@
+flowchart TD
+    signin["Signed in to a workspace"] --> ns{"Namespace"}
+    ns -- "paid realm" --> nsp["tenant-acme"]
+    ns -- "trial realm" --> nst["trial:&lt;tenant_id&gt;<br/>(the realm alone would mix tenants)"]
+    ns -- "not signed in" --> anon["anon: set() is a no-op with a dev warning<br/>nothing is written a later tenant could read"]
+    nsp & nst --> keys["storage(appId).set(k, v)<br/>→ frontend-sdk:storage:&lt;namespace&gt;:&lt;appId&gt;:&lt;k&gt;<br/>token-like keys refused (ForbiddenStorageKeyError)"]
+
+    subgraph clear["What clears it (clearAllAppStorage + forgetUser)"]
+        c1["logout(): every /storage key, both areas; session id rotated; signed-out mark"]
+        c2["switchWorkspace(): same, then a new sign-in"]
+        c3["Sign-in by another user: SHA-256(realm + sub) differs from auth:last-user"]
+        c4["Another tab's logout or switch: forgetUser() in this tab"]
+    end
+    keys --> clear
+    clear --> kept["Kept: workspace cache, RUM session id (rotated), keys other code wrote"]

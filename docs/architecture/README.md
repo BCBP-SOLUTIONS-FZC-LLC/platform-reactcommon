@@ -13,9 +13,17 @@ Standalone Mermaid source files. [`ARCHITECTURE.md`](../../ARCHITECTURE.md) embe
 | [`auth-refresh-restore.mmd`](mermaid/auth-refresh-restore.mmd) | Session states: silent restore, single-flight refresh, ambiguous failure, expiry kinds, cross-tab events | § Session lifecycle |
 | [`remote-loading.mmd`](mermaid/remote-loading.mmd) | Manifest validation, kill switch, script injection (SRI, Trusted Types), share scope, retries, boundary, chunk reload, version polling | § Remote loading |
 | [`error-handling.mmd`](mermaid/error-handling.mmd) | Response → `ProblemError` / synthetic problem → gateway deny codes → UI and error boundaries | § Error handling (RFC 9457) |
+| [`workspace-resolution.mmd`](mermaid/workspace-resolution.mmd) | `chooseWorkspace` before sign-in: URL slug, workspace cache, PUB-1, the realm-fits check, the identifier-first screen | § Workspace resolution before sign-in (PUB-1) |
+| [`integration-touchpoints.mmd`](mermaid/integration-touchpoints.mmd) | Every call the SDK makes outside the page, its bound and what a failure does | § Integration touchpoints |
+| [`cache-strategy.mmd`](mermaid/cache-strategy.mmd) | Memory, localStorage, sessionStorage and HTTP caches with their bounds | § Cache strategy |
+| [`data-model.mmd`](mermaid/data-model.mmd) | `runtime.json`, the `PlatformRuntime`, the manifest, storage keys, the workspace cache, memory-only tokens | § Data model |
+| [`cross-tab-events.mmd`](mermaid/cross-tab-events.mmd) | `BroadcastChannel('platform-auth')` logout and workspace switch, shared localStorage marks, runtime topics → React hooks | § Cross-tab and in-page events |
 | [`telemetry-pipeline.mmd`](mermaid/telemetry-pipeline.mmd) | Logs, spans and metrics → redaction, sampling, registration checks → consent → bounded queues → `/otel` | § Telemetry pipeline |
+| [`workspace-isolation.mmd`](mermaid/workspace-isolation.mmd) | Storage namespaces per workspace and everything that clears them | § Workspace isolation in the browser |
 | [`contracts-drift.mmd`](mermaid/contracts-drift.mmd) | Pinned backend commits → `sync-contracts` → generated files → CI drift gates | § Contracts and drift control |
 | [`ci-pipeline.mmd`](mermaid/ci-pipeline.mmd) | `ci.yml` job graph, `release.yml` (verify → gates → GitHub Release), changelog check | § CI and release |
+| [`deployment.mmd`](mermaid/deployment.mmd) | One build per app, S3 objects in deploy order, CloudFront behaviors and headers | § Deployment |
+| [`schema-lifecycle.mmd`](mermaid/schema-lifecycle.mmd) | Generated backend contracts vs the browser-facing schemas this repo owns, and how each changes | § Schema lifecycle |
 | [`documentation-assets.mmd`](mermaid/documentation-assets.mmd) | Documentation sources, what keeps each in sync, where they are rendered | § Documentation assets |
 
 To render locally, open any `.mmd` file in a Mermaid-aware IDE (VS Code + Mermaid Preview, IntelliJ + Mermaid plugin) or paste it into [mermaid.live](https://mermaid.live).

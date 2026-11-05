@@ -1,0 +1,28 @@
+flowchart TD
+    subgraph memory["Memory only (one page, gone on reload)"]
+        m1["Tokens: access · refresh · ID<br/>/auth closure; never storage, channel, log or span"]
+        m2["In-flight GETs: one per URL + token + headers<br/>dedupe until the response; no response cache"]
+        m3["Remote containers: one per remote per page<br/>a failed or timed-out load is forgotten"]
+        m4["i18n catalogs per namespace + locale<br/>load ≤ 10 s; failed: retried 2, 4, 8 s while shown"]
+        m5["Intl formatters: ≤ 200 per kind, then cleared<br/>key = locale + options"]
+        m6["Manifest · runtime config · flags · authz subject<br/>on the PlatformRuntime, frozen"]
+    end
+
+    subgraph local["localStorage (shared by tabs, outlives the page)"]
+        l1["Workspace cache: ≤ 20 { slug, realm, trial }<br/>kept by clearAllAppStorage: the next sign-in needs it"]
+        l2["RUM session id: 24 h, rotated on logout, switch, idle"]
+        l3["auth: signed-out mark · last activity · last user (SHA-256)"]
+        l4["/storage values: storage:&lt;namespace&gt;:&lt;appId&gt;:&lt;key&gt;<br/>cleared on logout, switch, another user"]
+    end
+
+    subgraph session["sessionStorage (one tab)"]
+        s1["Pending login per state: 10 min"]
+        s2["Restore loop guard · chunk-reload guard (per version)"]
+        s3["/storage area 'session' (drafts)"]
+    end
+
+    subgraph http["HTTP caches (CloudFront + browser)"]
+        h1["no-cache + ETag: runtime.json · manifest.json · version.json · index.html"]
+        h2["immutable, 1 year: /assets/* (content-hashed) · /remotes/&lt;name&gt;/&lt;version&gt;/*"]
+        h3["CachingDisabled: /api/* · /otel/* · /csp-report"]
+    end

@@ -40,6 +40,7 @@ export interface RuntimeConfig {
         readonly redirectPath: string;
         readonly signInUrl?: string | undefined;
     };
+    readonly environment?: Environment | undefined;
     readonly flags: Readonly<Record<string, boolean | string | number>>;
     // (undocumented)
     readonly i18n: {

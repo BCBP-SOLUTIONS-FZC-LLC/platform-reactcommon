@@ -8,7 +8,7 @@
 // - the remote's entry <script> (mfe setMfeInternalsForTests.injectScript): happy-dom does not run
 //   webpack's remoteEntry.js; the stub defines the container global the way it does, exposing the
 //   real examples/remote-tenders/src/EditTender module;
-// - __ENVIRONMENT__ / __BUILD_VERSION__: webpack DefinePlugin constants, set as globals here;
+// - __BUILD_VERSION__: a webpack DefinePlugin constant, set as a global here (the environment comes from runtime.json);
 // - react-dom/client's createRoot is wrapped only to unmount the app root between page loads.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,6 +17,8 @@ import type { Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getSession } from '../../packages/frontend-sdk/src/auth/index.ts';
 import { SIGNED_OUT_KEY } from '../../packages/frontend-sdk/src/auth/oidc.ts';
+import { getIdentity } from '../../packages/frontend-sdk/src/core/index.ts';
+import { RuntimeConfigError, tryGetConfig } from '../../packages/frontend-sdk/src/config/index.ts';
 import { resetRuntimeForTests } from '../../packages/frontend-sdk/src/internal/runtime.ts';
 import { PlatformProblemTypes } from '../../packages/frontend-sdk/src/problem/index.ts';
 import { resetContainersForTests, setMfeInternalsForTests } from '../../packages/frontend-sdk/src/mfe/remote.ts';
@@ -53,7 +55,7 @@ const editTender = async () => (await example('remote-tenders/src/EditTender.tsx
 /** The deploy's /config/runtime.json, pointed at the fake Keycloak, every trace sampled, no load retries. */
 const RUNTIME_CONFIG = (() => {
   const c = JSON.parse(readFileSync(join(testenv.root, 'examples/shell/public/config/runtime.json'), 'utf8'));
-  return { ...c, auth: { ...c.auth, idpOrigin: IDP }, telemetry: { ...c.telemetry, sampleRatio: 1 }, remotes: { ...c.remotes, retries: 0 } };
+  return { ...c, environment: testenv.environment, auth: { ...c.auth, idpOrigin: IDP }, telemetry: { ...c.telemetry, sampleRatio: 1 }, remotes: { ...c.remotes, retries: 0 } };
 })();
 const ENTRY = '/remotes/tenders/1.0.0/remoteEntry.js';
 const TENANT = '7d3c1f9e-2b4a-4c6d-8e0f-1a2b3c4d5e6f';
@@ -174,7 +176,6 @@ beforeEach(async () => {
     .on('GET /api/tenders/:id', (req) => Response.json(TENDER, { headers: { 'x-request-id': req.headers.get('x-request-id')! } }));
   vi.stubGlobal('fetch', net.fetch);
   vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);
-  vi.stubGlobal('__ENVIRONMENT__', testenv.environment);
   vi.stubGlobal('__BUILD_VERSION__', '1.0.0');
 });
 
@@ -186,6 +187,23 @@ afterEach(async () => {
 });
 
 describe('the reference shell', () => {
+  // Replaces review 2 item 1's build check (a prod shell silently built as 'dev'): the environment is now runtime data.
+  it('is built once for every environment: the identity takes runtime.json\'s environment, and a file without one stops at the static page', async () => {
+    await load('/');
+    expect(getIdentity()?.environment).toBe(testenv.environment);
+    expect(tryGetConfig()?.environment).toBe(testenv.environment);
+
+    // The example base has no environment on purpose: a deploy that forgets to set its own fails closed.
+    const { environment: _, ...withoutEnvironment } = RUNTIME_CONFIG;
+    net.on('GET /config/runtime.json', withoutEnvironment);
+    await expect(load('/')).rejects.toBeInstanceOf(RuntimeConfigError);
+    expect((bootError as RuntimeConfigError).issues.map((i) => i.path)).toEqual(['environment']);
+    expect(getIdentity()).toBeUndefined();
+    expect(tryGetConfig()).toBeUndefined();
+    expect(page.assigned).toEqual([]);
+    bootError = undefined;
+  });
+
   it('anonymous → identifier screen → Keycloak (PKCE) → callback → the signed-in shell', async () => {
     await load('/');
     expect($('#signin-title')?.textContent).toBe('Sign in');

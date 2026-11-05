@@ -1,0 +1,22 @@
+flowchart TD
+    start(["Sign in needed: anonymous, no session to restore"]) --> lr{"session.reason = login-required<br/>(a silent restore named its workspace)?"}
+    lr -- yes --> use["Use that workspace"]
+    lr -- no --> force{"forceResolve?<br/>(the server ended the session)"}
+    force -- yes --> pub1
+    force -- no --> slug{"URL /t/&lt;slug&gt;/…<br/>(auth.workspacePathPrefix)?"}
+    slug -- no --> recent{"Workspace cache<br/>(localStorage, ≤ 20 entries, newest first)"}
+    recent -- "an entry" --> use
+    recent -- empty --> ask
+    slug -- yes --> cached{"Cached entry for this slug?"}
+    cached -- yes --> use
+    cached -- no --> pub1["PUB-1 resolve(slug)<br/>shell port WorkspaceResolver over ApiClient<br/>GET /api/v1/public/tenants/resolve, no token"]
+    pub1 -- "found" --> fits{"realm fits the slug?<br/>paid: paidRealmPrefix + slug · trial: trialRealm"}
+    fits -- yes --> cache["Cache { slug, realm, trial }"] --> use
+    fits -- no --> ask
+    pub1 -- "not found" --> ask["undefined → the shell's identifier-first screen<br/>(a different cached workspace is never used)"]
+    pub1 -- "unreachable / 429" --> fallback{"Cached entry for this slug?"}
+    fallback -- yes --> use
+    fallback -- no --> ask
+    ask -- "user types an identifier" --> pub1
+    use --> login["idp.login({ workspace, returnUrl })<br/>→ Keycloak /realms/&lt;realm&gt;/…/auth (PKCE S256)"]
+    login --> after["After sign-in: rememberWorkspace({ ...workspace, slug })<br/>trial slug from P-35 · an invitation's trial result has no slug and is not cached"]

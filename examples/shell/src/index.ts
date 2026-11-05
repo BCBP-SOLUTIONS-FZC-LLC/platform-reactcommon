@@ -1,5 +1,5 @@
 // Module Federation needs an async boundary before shared modules are used (design doc §C2).
-// Steps 2–3 (identity, runtime config) are fatal: a static page, console only.
+// Steps 2–3 (runtime config, identity) are fatal: a static page, console only.
 import('./bootstrap').then(
   (m) => m.bootstrap(),
 ).catch((e: unknown) => {

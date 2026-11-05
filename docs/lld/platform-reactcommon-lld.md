@@ -19,8 +19,10 @@
 | 1.1 | 2026-11-03 | Aligned with the first release `1.0.0-alpha.1`: GitHub Packages distribution and its publish gate (§14.1), React 19 only, sign-out global by default (§8.7), one keepalive budget for all three signals on hide and `pagehide` (§7.5), metrics sent on page hide (§7.3), the reference two-tier Collector (§7.6), the test layers and nightly integrated run (§14.3), open items (§15) |
 | 1.2 | 2026-11-03 | `@bcbp-solutions-fzc-llc/webpack-preset` supports Rspack 2 (`/rspack`) and Rsbuild 2 (`/rsbuild`) besides webpack 5, interoperable over the v1 Module Federation protocol (§13.1), released in `1.0.0-alpha.2` |
 | 1.3 | 2026-11-05 | Aligned with `[Unreleased]` (`1.0.0-alpha.4`, PRs #41–#46): container global `__platform_mfe_<name>` and `SdkVersionPlugin` (§13.1), prefixed `/storage` keys (§4.4), refresh backoff on 429 / 503 + `Retry-After` (§8.5), sign-out by form POST and dropping the user's page state (§8.7), whole-attempt remote timeout and fetch timeouts (§5.4.3, §8.9), synthetic 502s and byte bodies (§5.4.1), boundary `resetKeys` (§5.4.4), the global error rate limit (§11.1), Tier 3 label limit and the Collector's label bounds (§7.3, §7.6), CSS SRI (§13.1), runtime sharing per pre-release (§6.1), open items (§15) |
-| 1.4 | 2026-11-05 | `[Unreleased]`: optional `auth.signInUrl` in `runtime.json`; a remote's standalone page is its own host page and may load and set the runtime config (§12.1) |
+| 1.4 | 2026-11-05 | `1.0.0-alpha.5`: optional `auth.signInUrl` in `runtime.json`; a remote's standalone page is its own host page and may load and set the runtime config (§12.1) |
 | 1.5 | 2026-11-05 | `[Unreleased]`: `formatDate` takes calendar dates and RFC 3339 strings (§8.10); `warn` and `error` reach the console in every environment while logging is not running (§7.2) |
+| 1.6 | 2026-11-06 | `[Unreleased]`: optional `environment` in `runtime.json`; bootstrap steps 2–3 load the config before the identity, so one shell build serves every environment (§5.2, §6.2, §12.1, §12.2) |
+| 1.7 | 2026-11-06 | Aligned with `main` plus the runtime-environment branch: open items for the deploy-time `environment` check, the cold-start P-35 503 (integrated report Issue 12, reopened) and the measured bundle size (§15); API reports written with LF (§14.1) |
 
 ### Table of Contents
 
@@ -262,6 +264,7 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 |---|---|
 | `installTrustedTypesPolicy` before anything injects script or HTML | Under `require-trusted-types-for 'script'` the policy must exist first |
 | `initializeCore` before telemetry | Telemetry needs the identity (the OTel resource) |
+| `loadRuntimeConfig` before `initializeCore` (one build for every environment); `initializeCore` before `setRuntimeConfig` | The identity takes `cfg.environment`; `setRuntimeConfig` checks the config's `environment` against the identity's. A config set before `initializeCore` does not vouch for its own environment, and `initializeCore` refuses another environment than a config already set |
 | `setConsentProvider` before telemetry exports | Nothing leaves the page without consent |
 | `initializeAuth(idp)` before `idp.init()` and the first API call | `/http` reads the token source from the runtime |
 | `loadManifest` before `RemoteBoundary` renders | `loadRemote` reads the manifest from the runtime |
@@ -373,8 +376,8 @@ Created on first use on `globalThis[Symbol.for('@bcbp-solutions-fzc-llc/frontend
 
 The order is fixed by design doc §C2 and drawn in ARCHITECTURE.md § Shell bootstrap:
 1. Trusted Types policy.
-2. Core identity.
-3. Runtime config.
+2. Runtime config, loaded (`loadRuntimeConfig`, checked against the file's own `environment`).
+3. Core identity with the config's environment, then `setRuntimeConfig`.
 4. Consent provider.
 5. Tracing, logging, metrics, global handlers, web vitals.
 6. Runtime-config flags.
@@ -669,6 +672,7 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 
 | Key | Default | Rule |
 |---|---|---|
+| `environment` | none | registry vocabulary (`local`, `dev`, `test`, `staging`, `prod`). The page's environment before `initializeCore` for `loadRuntimeConfig` (the localhost-http rule); once the identity is set they must be equal. One build for every environment (§12.2). The deploy pipeline owns this key: a file deployed with `local`, `dev` or `test` relaxes the localhost-http and remote-integrity checks |
 | `api.baseUrl` | — (required) | same-origin path |
 | `api.timeoutMs` | 35000 | 1 000–300 000 |
 | `api.propagationAllowlist` | `[]` | exact origins |
@@ -695,8 +699,8 @@ The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are
 
 **The host page.** `initializeCore`, `loadRuntimeConfig` and `setRuntimeConfig` are called by the page's host: the shell, or a remote's own standalone page when no shell is present (that page is its own host). A remote's code that also runs inside a shell must not call them: it reads `tryGetConfig()`, which is the shell's config there. A standalone page that sends a signed-out user to sign in reads `tryGetConfig()?.auth.signInUrl` (mfe-dashboard's standalone log-out).
 
-### 12.2 Build-time constants (shell)
-`__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`) feed `initializeCore`. The example shell takes the environment from `PLATFORM_ENVIRONMENT`: a production build without it fails (a development build defaults to `dev`); the repository's `pnpm build` passes `dev` when it is unset. The SDK's own `__SDK_VERSION__` is defined when the SDK is built.
+### 12.2 Build-time constant (shell)
+`__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`) feeds `initializeCore`. The environment is **not** a build-time constant: `runtime.json`'s `environment` names it, the host page loads the config before `initializeCore` and passes it on, so one build is promoted through every environment (the example shell refuses a `runtime.json` without it). The SDK's own `__SDK_VERSION__` is defined when the SDK is built.
 
 ### 12.3 Reserved browser storage keys
 
@@ -788,7 +792,9 @@ See ARCHITECTURE.md § Testing strategy. Key guarantees under test:
 | `createTestPlatform` option for remote → domain (`remotes`) | Proposed, not in §C1 | A remote's own tests cannot register Tier 2/3 metrics under its `ownerDomain` |
 | changesets v3 pre mode | `changeset version` moves consumed changesets into `.changeset/pre/` instead of deleting them | `changelog-check.yml` accepts that as a release PR; `pnpm changeset pre exit` before `1.0.0` |
 | Staging validation on real AWS and Keycloak | Not run: the integrated stack emulates AWS with floci (gaps E-n in `docs/e2e/integrated-deployment-report.md`) | Unverified outside the stack: the global sign-out's form POST under a real CloudFront CSP (`form-action`), CSS SRI served by CloudFront, Chromium's `report-to` (needs valid certificates, E-6) |
-| Bundle-size budget | None: no size limit is checked in CI | A dependency or subpath can grow the shell's and remotes' bundles unnoticed |
+| Bundle-size budget | None: no size limit is checked in CI. Measured 2026-11-06: the example shell's JavaScript is about 198 KB gzipped across 35 files (React DOM 65 KB, OTLP export 14 KB, DOMPurify 12 KB); the example remote about 7 KB | A dependency or subpath can grow the shell's and remotes' bundles unnoticed |
+| `runtime.json` `environment` per environment | Owned by each deploy: the SDK trusts the deployed file. `local`, `dev` and `test` relax the localhost-http and remote-integrity checks | A prod `runtime.json` that says `dev` would run as `dev`; the shell's deploy pipeline should check the key equals the target environment |
+| Cold-start P-35 503 (integrated report Issue 12, reopened 2026-11-06) | IAM: on a fresh stack the first I-8 call can exceed AuthZ Enrichment's 120 ms cold timeout | The SDK's retry hides it for the session-context GET; a non-idempotent first call would fail. Needs the org-membership connection warm-up at readiness |
 | Load and soak testing | Not done | Behaviour under sustained traffic (refresh backoff at scale, Collector intake, long-lived tabs) is untested |
 | Telemetry export during a Collector outage | Each failed batch is counted and dropped; exports are not paused | A Collector outage costs every tab one failed request per batch until it recovers |
 | Design doc §C4 bootstrap diagram | The design record's diagram shows one session-context attempt; the shell retries a transient failure 3 times (§6.2, `examples/shell/src/session-context.ts`) | The diagram is noted, not redrawn |

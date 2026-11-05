@@ -195,6 +195,20 @@ L2  tracing · logging · metrics     L5  react · testing
 | Export pipelines (`/tracing`, `/logging`, `/metrics`) | OTLP/HTTP to `/otel`; drop-oldest bounded queues; consent gates; beacon on page hide |
 | Instrument port (`src/internal/instruments.ts`) | Where `/http`, `/mfe` and `/react` record platform metrics without importing names; a no-op until the Tier 1 names are ratified |
 
+### Browser storage and messaging
+
+| Concern | Technology | Notes |
+|---|---|---|
+| **Page state** | `PlatformRuntime` on `globalThis` (memory) | One per page, shared by every SDK copy; config, manifest and flags frozen |
+| **Tokens** | `/auth` closure (memory only) | Never storage, the channel, a log or a span; every page load restores with one silent `prompt=none` round trip |
+| **Durable state** | `localStorage` | SDK-reserved keys (session id, workspace cache, signed-out mark, last activity, last user) and `/storage` values per workspace; LLD §12.3 |
+| **Per-tab state** | `sessionStorage` | Pending login (10 min), restore loop guard, chunk-reload guard, `/storage` area `session` |
+| **Cross-tab messages** | `BroadcastChannel('platform-auth')` | `logout` and `workspace-switched` only |
+| **In-page events** | Runtime topics `session`, `flags`, `authz`, `read-only`, `i18n` | What the `/react` hooks subscribe to |
+| **Telemetry transport** | OTLP/HTTP JSON to same-origin `/otel` | `fetch`; on page hide and `pagehide`, `sendBeacon` / keepalive within one 60 KiB budget |
+
+Details and bounds: [ARCHITECTURE.md § Cache strategy](ARCHITECTURE.md#cache-strategy), [§ Data model](ARCHITECTURE.md#data-model), [§ Cross-tab and in-page events](ARCHITECTURE.md#cross-tab-and-in-page-events).
+
 ### Sibling platform libraries
 
 | Library | Relationship |
@@ -220,8 +234,8 @@ The shell runs the bootstrap once, in this order (design doc §C2; [`examples/sh
 
 ```ts
 installTrustedTypesPolicy();
-initializeCore({ serviceName: 'web-app', domain: 'portal', environment: __ENVIRONMENT__, buildVersion: __BUILD_VERSION__ });
-const cfg = await loadRuntimeConfig();
+const cfg = await loadRuntimeConfig();   // first: runtime.json names the environment, so one build serves every environment
+initializeCore({ serviceName: 'web-app', domain: 'portal', environment: cfg.environment!, buildVersion: __BUILD_VERSION__ }); // the reference shell checks it is set first (bootstrap.tsx)
 setRuntimeConfig(cfg);
 setConsentProvider(cmp);
 initializeTracing({ otlpBaseUrl: cfg.telemetry.otlpBaseUrl, sampleRatio: cfg.telemetry.sampleRatio, propagationAllowlist: cfg.api.propagationAllowlist });
@@ -345,9 +359,54 @@ During `1.0.0-alpha.N`, a breaking change bumps `N`. Each one is listed in [CHAN
 
 **`alpha.4` → `alpha.5`**: no breaking changes; `runtime.json` gains the optional `auth.signInUrl`. The shell upgrades first (a remote built against `alpha.5` requires `^1.0.0-alpha.5`, which an `alpha.4` shell refuses), and a `runtime.json` sets `auth.signInUrl` only once its page runs `alpha.5` (earlier versions refuse the unknown key).
 
+**`alpha.5` → `alpha.6`** (pending under `[Unreleased]`): no breaking changes. To build the shell once for every environment, add `environment` to each environment's `runtime.json`, load the config before `initializeCore` and pass `cfg.environment` (`examples/shell/src/bootstrap.tsx`); then drop the build-time environment. Shells that keep calling `initializeCore` first still work. Set `environment` only once the page runs `alpha.6`.
+
 `1.0.0` is cut with the first environment, and SemVer is strict from then on.
 
 ---
+
+### 12. Subscribing to SDK events
+
+The shell's state changes reach every remote through the runtime, not imports. In React, use the hooks; outside components, the two subscription functions. Each returns an unsubscribe function.
+
+| Change | React | Outside components |
+|---|---|---|
+| Session (signed in, expired, signed out, another tab's logout) | `useSession()`, `useCurrentUser()`, `useWorkspace()` | `getSession()` |
+| Permissions and the subject | `useHasPermission()`, `<Can>` | — |
+| Feature flags, kill switches | `useFeatureFlag()` | `getFlag()` |
+| Read-only tenant (a 403 deny) | `useReadOnly()` | — |
+| Locale and catalogs | `useLocale()`, `useT()` | — |
+| A new deployment | `useAppUpdate()` | `subscribeAppUpdate(listener)` |
+| Network online / offline | `useOnlineStatus()` | `subscribeOnline(listener)` |
+
+### 13. Rate limits and backoff
+
+The SDK has no request rate limiter: limits are the gateway's and WAF's (`/otel` and `/csp-report` have WAF rate rules, `examples/cloudfront`). What the SDK does is back off:
+
+| Where | Behaviour |
+|---|---|
+| `ApiClient` retries | Idempotent calls only (default 2, at most 5); 250 ms doubling to 5 s with jitter; a `Retry-After` is honoured up to 30 s |
+| Token refresh | Retried only on 429, or 503 with `Retry-After`: 2 s doubling to 30 s, while the access token is still valid |
+| Global error logs | The same error (type, message, first stack frame) is logged a bounded number of times per minute; the rest are counted |
+| "No response" logs | At most 10 per minute per page |
+| Telemetry | Bounded queues drop the oldest; at most two sends in flight per signal |
+
+### 14. Background activity you may observe
+
+What a signed-in page does on its own, without user input:
+
+| Activity | When | Purpose |
+|---|---|---|
+| Token refresh | 60 s before the access token expires (at most a third of its lifetime, with jitter) | Keep the session; one in flight per tab |
+| Idle check | Every 15 s (or the idle timeout, if shorter) | Expire after `auth.idleTimeoutMs` without activity in any tab |
+| Activity write | At most every 5 s while the user interacts | Share activity across tabs (`auth:last-activity`) |
+| Silent restore | Page load with a cached workspace and no tokens; after `online` following a lost refresh | One `prompt=none` redirect per tab (loop-guarded) |
+| `/version.json` poll | Every `appUpdate.pollIntervalMs` | Offer an update when a new build is deployed |
+| Span export | Batches every 5 s (up to 512, queue 2 048) | Traces |
+| Log export | Batches of 50, every 5 s (queue 1 000) | Logs |
+| Metric export | Every 60 s (`exportIntervalMs`), and on page hide | Tier 2/3 metrics |
+| Catalog retry | 2, 4 and 8 s after a failed i18n load, while its locale is shown | Recover a missing catalog |
+| P-35 retry (example shell) | 1, 2 and 4 s after a transient failure | Recover permissions and tenant flags |
 
 ## Local development
 
@@ -431,7 +490,7 @@ pnpm exec vitest run -t "single-flight"
 
 ### Building the examples
 
-`pnpm build` builds the packages and then `examples/shell` and `examples/remote-tenders` (webpack production builds into their `dist/`). The shell's environment comes from `PLATFORM_ENVIRONMENT` (`pnpm build` passes `dev` when it is unset); building the shell on its own in production mode (`node build.mjs` in `examples/shell`) without it fails, so a deploy never ships a `dev` shell by accident. `pnpm examples:check` then verifies the bundles:
+`pnpm build` builds the packages and then `examples/shell` and `examples/remote-tenders` (webpack production builds into their `dist/`). The shell is built once for every environment: its environment comes from `runtime.json` at runtime, and a `runtime.json` without `environment` stops it at the "unavailable" page. `examples/shell/public/config/runtime.json` is a base with no `environment` on purpose: each environment's file sets its own, so a copied base fails closed instead of running as another environment. `pnpm examples:check` then verifies the bundles:
 - the remote defines its container as `window.__platform_mfe_tenders` and contains no SDK code;
 - nothing needs `eval`;
 - source maps are emitted but hidden;
@@ -447,6 +506,62 @@ The example shell can't run end to end on its own: it needs Keycloak, the IAM AP
 | `actionlint`, `shellcheck -x` | Workflows and `.github/scripts` (both clean; CI runs the pin and hygiene checks) |
 | api-extractor reports | Review public API changes in `packages/frontend-sdk/api/` |
 | [mermaid.live](https://mermaid.live) or an IDE preview | Architecture diagrams in `docs/architecture/mermaid/` |
+
+---
+
+## Running the integrated stack locally
+
+`docker-compose.yml` is the `test/stack` harness: the example shell and tenders remote behind a CloudFront emulation, against real Keycloak, Envoy, IAM services and Collectors. Use it to see a change working end to end.
+
+### Step 1 — Prerequisites
+
+- Docker; `gh auth login` (the IAM services build from private Go modules: `stack-up` passes `gh auth token` to BuildKit as a secret, never to a file).
+- The IAM repositories checked out next to this workspace (`../../../XPertPMS/IAM`, or set `IAM_ROOT`).
+- Port 443 free, or `STACK_HTTPS_PORT` in `.state/stack.env`.
+
+### Step 2 — Start it
+
+```bash
+pnpm run stack-up        # builds the examples, renders runtime.json and the CloudFront inputs, starts and waits (≤ 10 min)
+```
+
+It prints `stack-up: ready (https://app.localtest.me)`. `*.localtest.me` resolves to 127.0.0.1; the edge's certificate is self-signed.
+
+### Step 3 — Use it
+
+Open `https://app.localtest.me`, sign in through Keycloak at `https://auth.localtest.me` (test users such as `alice` are defined in `test/stack/stack-constants.ts`), and open a tender. Or run the suite:
+
+```bash
+caffeinate -i pnpm run test-stack     # macOS: keep the Mac awake for the ~15 min run
+pnpm exec playwright test -c test/stack/playwright.config.ts --project=chromium -g "sign-out"   # one engine, one group
+```
+
+### Step 4 — Inspect
+
+| What | Where |
+|---|---|
+| A service's logs | `docker compose -p reactcommon-e2e logs <service>` (`authz-enrichment`, `org-membership`, `envoy`, `keycloak`, `edge`, `otel-gateway`) |
+| What reached the Collector | `.state/otel/{traces,logs,metrics}.jsonl` |
+| Envoy admin | `http://127.0.0.1:19901` |
+| Keycloak admin | `http://127.0.0.1:18080` |
+| A failed test | `test-results/stack/…/trace.zip` → `pnpm exec playwright show-trace <file>` |
+
+### Step 5 — Stop it
+
+```bash
+pnpm run stack-down
+```
+
+### Troubleshooting the stack
+
+| Symptom | Cause |
+|---|---|
+| `stack-up: set GO_PRIVATE_TOKEN or log in with gh` | Not logged in to `gh` |
+| Sign-in test fails with `[503, 200]` on `/api/v1/me/session-context` | Integrated report Issue 12 (reopened): a cold org-membership lookup; IAM's to fix |
+| A remote never renders (SRI mismatch) | A floci bucket from an older run: `stack-down`, then `stack-up` |
+| WebKit: "The Internet connection appears to be offline" | The Mac slept: re-run under `caffeinate -i`, on power |
+
+More known causes: [`.claude/skills/ci-triage/known-causes.md`](.claude/skills/ci-triage/known-causes.md); the full report: [`docs/e2e/integrated-deployment-report.md`](docs/e2e/integrated-deployment-report.md).
 
 ---
 
@@ -524,7 +639,7 @@ test/
 
 ### Coverage
 
-`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.7% today (1530 tests in 61 files). Don't lower the threshold.
+`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.7% today (1554 tests in 60 files). Don't lower the threshold.
 
 ---
 
@@ -534,6 +649,7 @@ The SDK reads no environment variables in the browser. Its configuration is one 
 
 | Key | Default | Purpose |
 |---|---|---|
+| `environment` | none | `local` · `dev` · `test` · `staging` · `prod`. Lets one shell build serve every environment: load the config first and pass it to `initializeCore`; when the identity is already set, they must match |
 | `api.baseUrl` | — (**required**) | Same-origin API path (`/api`) |
 | `api.timeoutMs` | `35000` | Client deadline per call (above gincommon's 30 s server timeout) |
 | `api.propagationAllowlist` | `[]` | Exact origins, besides the page's, that get correlation and trace headers |
@@ -548,9 +664,28 @@ The SDK reads no environment variables in the browser. Its configuration is one 
 | `i18n.defaultLocale` · `supportedLocales` | — (**required**) | Canonical BCP 47 tags |
 | `appUpdate.pollIntervalMs` | — (**required**) | `/version.json` polling (≥ 10 s) |
 
-Build-time constants (shell): `__ENVIRONMENT__` and `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`), passed to `initializeCore`. Fail a production build that has no environment rather than defaulting it (the example shell's `environment.mjs`).
+Build-time constant (shell): `__BUILD_VERSION__` (webpack's or Rspack's `DefinePlugin`, Rsbuild's `source.define`), passed to `initializeCore`. The environment is not a build-time constant: it comes from `runtime.json` (`environment`), so one build is promoted through every environment.
 
 ---
+
+## Environment variables
+
+The SDK reads none in the browser (its configuration is `runtime.json`, above). These are read at build, test and CI time:
+
+| Variable | Default | Read by | Purpose |
+|---|---|---|---|
+| `BUILD_VERSION` | the example's `package.json` version | `examples/shell` build | `__BUILD_VERSION__`, passed to `initializeCore` |
+| `NODE_AUTH_TOKEN` | — | `pnpm install` in consuming apps | GitHub Packages, `read:packages` |
+| `NODE_OPTIONS` | `--max-old-space-size=4096` in the build script | SDK build | The declaration build needs more than Node's default heap on 7 GB runners |
+| `OBSERVABILITY_DOMAIN` · `ENVIRONMENT` | `portal` · `test` | `test/testenv` (also from `.env`) | The page identity the suites boot with |
+| `SMOKE_BASE_URL` | unset (in-process) | `test/smoke` | Run the smoke suite against a deployed shell |
+| `BROWSER_TEST_PORT` | random | `test/browser` | The browser suite's local server port |
+| `PLATFORM_ROOT` · `IAM_REPOS_DIR` | `../..` · `../../../XPertPMS/IAM` | `contracts:sync`, `metrics:parity`, `metrics:proposal` | Where the pinned sibling repositories are checked out |
+| `IAM_ROOT` | `../../../XPertPMS/IAM` | `stack-up` (`prepare.mjs`, `docker-compose.yml`) | The IAM services the stack builds |
+| `SHARED_ROOT` | `../..` | `docker-compose.yml` | The platform libraries `go-probe` builds from (interop-tests, gincommon, events, pgcommon) |
+| `GO_PRIVATE_TOKEN` | `gh auth token` | `stack-up` | Private Go modules for the IAM images; a BuildKit secret only |
+| `STACK_HTTPS_PORT` | `443` | `.state/stack.env` | The edge's HTTPS port |
+| `PKG_DIR` | `dist-packages` | `publish:check` | Where the packed tarballs are |
 
 ## Security
 
@@ -589,6 +724,18 @@ This follows the [Enterprise Platform Observability Standard](docs/observability
 - **Tier 3, `<domain>_<service>_*`:** free to add through `getServiceMeter`, validated at registration and by `metricslint` in the remote's CI.
 
 The registry the SDK validates against: [metric-registry.md](docs/observability/metric-registry.md) (generated).
+
+### Alerts and dashboards
+
+Proposed with the Tier 1 metrics and inactive until they are ratified:
+
+| File | Contents |
+|---|---|
+| [`monitoring/prometheus/platform-web.rules.yml`](monitoring/prometheus/platform-web.rules.yml) | Recording and alert rules on `platform_web_*` (unit-tested by `platform-web.rules.test.yml` with `promtool`) |
+| [`monitoring/grafana/platform-web.json`](monitoring/grafana/platform-web.json) | The web dashboard |
+| [`monitoring/registry/platform-web.proposal.json`](monitoring/registry/platform-web.proposal.json) | The proposed registry entries (source of `tier1-proposal.md`) |
+
+Per-alert runbooks: [runbooks.md](docs/observability/runbooks.md).
 
 ### Tracing and logs
 
@@ -681,6 +828,31 @@ There's no image. The shell and remotes are static files on S3 behind CloudFront
 - the SPA-rewrite CloudFront Function (never a 403/404 → `index.html` error response, which would turn `/api` 404s into HTML);
 - the `/csp-report` Lambda;
 - the deploy order: remotes, then the manifest, then the shell, then `/version.json` last.
+
+---
+
+## Docker
+
+No image is built from this repository's packages. Docker runs two test harnesses.
+
+### What `docker-compose.yml` starts (the integrated stack)
+
+| Service | Image | Host port | Purpose |
+|---|---|---|---|
+| `edge` | `node:22-alpine` | `443` (`STACK_HTTPS_PORT`) | CloudFront emulation: TLS for `app.` / `auth.localtest.me`, the behaviors, the SPA rewrite, the response headers |
+| `floci` · `web-deploy` | `floci/floci:2.1.0-compat` | `127.0.0.1:18566` | AWS emulation (S3, CloudFront API, Lambda, WAF, SNS/SQS); `web-deploy` uploads the build in deploy order |
+| `keycloak` | `quay.io/keycloak/keycloak:26.8.1` | `127.0.0.1:18080` | Realms from iam-realm-provisioner's template |
+| `envoy` | `envoyproxy/envoy:v1.40.2` | `127.0.0.1:19901` (admin) | The gateway: `jwt_authn`, `ext_authz`, identity headers, rate limits |
+| `authz-enrichment` · `org-membership` (+ `org-membership-seed`) | built from `IAM_ROOT` | — | The real IAM services behind the gateway |
+| `go-probe` | built from platform-interop-tests' `go-probe` (`SHARED_ROOT`) | — | A gincommon service behind Envoy: problem+json shapes and header propagation |
+| `postgres` · `pgbouncer` · `valkey` | `postgres:17-alpine` · `edoburu/pgbouncer` · `valkey/valkey:8-alpine` | — | The IAM services' stores |
+| `otel-gateway` · `otel-aggregator` · `otel-collector` | `otel/opentelemetry-collector-contrib:0.164.0` | — | The reference two-tier Collector (`examples/collector`) and a sink to `.state/otel` |
+
+`stack-up` waits for every service's health check (`--wait`, 10 min) and force-recreates the services that read their config only at start.
+
+### The Collector suite
+
+`pnpm run test-collector` runs `examples/collector`'s configuration in the same Collector image, alone (CI job `collector`).
 
 ---
 

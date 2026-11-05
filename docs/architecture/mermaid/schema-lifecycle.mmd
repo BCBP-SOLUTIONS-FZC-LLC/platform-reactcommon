@@ -1,0 +1,18 @@
+flowchart TD
+    subgraph backend["Backend sources (pinned commits, contracts/sources.json)"]
+        g["platform: gincommon, fastapicommon, events, pgcommon, interop-tests<br/>registry vocab, log fields, redaction, problem types, headers, metric registry"]
+        i["IAM: authz-enrichment, org-membership<br/>gateway headers and deny codes, PUB-1 / P-35 cases"]
+    end
+    g & i -->|"pnpm contracts:sync"| gen["packages/frontend-sdk/contracts/*.json<br/>src/internal/generated/*.ts (never edited)"]
+    gen -->|"contracts:check in CI"| ci1["Drift fails Validate / Contracts"]
+
+    subgraph runtime["Browser-facing schemas the SDK owns"]
+        rj["runtime.json: RuntimeConfigSchema<br/>strict: unknown keys fail"]
+        mf["remotes/manifest.json: entry, version, ownerDomain, integrity"]
+        apir["Public API: api/*.api.md (api-extractor, LF)"]
+    end
+
+    rj --> add["A new key: optional, no default that changes behaviour → minor changeset<br/>deploy order: pages run the new SDK first, then the files set the key<br/>(an older SDK refuses the unknown key)"]
+    rj --> brk["A stricter or removed key → breaking: alpha bumps N; from 1.0.0 a major"]
+    apir --> ver["api:check in CI · changeset + CHANGELOG for every report diff"]
+    mf --> mfr["Invalid entries dropped with an error log; integrity required outside local, dev, test"]

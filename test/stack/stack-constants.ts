@@ -30,7 +30,7 @@ export const STACK = {
   authHost,
   appOrigin,
   authOrigin,
-  /** Page identity environment the shell is built with (a build-time define, examples/shell/webpack.config.mjs). */
+  /** Page identity environment: the deployed runtime.json's `environment` (one shell build for every environment). */
   environment: 'staging',
   shellVersion: `${pkgVersion('examples/shell')}-e2e`,
   remoteVersion: pkgVersion('examples/remote-tenders'),
