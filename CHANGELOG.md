@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-alpha.5] - 2026-11-05
+
 ### Added
 
 - `/config`: optional `auth.signInUrl` in `runtime.json`: where users sign in (the shell's page), an absolute https URL in normal form (http only on a local host, in the local, dev and test environments), without user info or fragment. No default. For pages without a shell: a remote run standalone sends a signed-out user there instead of a URL fixed at build time (mfe-dashboard LLD §15 item 14). Set it in `runtime.json` only once the shell (or standalone page) runs this version: earlier versions refuse the unknown key.
@@ -300,7 +302,8 @@ Fixed before the first release, after a security and production-readiness review
 - `/i18n`: a namespace registered during a locale change loads the new locale; `/logging`: `Map` and `Set` keep their contents.
 - `@bcbp-solutions-fzc-llc/eslint-plugin`: `no-identity-headers` sees computed `['headers']`; the import rules see template-literal `require` / `import()`.
 
-[Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.4...HEAD
+[Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.5...HEAD
+[1.0.0-alpha.5]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.4...v1.0.0-alpha.5
 [1.0.0-alpha.4]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.3...v1.0.0-alpha.4
 [1.0.0-alpha.3]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.2...v1.0.0-alpha.3
 [1.0.0-alpha.2]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.1...v1.0.0-alpha.2
