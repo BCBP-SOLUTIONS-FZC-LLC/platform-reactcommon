@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Example remote: `EditTender` submits with `onSubmit` (React 19's `<form action>` reset the fields, erasing the user's edits next to a 422's errors), sends the `version` it read (a concurrent edit is a 409, now reachable), shows the saved tender after a save, and still hands a save with no answer (timeout, network) to its error boundary.
 - `/tracing`: `shutdownTracing` leaves the OTel globals alone when tracing was started again while it flushed; a second `createTestPlatform` in a test file recorded no spans after an await.
 - `/config`: `loadRuntimeConfig` refuses a `timeoutMs` outside 1 to 2 147 483 647 (setTimeout would take it as about 1 ms).
+- Integrated stack (`test/stack`): the remote deploys under its package version plus a content hash, and `deploy-web.sh` fails when a version is already deployed with different content (a floci bucket that outlived a run served the previous build's remote against the new manifest: an SRI failure on every load); `stack-up` force-recreates the Collectors, Envoy and the edge shim, which read their bind-mounted config only at start (a stack left running kept days-old config); the sign-out tests assert the form POST.
 
 
 ## [1.0.0-alpha.3] - 2026-11-04

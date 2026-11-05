@@ -165,7 +165,7 @@ test.describe('the tenders remote, deep links and the API through Envoy → go-p
     const reqId = tender.request.headers()['x-request-id']!;
     expect(tender.response.headers()['x-request-id']).toBe(reqId);
     // The remote's chunks loaded relative to its entry (publicPath 'auto'), immutable.
-    const chunks = loaded.filter((a) => a.url.startsWith(`/remotes/tenders/${STACK.remoteVersion}/`) && !a.url.endsWith('remoteEntry.js'));
+    const chunks = loaded.filter((a) => a.url.startsWith(`/remotes/tenders/${STACK.deployedRemoteVersion()}/`) && !a.url.endsWith('remoteEntry.js'));
     expect(chunks.length).toBeGreaterThan(0);
     for (const c of chunks) expect(c, c.url).toMatchObject({ status: 200, cache: 'public, max-age=31536000, immutable' });
     expect(await cspViolations(page)).toEqual([]);
@@ -329,7 +329,11 @@ test.describe('sign-out and the shared device', () => {
     await expect(signOut).toHaveCount(1);
     const endSession = page.waitForRequest((r) => r.url().startsWith(`${STACK.issuer('tenant-acme')}/protocol/openid-connect/logout`));
     await navigateOnce(page, () => signOut.click());
-    const params = new URL((await endSession).url()).searchParams;
+    // A form POST (the ID token in the body, never the URL), let through by the production CSP's form-action.
+    const request = await endSession;
+    expect(request.method()).toBe('POST');
+    expect(new URL(request.url()).search).toBe('');
+    const params = new URLSearchParams(request.postData() ?? '');
     expect(params.get('client_id')).toBe('tender-web');
     expect(params.get('post_logout_redirect_uri')).toBe(`${STACK.appOrigin}/`);
     expect(params.get('id_token_hint')).toBeTruthy();
@@ -342,10 +346,28 @@ test.describe('sign-out and the shared device', () => {
     const t = new Traffic(page);
     await signInFromScratch(page, alice, 'acme');
     const idToken = t.latestTokens().id_token!;
-    // Exactly what IdentityProvider.logout({ global: true }) navigates to (oidc.ts).
-    const params = new URLSearchParams({ id_token_hint: idToken, client_id: 'tender-web', post_logout_redirect_uri: `${STACK.appOrigin}/` });
+    // Exactly what IdentityProvider.logout({ global: true }) does (oidc.ts postNavigate): a form POST.
+    const fields = { id_token_hint: idToken, client_id: 'tender-web', post_logout_redirect_uri: `${STACK.appOrigin}/` };
     await page.evaluate((k) => localStorage.setItem(k, String(Date.now())), SIGNED_OUT_KEY); // logout() sets this before navigating
-    await navigateOnce(page, () => page.goto(`${STACK.issuer('tenant-acme')}/protocol/openid-connect/logout?${params}`, { waitUntil: 'commit' }));
+    await navigateOnce(page, () =>
+      page.evaluate(
+        ({ action, fields }) => {
+          const form = document.createElement('form');
+          form.method = 'post';
+          form.action = action;
+          for (const [name, value] of Object.entries(fields)) {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = name;
+            input.value = value;
+            form.appendChild(input);
+          }
+          document.body.appendChild(form);
+          form.submit();
+        },
+        { action: `${STACK.issuer('tenant-acme')}/protocol/openid-connect/logout`, fields },
+      ),
+    );
     await page.waitForURL(`${STACK.appOrigin}/`);
     await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible();
     // SSO is gone: a sign-in now shows the credential form (prompt=login, and no session to reuse anyway).
@@ -416,7 +438,7 @@ test.describe('/otel: browser → CloudFront → the reference Collector (exampl
     const points = await eventually(() => (mine().length >= 3 ? mine() : undefined), 30_000, 'three cumulative points');
     expect(points.map((p) => p.value).at(-1)).toBe(9); // b's clock 10 minutes slow: counted all the same
     expect(new Set(points.map((p) => p.temporality))).toEqual(new Set([2]));
-    expect(points[0]!.resource).toEqual({ 'service.name': 'web-app' });
+    expect(points[0]!.resource).toEqual({}); // metrics keep no resource attribute: the labels carry the identity
     expect(metricPoints().filter((p) => p.name.startsWith('evil_'))).toEqual([]);
   });
 });

@@ -24,10 +24,16 @@ unset GO_PRIVATE_TOKEN
 # ("open /out/metrics.jsonl: no such file or directory").
 rm -f "$ROOT/.state/logs/"*.jsonl "$ROOT/.state/cloudfront/distribution.json"
 for f in traces logs metrics; do : > "$ROOT/.state/otel/$f.jsonl"; done
+# The Collectors, Envoy and the edge shim read their bind-mounted config (examples/collector/*.yaml, .state)
+# only when they start, and compose recreates a container only when its compose definition changes: without
+# --force-recreate a stack left running kept the configuration of the day it started.
+GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up -d --wait --wait-timeout 600 --force-recreate --no-deps \
+  otel-collector otel-aggregator otel-gateway
 GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up -d --wait --wait-timeout 600 \
   floci otel-collector otel-aggregator otel-gateway keycloak valkey postgres pgbouncer org-membership authz-enrichment go-probe envoy
+GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up -d --wait --wait-timeout 120 --force-recreate --no-deps envoy
 GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up --no-deps org-membership-seed web-deploy
-GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up -d --wait --wait-timeout 120 edge
+GO_PRIVATE_TOKEN= "${COMPOSE[@]}" up -d --wait --wait-timeout 120 --force-recreate --no-deps edge
 
 # Ready when the shell, the gateway and the IdP answer through the viewer entry.
 port=$(grep '^STACK_HTTPS_PORT=' "$ROOT/.state/stack.env" | cut -d"'" -f2)

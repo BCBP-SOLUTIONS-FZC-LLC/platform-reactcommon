@@ -42,7 +42,15 @@ cp_file() { # src key content-type cache-control
 # ── 1. S3 ─────────────────────────────────────────────────────────────────────────────────────
 aws s3api create-bucket --bucket "$BUCKET" --create-bucket-configuration LocationConstraint=ap-south-1 >/dev/null 2>&1 || true
 if aws s3api head-object --bucket "$BUCKET" --key "remotes/tenders/$REMOTE_VERSION/remoteEntry.js" >/dev/null 2>&1; then
-  log "remotes/tenders/$REMOTE_VERSION already uploaded: versions are never overwritten"
+  # Never overwritten; and never silently kept when this build differs (the manifest would pin the new
+  # entry's hash while the old one is served: every remote load would fail its SRI check).
+  aws s3 cp --only-show-errors "s3://$BUCKET/remotes/tenders/$REMOTE_VERSION/remoteEntry.js" /tmp/deployed-entry.js
+  # sha256sum, not cmp: the floci image has no diffutils.
+  if [ "$(sha256sum < /tmp/deployed-entry.js)" != "$(sha256sum < "$WORK/web/remote/remoteEntry.js")" ]; then
+    log "remotes/tenders/$REMOTE_VERSION is already deployed with different content: deploy this build under a new version"
+    exit 1
+  fi
+  log "remotes/tenders/$REMOTE_VERSION already uploaded (same build): versions are never overwritten"
 else
   cp_dir "$WORK/web/remote" "remotes/tenders/$REMOTE_VERSION" "$IMMUTABLE"
 fi
