@@ -28,7 +28,7 @@ Import a subpath (`@bcbp-solutions-fzc-llc/frontend-sdk/http`), never the root (
 
 ### Behaviour worth knowing before changing a call site
 
-- **`IdentityProvider.logout(o?)`**, the shell's `signOut`, `useSignOut()`: **global by default** (a form POST to the end-session endpoint ends the Keycloak session; the shell's CSP `form-action` must allow the IdP origin, `[Unreleased]` Breaking); `{ global: false }` is local-only (CHANGELOG `1.0.0-alpha.1`, Breaking). `dispose()` (optional) stops a provider without signing out.
+- **`IdentityProvider.logout(o?)`**, the shell's `signOut`, `useSignOut()`: **global by default** (a form POST to the end-session endpoint ends the Keycloak session; the shell's CSP `form-action` must allow the IdP origin, CHANGELOG `1.0.0-alpha.4`, Breaking); `{ global: false }` is local-only (CHANGELOG `1.0.0-alpha.1`, Breaking). `dispose()` (optional) stops a provider without signing out.
 - **`createApiClient`**: route templates only (`/tenders/:id`, no query or `..`); identity headers throw; the token goes to the page origin only; `retry.attempts` capped at 5; a redirect on a call with the token or correlation headers, or a 2xx body that is not the JSON it claims, is a synthetic 502; typed arrays and DataViews are sent as bytes, a `ReadableStream` body is refused.
 - **`useApi(fn, deps)`**: never returns the previous deps' data or error for new deps; `reload()` keeps the data. **`MFEErrorBoundary`** takes `resetKeys` (and resets when `mfe` changes), `RemoteBoundary` when `remote` or `module` changes; the default fallback takes focus.
 - **`installGlobalErrorHandlers()`**: rate-limited to 10 lines per signature and 60 per page a minute (the next line carries `suppressed`).

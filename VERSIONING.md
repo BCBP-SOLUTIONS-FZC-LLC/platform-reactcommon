@@ -86,7 +86,7 @@ None. During the alpha, breaking changes are expected and recorded in the CHANGE
 | Version | Status | Supported until |
 |---------|--------|-----------------|
 | `1.0.0-alpha.N` | **Current** pre-release line: latest release `1.0.0-alpha.6` (2026-11-05) (first tag: `v1.0.0-alpha.1`; `1.0.0-alpha.0` was never released) | Until `1.0.0` |
-| `[Unreleased]` | Nothing pending | — |
+| `[Unreleased]` | What the next release contains: [CHANGELOG.md § Unreleased](CHANGELOG.md#unreleased) | — |
 | `1.x` | Planned, from `1.0.0` | Active once released |
 
 | Release | Dist-tag | Released |
