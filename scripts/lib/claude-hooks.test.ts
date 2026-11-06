@@ -1,8 +1,10 @@
-// .claude/hooks: the PreToolUse guard (generated files and sibling repositories are never hand-edited) and
-// the PostToolUse formatter, run as Claude Code runs them: the tool call as JSON on stdin,
-// CLAUDE_PROJECT_DIR set, exit 2 = blocked / shown to Claude.
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+// .claude/hooks: the PreToolUse guards (generated files and sibling repositories are never hand-edited; release
+// tags only on a merged, green release commit; tokens never printed or read from .env) and the PostToolUse
+// formatter, run as Claude Code runs them: the tool call as JSON on stdin, CLAUDE_PROJECT_DIR set,
+// exit 2 = blocked / shown to Claude.
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -72,6 +74,133 @@ describe('guard-generated.sh', () => {
 
   it('ignores calls without a path', () => {
     expect(run('guard-generated.sh', undefined).code).toBe(0);
+  });
+});
+
+/** Runs a Bash-matcher hook on `command`, with extra environment (e.g. a fake `gh` first on PATH). */
+function runBash(name: string, command: string, projectDir = ROOT, env: Record<string, string> = {}): { code: number; stderr: string } {
+  const input = JSON.stringify({ tool_name: 'Bash', tool_input: { command } });
+  const r = spawnSync('bash', [hook(name)], { input, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: projectDir, ...env } });
+  return { code: r.status ?? -1, stderr: r.stderr };
+}
+
+describe('guard-secrets.sh', () => {
+  it.each([
+    ['gh auth token', 'gh auth token prints a token'],
+    ['gh auth token | pbcopy', 'gh auth token prints a token'],
+    ['pnpm build && gh auth token', 'gh auth token prints a token'],
+    ['echo $GO_PRIVATE_TOKEN', 'printing a token variable'],
+    ['printf "%s" "${NODE_AUTH_TOKEN}" > token.txt', 'printing a token variable'],
+    ['printenv GH_TOKEN', 'printing the environment'],
+    ['env | grep PATH', 'printing the environment'],
+    ['cat .env', '.env holds local credentials'],
+    ['grep -n KEY ./.env', '.env holds local credentials'],
+  ])('blocks %s', (command, reason) => {
+    const r = runBash('guard-secrets.sh', command);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain(reason);
+  });
+
+  it.each([
+    'GO_PRIVATE_TOKEN="$(gh auth token)" pnpm run stack-up > stack.log 2>&1', // stack-up's own pattern: captured, never shown
+    'cat .env.example',
+    'echo hello > out.txt',
+    'pnpm verify && git status',
+    'grep -n NODE_AUTH_TOKEN README.md', // naming a variable is not reading it
+    "python3 - <<'EOF'\ndoc = 'refuses `gh auth token` outside a capture, and `printenv` / `env` dumps'\nEOF", // a doc being written (regression: blocked a docs edit)
+  ])('allows %s', (command) => {
+    expect(runBash('guard-secrets.sh', command)).toEqual({ code: 0, stderr: '' });
+  });
+});
+
+describe('guard-release-tag.sh', () => {
+  let repo: string;
+  let bin: string;
+  let released: string; // on origin/main, packages at 1.0.0-alpha.6
+  let ahead: string; // after origin/main, packages at 1.0.0-alpha.7
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8' }).trim();
+  const version = (v: string) => {
+    for (const p of ['frontend-sdk', 'webpack-preset', 'eslint-plugin']) {
+      mkdirSync(join(repo, 'packages', p), { recursive: true });
+      writeFileSync(join(repo, 'packages', p, 'package.json'), JSON.stringify({ version: v }));
+    }
+    git('add', '-A');
+    git('commit', '-q', '-m', v);
+    return git('rev-parse', 'HEAD');
+  };
+  /** The hook in the scratch repository, with a fake gh whose `run list` prints `ci` (or fails). */
+  const tag = (command: string, ci: string | null = 'completed success') =>
+    runBash('guard-release-tag.sh', command, repo, { PATH: `${bin}:${process.env.PATH}`, FAKE_GH: ci ?? '', FAKE_GH_FAIL: ci === null ? '1' : '' });
+
+  afterEach(() => rmSync(repo, { recursive: true, force: true }));
+  // A fresh repository per test: the tags a test creates never leak into the next.
+  const setup = () => {
+    repo = mkdtempSync(join(tmpdir(), 'release-tag-'));
+    bin = join(repo, '.bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'gh'), '#!/usr/bin/env bash\n[ -n "$FAKE_GH_FAIL" ] && { echo "gh: not logged in" >&2; exit 1; }\necho "$FAKE_GH"\n');
+    chmodSync(join(bin, 'gh'), 0o755);
+    git('init', '-q');
+    released = version('1.0.0-alpha.6');
+    git('update-ref', 'refs/remotes/origin/main', released);
+    ahead = version('1.0.0-alpha.7');
+  };
+
+  it('allows a tag on the merged release commit whose CI passed, by sha or at HEAD', () => {
+    setup();
+    expect(tag(`git tag -a v1.0.0-alpha.6 -m "v1.0.0-alpha.6" ${released}`).code).toBe(0);
+    git('checkout', '-q', released);
+    expect(tag('git switch main && git tag -a v1.0.0-alpha.6 -m "v1.0.0-alpha.6"').code).toBe(0);
+  });
+
+  it('blocks a tag whose version the packages do not have (alpha.4: tagged before the release PR merged)', () => {
+    setup();
+    const r = tag(`git tag -a v1.0.0-alpha.7 -m "v1.0.0-alpha.7" ${released}`);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('packages/frontend-sdk is 1.0.0-alpha.6, not 1.0.0-alpha.7');
+  });
+
+  it('blocks a tag on a commit that is not on origin/main', () => {
+    setup();
+    const r = tag('git tag -a v1.0.0-alpha.7 -m "v1.0.0-alpha.7"'); // HEAD: the versions match, but unmerged
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('not on origin/main');
+  });
+
+  it("blocks while main's CI has not passed, and fails closed when gh cannot tell", () => {
+    setup();
+    const running = tag(`git tag -a v1.0.0-alpha.6 -m v1.0.0-alpha.6 ${released}`, 'in_progress ');
+    expect(running.code).toBe(2);
+    expect(running.stderr).toContain('has not passed');
+    expect(tag(`git tag -a v1.0.0-alpha.6 -m v1.0.0-alpha.6 ${released}`, 'completed failure').code).toBe(2);
+    const noGh = tag(`git tag -a v1.0.0-alpha.6 -m v1.0.0-alpha.6 ${released}`, null);
+    expect(noGh.code).toBe(2);
+    expect(noGh.stderr).toContain('could not check');
+  });
+
+  it('checks the commit a pushed tag points to', () => {
+    setup();
+    git('tag', 'v1.0.0-alpha.6', released);
+    git('tag', 'v1.0.0-alpha.7', ahead);
+    expect(tag('git push origin v1.0.0-alpha.6 2>&1 | tail -1').code).toBe(0);
+    expect(tag('git push origin refs/tags/v1.0.0-alpha.7').code).toBe(2);
+  });
+
+  it('refuses pushing every tag; allows branches named after a version, deleting and listing tags', () => {
+    setup();
+    expect(tag('git push --tags').stderr).toContain('push a release tag by name');
+    expect(tag('git push origin main --follow-tags').code).toBe(2);
+    for (const ok of [
+      'git push -u origin release/v1.0.0-alpha.7',
+      'git push origin :refs/tags/v1.0.0-alpha.7',
+      'git push origin --delete v1.0.0-alpha.7',
+      'git tag -d v1.0.0-alpha.7',
+      "git tag -l 'v1*'",
+      'git status && pnpm verify',
+    ]) {
+      expect(tag(ok, null), ok).toEqual({ code: 0, stderr: '' }); // gh is never needed for these
+    }
   });
 });
 

@@ -52,7 +52,7 @@ Commit as `chore(release): v$ARGUMENTS` (body: what version-packages did, the CH
 
 ## 5. The tag (the user, an admin)
 
-Only admins can create `v*` tags (ruleset "release tags"); pushing the tag is the publish approval. Before tagging, **`main`'s CI on the release merge commit must be green**: a failure there (a flaky test) means a fix PR first, then tag the commit after it. Then:
+Only admins can create `v*` tags (ruleset "release tags"); pushing the tag is the publish approval. The `guard-release-tag.sh` hook refuses a tag whose commit is not on `origin/main`, versioned as the tag, and green. Before tagging, **`main`'s CI on the release merge commit must be green**: a failure there (a flaky test) means a fix PR first, then tag the commit after it. Then:
 
 ```bash
 git switch main && git pull --ff-only
@@ -71,4 +71,4 @@ Then `gh release view v$ARGUMENTS` (pre-release for `-alpha`/`-rc`; 3 tarballs, 
 
 ## 7. After
 
-Update the release status where docs state it (README header and *Versioning* table, `.claude/CLAUDE.md` *Status*, LLD version line), delete the merged release branch, and tell the shell and remote teams (breaking changes, shell first).
+Run `/release-status $ARGUMENTS` (every doc that states the latest version, and shipped changes still called `[Unreleased]`), delete the merged release branch, and tell the shell and remote teams (breaking changes, shell first).
