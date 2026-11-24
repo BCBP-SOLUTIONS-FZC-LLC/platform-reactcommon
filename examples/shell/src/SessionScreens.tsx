@@ -32,6 +32,22 @@ export function showDeviceClock(signIn: () => Promise<void>): void {
   );
 }
 
+/**
+ * A trial session whose workspace could not be checked: the session context did not load after its retries.
+ * Nothing of the session is shown (it may be another tenant's); reloading tries again.
+ */
+export function showWorkspaceUnavailable(): void {
+  showScreen(
+    <div role="alertdialog" aria-labelledby="unavailable-title">
+      <h1 id="unavailable-title">We couldn't load your workspace</h1>
+      <p>Please try again in a moment.</p>
+      <button type="button" onClick={() => location.reload()}>
+        Try again
+      </button>
+    </div>,
+  );
+}
+
 /** Expired during use. serverEnded covers trial → paid conversion ("your workspace has moved"). */
 export function showSessionEnded(s: Extract<SessionState, { status: 'expired' }>, signIn: () => Promise<void>): void {
   const text = s.serverEnded
@@ -65,7 +81,7 @@ export function showWrongWorkspace(idp: IdentityProvider): void {
       <button type="button" onClick={() => void idp.logout()}>
         Sign out
       </button>
-      <button type="button" onClick={() => void askForWorkspace().then((w) => idp.switchWorkspace(w))}>
+      <button type="button" onClick={() => void askForWorkspace().then((w) => idp.switchWorkspace(w, { prompt: 'login' }))}>
         Switch workspace
       </button>
     </div>,

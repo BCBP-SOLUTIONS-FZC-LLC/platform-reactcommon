@@ -258,7 +258,7 @@ flowchart TD
     flags --> auth["7. idp = createOidcProvider(cfg.auth, workspaceResolver)<br/>setTokenSource(initializeAuth(idp)) · state = await idp.init()"]
     auth -->|"no tokens + cached workspace"| restore["one prompt=none redirect per tab<br/>(init never settles; the page unloads)"]
     auth -->|"anonymous 'signed-out'"| signedout["signed-out screen; login only on click"]
-    auth -->|"anonymous 'login-required'"| login1["idp.login({ workspace: state.workspace })"]
+    auth -->|"anonymous 'login-required'"| login1["idp.login({ workspace: state.workspace ?? identifier screen })<br/>(a trial one re-checked with PUB-1 in init())"]
     auth -->|"anonymous 'none'"| choose["chooseWorkspace() ?? identifier-first screen → idp.login()"]
     auth -->|"authenticated"| wrong{"isWrongWorkspace?"}
     wrong -->|yes| wrongscreen["wrong-workspace screen (sign out / switch); stop"]
@@ -328,7 +328,7 @@ sequenceDiagram
 | `Authorization: Bearer` | the page's own origin only |
 | `x-request-id`, `x-session-id`, `traceparent` / `tracestate` | the page's origin and the exact origins in `api.propagationAllowlist` / tracing's allowlist |
 | `Idempotency-Key` | every `POST` (an automatic UUID unless given) |
-| `x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode` | **never**: dropped with a warn log, and a `TypeError` in local/dev |
+| `x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`, `x-auth-time` | **never**: dropped with a warn log, and a `TypeError` in local/dev |
 
 ---
 
@@ -341,15 +341,17 @@ Every paid tenant has its own Keycloak realm (`tenant-<slug>`), and trial tenant
 ```mermaid
 flowchart TD
     start(["Sign in needed: anonymous, no session to restore"]) --> lr{"session.reason = login-required<br/>(a silent restore named its workspace)?"}
-    lr -- yes --> use["Use that workspace"]
-    lr -- no --> force{"forceResolve?<br/>(the server ended the session)"}
-    force -- yes --> pub1
-    force -- no --> slug{"URL /t/&lt;slug&gt;/…<br/>(auth.workspacePathPrefix)?"}
+    lr -- yes --> use["Use that workspace<br/>(init() re-checked a trial one with PUB-1)"]
+    lr -- no --> slug{"URL /t/&lt;slug&gt;/…<br/>(auth.workspacePathPrefix)?"}
     slug -- no --> recent{"Workspace cache<br/>(localStorage, ≤ 20 entries, newest first)"}
-    recent -- "an entry" --> use
+    recent -- "an entry" --> rtrial{"Trial entry?"}
+    rtrial -- no --> use
+    rtrial -- "yes: re-check" --> pub1
     recent -- empty --> ask
     slug -- yes --> cached{"Cached entry for this slug?"}
-    cached -- yes --> use
+    cached -- yes --> paid{"Paid entry, and not forceResolve?<br/>(a trial may have converted to tenant-&lt;slug&gt;;<br/>forceResolve: the server ended the session)"}
+    paid -- yes --> use
+    paid -- "no: re-check" --> pub1
     cached -- no --> pub1["PUB-1 resolve(slug)<br/>shell port WorkspaceResolver over ApiClient<br/>GET /api/v1/public/tenants/resolve, no token"]
     pub1 -- "found" --> fits{"realm fits the slug?<br/>paid: paidRealmPrefix + slug · trial: trialRealm"}
     fits -- yes --> cache["Cache { slug, realm, trial }"] --> use
@@ -365,13 +367,14 @@ flowchart TD
 
 | Situation | Workspace used |
 |---|---|
-| A silent restore failed with `login_required` | The workspace it tried |
-| The server ended the session (`forceResolve`) | PUB-1 again, skipping the cache |
-| `/t/<slug>/…`, cached | The cached entry |
+| A silent restore failed with `login_required` | The workspace it tried; a trial one re-checked with PUB-1 first (none if PUB-1 no longer knows it) |
+| The server ended the session (`forceResolve`) | PUB-1 again for the URL's slug, skipping the cache |
+| `/t/<slug>/…`, cached paid entry | The cached entry (a paid realm never changes) |
+| `/t/<slug>/…`, cached trial entry | PUB-1 again: a trial → paid conversion moves the tenant to `tenant-<slug>`; the cache is updated |
 | `/t/<slug>/…`, not cached | PUB-1; cached when the realm fits |
 | PUB-1 unreachable or rate-limited | The cached entry for that slug, else the identifier-first screen |
 | PUB-1 says "not found" | The identifier-first screen; never another cached workspace |
-| No slug in the URL | The most recent cached workspace, else the identifier-first screen |
+| No slug in the URL | The most recent cached workspace (re-checked with PUB-1 when trial), else the identifier-first screen |
 
 After sign-in the shell calls `rememberWorkspace`, with the trial slug taken from P-35. A trial workspace reached from an invitation email has no slug and is never cached. LLD §8.2.
 
@@ -405,7 +408,7 @@ sequenceDiagram
     else iss ≠ record's issuer (RFC 9207)
         P-->>S: anonymous 'none' (error log), the code is never exchanged
     else ?error=login_required | interaction_required | consent_required on a restore
-        P-->>S: anonymous 'login-required' + the record's workspace
+        P-->>S: anonymous 'login-required' + the record's workspace<br/>(trial: re-checked with PUB-1, absent if not found)
     else ?code
         P->>KC: POST /token grant_type=authorization_code · code_verifier · redirect_uri · client_id (15 s)
         KC-->>P: access_token · id_token · refresh_token · expires_in · refresh_expires_in
@@ -532,7 +535,8 @@ flowchart TD
     pe --> deny{"gatewayDenyCode(e)"}
     deny -->|DENY_MFA_STALE| stepup["useStepUp → reauthenticate (prompt=login, max_age)"]
     deny -->|DENY_TENANT_READ_ONLY| ro["runtime.readOnlyDenied → useReadOnly() = true"]
-    deny -->|DENY_MALFORMED_IDENTITY| again["sign in again"]
+    deny -->|DENY_MALFORMED_IDENTITY| again["show an error, no sign-in loop"]
+    deny -->|DENY_MEMBER_SUSPENDED| paused["'access paused' (check once more after 5 s)"]
     deny -->|DENY_UNRESOLVABLE_SUBJECT| setup["'workspace being set up' → retry 6 s / 12 s / 24 s, never sign out"]
     deny -->|none| ui
 

@@ -6,7 +6,7 @@ import { initializeLogging, getLogger } from '@bcbp-solutions-fzc-llc/frontend-s
 import { initializeMetrics, startWebVitals } from '@bcbp-solutions-fzc-llc/frontend-sdk/metrics';
 import { setFlagProvider, runtimeConfigFlagProvider, sessionContextFlagProvider } from '@bcbp-solutions-fzc-llc/frontend-sdk/flags';
 import { createOidcProvider, initializeAuth, chooseWorkspace, rememberWorkspace, isWrongWorkspace,
-         signInAgain } from '@bcbp-solutions-fzc-llc/frontend-sdk/auth';
+         signInAgain, slugFromPath, type SessionContext } from '@bcbp-solutions-fzc-llc/frontend-sdk/auth';
 import { setTokenSource } from '@bcbp-solutions-fzc-llc/frontend-sdk/http';
 import { setAuthorizer, setAuthzSubject, roleMapAuthorizer } from '@bcbp-solutions-fzc-llc/frontend-sdk/authz';
 import { initializeI18n } from '@bcbp-solutions-fzc-llc/frontend-sdk/i18n';
@@ -18,7 +18,7 @@ import { cmp } from './consent';
 import { permissions } from './permissions';
 import { workspaceResolver, sessionContextSource } from './iam';   // PUB-1 and IAM item A over an ApiClient
 import { askForWorkspace, showWorkspaceNotFound } from './IdentifierFirst'; // FE spec A2 screen; resolves via workspaceResolver
-import { showDeviceClock, showSessionEnded, showSignedOut, showWrongWorkspace } from './SessionScreens'; // shell-owned screens
+import { showDeviceClock, showSessionEnded, showSignedOut, showWorkspaceUnavailable, showWrongWorkspace } from './SessionScreens'; // shell-owned screens
 import { App } from './App';
 import { ShellRoot } from './ShellRoot';
 import { createStore, retrySessionContext } from './session-context';
@@ -52,11 +52,14 @@ export async function bootstrap(): Promise<void> {
   if (session.status === 'anonymous') {
     // init() has already moved the URL off the callback path to the page the user opened.
     const signIn = async () => {
-      // A failed silent attempt names its workspace; otherwise /t/<slug> → cached or resolved Workspace
-      // (paid OR trial), else the most recent cached Workspace, else ask.
-      const workspace = (session.reason === 'login-required' ? session.workspace : undefined)
-        ?? await chooseWorkspace({ pathname: location.pathname, resolver: workspaceResolver, cfg: cfg.auth })
-        ?? await askForWorkspace();
+      // A failed silent attempt names its workspace (a trial one re-checked with PUB-1). Without one, PUB-1 no
+      // longer knows it (and dropped it): under /t/<slug> ask, never another cached workspace; with no slug in
+      // the URL, the next cached one, as chooseWorkspace does. Otherwise /t/<slug> → cached or resolved
+      // Workspace (paid OR trial), else the most recent cached Workspace, else ask.
+      const choose = () => chooseWorkspace({ pathname: location.pathname, resolver: workspaceResolver, cfg: cfg.auth });
+      const workspace = session.reason === 'login-required'
+        ? session.workspace ?? (slugFromPath(location.pathname, cfg.auth) === undefined ? await choose() : undefined) ?? await askForWorkspace()
+        : await choose() ?? await askForWorkspace();
       await idp.login({ workspace, returnUrl: location.pathname + location.search });
     };
     // After a logout, wait for the user: an automatic login would ride the live SSO session and undo it.
@@ -95,13 +98,29 @@ export async function bootstrap(): Promise<void> {
   const context = createStore(await sessionContextSource.load().catch((e) => {
     getLogger().warn('session context unavailable', { error: e }); return undefined; }));
   if (signedOut()) return;
+  // A trial session is checked against the workspace it was for: the shared trial realm's SSO session can
+  // belong to another tenant, and a cached entry has no tenantIdHint for isWrongWorkspace. So the session
+  // context (its slug) is awaited before anything mounts; until it is known, nothing of the session shows.
+  const w = session.workspace;
+  const wrongTrial = (c: SessionContext) => w.trial && w.slug !== undefined && w.slug !== c.slug;
+  if (w.trial && w.slug !== undefined && !context.get()) {
+    const retried = await retrySessionContext((signal) => sessionContextSource.load(signal), {
+      signal: contextRetry.signal,
+      onError: (e, attempt) => getLogger().warn('session context unavailable', { error: e, attempt }),
+    });
+    if (signedOut()) return;
+    if (!retried) { showWorkspaceUnavailable(); return; }
+    context.set(retried);
+  }
+  const first = context.get();
+  if (first && wrongTrial(first)) { showWrongWorkspace(idp); return; }  // nothing cached, URL kept
   const applyContext = () => {
     const c = context.get();
     setAuthzSubject(c && { roles: c.roles, tenantId: c.tenantId });
     if (!c) return;
     setFlagProvider(sessionContextFlagProvider(c));
     // Cache the workspace with its slug (trial tokens carry none) and move the URL to /t/<slug>/.
-    rememberWorkspace({ ...session.workspace, slug: c.slug });
+    rememberWorkspace({ ...w, slug: c.slug });
   };
   applyContext();
   await initializeI18n({ defaultLocale: cfg.i18n.defaultLocale, supported: cfg.i18n.supportedLocales });
@@ -133,6 +152,13 @@ export async function bootstrap(): Promise<void> {
       onError: (e, attempt) => getLogger().warn('session context unavailable', { error: e, attempt }),
     });
     if (retried && !contextRetry.signal.aborted) {
+      // Checked before the app sees it (a trial with a slug never gets here: its context was awaited above).
+      if (wrongTrial(retried)) {
+        app?.unmount();
+        app = undefined;
+        showWrongWorkspace(idp);
+        return;
+      }
       context.set(retried);
       applyContext();
     }

@@ -201,7 +201,7 @@ export interface ProblemContract {
   rules: { standardMembers: string[]; extensionNamePattern: string; maxClientBodyBytes: number; slugPattern: string; codePattern: string };
 }
 export interface DenyCodesContract {
-  codes: { code: string; status: number }[];
+  codes: { code: string; status: number; retryable: boolean; action: string }[];
 }
 
 
@@ -225,12 +225,12 @@ export function renderProblemRegistry(p: ProblemContract, deny: DenyCodesContrac
     '',
     '## Gateway deny codes',
     '',
-    'Sent by IAM AuthZ Enrichment as `errorCode` on its `platform/unauthorized`, `platform/forbidden` or `platform/service-unavailable` problems. `gatewayDenyCode(e)` returns one of these, else `undefined`. See [README.md](README.md#gateway-denials) for how the UI reacts to each.',
+    'Sent by IAM AuthZ Enrichment as `errorCode` on its `platform/unauthorized`, `platform/forbidden` or `platform/service-unavailable` problems. `gatewayDenyCode(e)` returns one of these, else `undefined`. Retryable and Action are AuthZ Enrichment\'s, for the code\'s usual cause (`step_up`: `prompt=login` with `max_age`, then retry; `none`: show the denial, do not loop). See [README.md](README.md#gateway-denials) for how the UI reacts to each.',
     '',
-    '| `errorCode` | Status |',
-    '|---|---|',
+    '| `errorCode` | Status | Retryable | Action |',
+    '|---|---|---|---|',
   );
-  for (const c of deny.codes) out.push(`| ${code(c.code)} | ${c.status} |`);
+  for (const c of deny.codes) out.push(`| ${code(c.code)} | ${c.status} | ${c.retryable ? 'yes' : 'no'} | ${code(c.action)} |`);
   out.push(
     '',
     '## Wire rules',

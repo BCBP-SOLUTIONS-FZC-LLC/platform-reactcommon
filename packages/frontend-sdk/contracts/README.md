@@ -10,7 +10,7 @@ fails when they differ from what the pinned sources generate.
 | `registry-vocab.json` | gincommon `internal/obsregistry/registry.json`: domain and environment vocabularies, service and version patterns | `/core` |
 | `metric-registry.json` | gincommon `internal/obsregistry/registry.json`: the observability standard (tiers, metrics, labels, prohibited labels, bucket presets) | `/metrics` |
 | `problem-types.json` | `go-probe contracts-export` (gincommon `pkg/problem`): problem constants, platform types, `TypeForStatus`; plus `rules` from gincommon `internal/problem` (standard members, extension-name pattern, 1 MiB body cap, NewType slug and code patterns) | `/problem` |
-| `gateway-deny-codes.json` | iam-authz-enrichment `internal/domain/decision.go` (reasons, `HTTPStatus`), checked against `TestDenyCodes_Pinned` | `/problem` |
+| `gateway-deny-codes.json` | iam-authz-enrichment `api/deny-codes.json` (its published list: status, problem type, title, detail, `retryable`, `action`), checked against `internal/domain/decision.go` (reasons, `HTTPStatus`) | `/problem` |
 | `headers.json` | `go-probe contracts-export` (gincommon `pkg/gincommon`) + gincommon `internal/core/domain` limits and patterns | `/core`, `/http` |
 | `log-fields.json` | gincommon `internal/adapter/inbound/http/middleware/logging.go` | `/logging` |
 | `redaction.json` | gincommon `internal/core/service/log_sanitizer.go` (unexported): exact keys, substrings, `*_key` rule, placeholder, 256-byte limit | `/core` |

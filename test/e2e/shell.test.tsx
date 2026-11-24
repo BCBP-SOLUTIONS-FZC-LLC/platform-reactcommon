@@ -10,6 +10,7 @@
 //   real examples/remote-tenders/src/EditTender module;
 // - __BUILD_VERSION__: a webpack DefinePlugin constant, set as a global here (the environment comes from runtime.json);
 // - react-dom/client's createRoot is wrapped only to unmount the app root between page loads.
+import { WORKSPACE_CACHE_KEY } from '../../packages/frontend-sdk/src/auth/workspace.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { act, type ComponentType } from 'react';
@@ -233,6 +234,51 @@ describe('the reference shell', () => {
     expect($('#signin-title')).toBeNull();
     expect(document.documentElement.lang).toBe('en');
     expect(page.storedValues()).not.toMatch(/at-|eyJ|refresh/);
+  });
+
+  // Code review (2026-11-24): the shared trial realm's SSO session can be another tenant's; a cached entry has no
+  // tenantIdHint, so the shell compares the session context's slug with the workspace's.
+  it('a trial restore that lands in another trial tenant shows the wrong-workspace dialog and caches nothing', async () => {
+    page.local.setItem(WORKSPACE_CACHE_KEY, JSON.stringify([{ slug: 'beta-labs', realm: 'trial', trial: true }]));
+    net.on('GET /api/v1/me/session-context', { tenant_id: TENANT, slug: 'acme', roles: ['preparator'], feature_flags: [], read_only: false });
+    await load('/t/beta-labs/tenders');
+    await until(() => page.assigned.length > 0); // the silent restore
+    expect(new URL(page.assigned[0]!).pathname).toBe('/realms/trial/protocol/openid-connect/auth');
+    await approveLogin();
+    await until(() => $('#wrong-title') !== null);
+    expect($('#wrong-title')!.textContent).toBe('You signed in to a different workspace');
+    expect(page.url.pathname).toBe('/t/beta-labs/tenders');
+    expect(JSON.parse(page.local.getItem(WORKSPACE_CACHE_KEY)!)).toEqual([{ slug: 'beta-labs', realm: 'trial', trial: true }]);
+    expect($('main')).toBeNull();
+  });
+
+  it('a trial session whose context never loads shows nothing of the session: the app does not mount (code review)', async () => {
+    page.local.setItem(WORKSPACE_CACHE_KEY, JSON.stringify([{ slug: 'beta-labs', realm: 'trial', trial: true }]));
+    net.on('GET /api/v1/me/session-context', () => mockProblem(PlatformProblemTypes.ServiceUnavailable));
+    await load('/t/beta-labs/tenders');
+    await until(() => page.assigned.length > 0);
+    await approveLogin();
+    await act(async () => void (await vi.advanceTimersByTimeAsync(60_000))); // the 3 bounded retries
+    await until(() => $('#unavailable-title') !== null);
+    expect($('main')).toBeNull();
+    expect(page.url.pathname).toBe('/t/beta-labs/tenders');
+  });
+
+  it('login-required without a workspace and no slug in the URL signs in to the next cached workspace (code review)', async () => {
+    page.local.setItem(WORKSPACE_CACHE_KEY, JSON.stringify([
+      { slug: 'gone', realm: 'trial', trial: true },
+      { slug: 'acme', realm: 'tenant-acme', trial: false },
+    ]));
+    await load('/');
+    await until(() => page.assigned.length > 0); // the silent restore, to the most recent (trial) entry
+    expect(new URL(page.assigned[0]!).pathname).toBe('/realms/trial/protocol/openid-connect/auth');
+    const restore = page.assigned.at(-1)!;
+    page.assigned.length = 0;
+    page.url = new URL(kc.deny(restore, 'login_required'));
+    await load();
+    await until(() => page.assigned.length > 0);
+    expect(new URL(page.assigned[0]!).pathname).toBe('/realms/tenant-acme/protocol/openid-connect/auth');
+    expect($('#signin-title')).toBeNull(); // not the identifier screen
   });
 
   it('a deep link signs in to its workspace and mounts the tenders remote, which loads and saves through the API', async () => {

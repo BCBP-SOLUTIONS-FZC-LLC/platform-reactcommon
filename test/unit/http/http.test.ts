@@ -85,7 +85,7 @@ afterEach(async () => {
 
 describe('FORBIDDEN_REQUEST_HEADERS', () => {
   it("is gincommon's identity headers plus the rest of IAM's ingress strip-list", () => {
-    expect(FORBIDDEN_REQUEST_HEADERS).toEqual(['x-user-id', 'x-tenant-id', 'x-tenant-roles', 'x-departments', 'x-plan', 'x-feature-flags', 'x-residency-mode']);
+    expect(FORBIDDEN_REQUEST_HEADERS).toEqual(['x-user-id', 'x-tenant-id', 'x-tenant-roles', 'x-departments', 'x-plan', 'x-feature-flags', 'x-residency-mode', 'x-auth-time']);
   });
 });
 

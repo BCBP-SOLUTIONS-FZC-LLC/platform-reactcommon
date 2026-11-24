@@ -7,5 +7,6 @@ export const FORBIDDEN_REQUEST_HEADERS = [
   "x-departments",
   "x-plan",
   "x-feature-flags",
-  "x-residency-mode"
+  "x-residency-mode",
+  "x-auth-time"
 ] as const;

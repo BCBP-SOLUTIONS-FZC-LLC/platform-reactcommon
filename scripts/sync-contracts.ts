@@ -149,10 +149,10 @@ function generate(roots: Roots, sources: Sources): Map<string, string> {
     `platform-gincommon ${PROBLEM_EXT}, ${PROBLEM_CLIENT}, ${PROBLEM_TYPES}`,
   ]);
   const DECISION = 'internal/domain/decision.go';
-  const PINNED_TEST = 'internal/usecase/check_test.go';
-  const denyCodes = buildGatewayDenyCodes(read(authz, DECISION), read(authz, PINNED_TEST), {
+  const DENY_LIST = 'api/deny-codes.json';
+  const denyCodes = buildGatewayDenyCodes(read(authz, DENY_LIST), read(authz, DECISION), problemTypes, {
+    list: `iam-authz-enrichment ${DENY_LIST}`,
     decision: `iam-authz-enrichment ${DECISION}`,
-    test: `iam-authz-enrichment ${PINNED_TEST}`,
   });
 
   const files = new Map<string, string>();

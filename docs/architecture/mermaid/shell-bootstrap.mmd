@@ -11,7 +11,7 @@ flowchart TD
     flags --> auth["7. idp = createOidcProvider(cfg.auth, workspaceResolver)<br/>setTokenSource(initializeAuth(idp)) · state = await idp.init()"]
     auth -->|"no tokens + cached workspace"| restore["one prompt=none redirect per tab<br/>(init never settles; the page unloads)"]
     auth -->|"anonymous 'signed-out'"| signedout["signed-out screen; login only on click"]
-    auth -->|"anonymous 'login-required'"| login1["idp.login({ workspace: state.workspace })"]
+    auth -->|"anonymous 'login-required'"| login1["idp.login({ workspace: state.workspace ?? identifier screen })<br/>(a trial one re-checked with PUB-1 in init())"]
     auth -->|"anonymous 'none'"| choose["chooseWorkspace() ?? identifier-first screen → idp.login()"]
     auth -->|"authenticated"| wrong{"isWrongWorkspace?"}
     wrong -->|yes| wrongscreen["wrong-workspace screen (sign out / switch); stop"]

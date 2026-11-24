@@ -85,8 +85,9 @@ IAM AuthZ Enrichment denies a request before it reaches the service. Its body is
 |---|---|
 | `DENY_MFA_STALE` | Step-up: `useStepUp().reauthenticate()` (`prompt=login&max_age`). Never auto-retry the request; the user confirms again after the redirect |
 | `DENY_TENANT_READ_ONLY` | `/http` sets the read-only state; `useReadOnly()` becomes `true` and the UI disables writes |
-| `DENY_MALFORMED_IDENTITY` | Sign in again |
+| `DENY_MALFORMED_IDENTITY` | Show an error; never redirect to sign-in in a loop (signing in again does not fix it: an expired token gets the gateway's own 401 first). Right after a trial → paid conversion a retry a few seconds later can succeed |
 | `DENY_UNRESOLVABLE_SUBJECT` | "Your workspace is being set up": retry the session-context load at 6 s, 12 s and 24 s (past AuthZ Enrichment's 5 s negative cache), then "no access to this workspace" with sign-out and switch. Never sign out or clear the cache on your own |
+| `DENY_MEMBER_SUSPENDED` | "Your access is paused". During AuthZ Enrichment's rollout a suspended member can get `DENY_UNRESOLVABLE_SUBJECT` instead; a member reactivated in the last 5 s can still get it, so check once more before a lasting screen |
 | `DENY_ROLE_INSUFFICIENT`, `DENY_TENDER_ACL_INSUFFICIENT`, … | A normal 403: show the problem message |
 
 The full list, with statuses, is in [`registry.md`](registry.md#gateway-deny-codes).
@@ -109,7 +110,7 @@ Every `ApiResponse` and `ProblemError` carries the server's `X-Trace-ID` (`trace
 - The raw body of a non-problem answer is never shown or logged.
 - Problem bodies are size-capped before parsing, and extension member names are validated.
 - `detail` may contain server-side context: show it only for types that document it as user-facing.
-- A gateway denial never signs the user out on its own, except `DENY_MALFORMED_IDENTITY` through the sign-in flow.
+- A gateway denial never signs the user out on its own.
 
 ## Tests
 

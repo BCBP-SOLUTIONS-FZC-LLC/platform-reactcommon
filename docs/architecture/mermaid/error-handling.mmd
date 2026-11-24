@@ -11,7 +11,8 @@ flowchart TD
     pe --> deny{"gatewayDenyCode(e)"}
     deny -->|DENY_MFA_STALE| stepup["useStepUp → reauthenticate (prompt=login, max_age)"]
     deny -->|DENY_TENANT_READ_ONLY| ro["runtime.readOnlyDenied → useReadOnly() = true"]
-    deny -->|DENY_MALFORMED_IDENTITY| again["sign in again"]
+    deny -->|DENY_MALFORMED_IDENTITY| again["show an error, no sign-in loop"]
+    deny -->|DENY_MEMBER_SUSPENDED| paused["'access paused' (check once more after 5 s)"]
     deny -->|DENY_UNRESOLVABLE_SUBJECT| setup["'workspace being set up' → retry 6 s / 12 s / 24 s, never sign out"]
     deny -->|none| ui
 

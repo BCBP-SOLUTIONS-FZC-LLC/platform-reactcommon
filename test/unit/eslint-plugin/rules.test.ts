@@ -90,6 +90,7 @@ tester.run('no-identity-headers', rules['no-identity-headers']!, {
     { code: "fetch(u, { headers: [['x-feature-flags', f]] });", errors: [{ messageId: 'header', data: { name: 'x-feature-flags' } }] },
     { code: 'h.set(`x-user-id`, v);', errors: [{ messageId: 'header', data: { name: 'x-user-id' } }] },
     { code: 'h.append(`x-residency-mode`, m);', errors: 1 },
+    { code: "fetch(u, { headers: { 'x-auth-time': t } });", errors: 1 }, // AuthZ Enrichment ceff0df injects it
     { code: "init.headers = { 'x-user-id': u };", errors: [{ messageId: 'header', data: { name: 'x-user-id' } }] },
   ],
 });

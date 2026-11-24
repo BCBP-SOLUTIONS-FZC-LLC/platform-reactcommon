@@ -53,13 +53,13 @@ describe('renderProblemRegistry', () => {
       types: [{ domain: 'platform', name: 'not-found', id: 'platform/not-found', title: 'Not Found', status: 404, code: 'NOT_FOUND' }],
       rules: { standardMembers: ['type', 'title'], extensionNamePattern: '^[a-zA-Z]+$', maxClientBodyBytes: 1048576, slugPattern: '^[a-z]+$', codePattern: '^[A-Z_]+$' },
     },
-    { codes: [{ code: 'DENY_MFA_STALE', status: 403 }] },
+    { codes: [{ code: 'DENY_MFA_STALE', status: 403, retryable: false, action: 'step_up' }] },
     ['a.json', 'b.json'],
   );
 
   it('lists types with their PlatformProblemTypes key, deny codes and wire rules', () => {
     expect(md).toContain('| `platform/not-found` | 404 | `NOT_FOUND` | Not Found | `NotFound` |');
-    expect(md).toContain('| `DENY_MFA_STALE` | 403 |');
+    expect(md).toContain('| `DENY_MFA_STALE` | 403 | no | `step_up` |');
     expect(md).toContain('larger than 1048576 bytes');
     expect(md).toContain('Generated from a.json, b.json');
   });

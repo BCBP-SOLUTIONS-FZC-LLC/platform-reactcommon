@@ -12,13 +12,13 @@ What crosses the page boundary. Backend-shaped values are **generated** from pin
 | `idempotency-key` | `POST` | `/http` |
 | `Authorization: Bearer …` | the page origin only | `/auth` token source |
 
-**Never sent** (`FORBIDDEN_REQUEST_HEADERS`, refused with an error): `x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`. The gateway injects them (`contracts/gateway-headers.json`, from AuthZ Enrichment). Response headers read: `X-Trace-ID`, `X-Request-ID`. A call that carries the token or correlation headers uses `redirect: 'manual'`: a redirect is not followed (the headers would reach its origin) and becomes a synthetic 502.
+**Never sent** (`FORBIDDEN_REQUEST_HEADERS`, refused with an error): `x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`, `x-auth-time`. The gateway injects them (`contracts/gateway-headers.json`, from AuthZ Enrichment). Response headers read: `X-Trace-ID`, `X-Request-ID`. A call that carries the token or correlation headers uses `redirect: 'manual'`: a redirect is not followed (the headers would reach its origin) and becomes a synthetic 502.
 
 Limits (gincommon validation): header value ≤ 256 bytes, request id ≤ 128 bytes `^[a-zA-Z0-9._-]+$`, roles header ≤ 4096 bytes / 64 roles.
 
 ## Errors
 
-Every API error is an RFC 9457 problem decoded as gincommon's client does (`contracts/problem-types.json`; non-problem responses become synthetic problems). Gateway deny codes (`DENY_UNRESOLVABLE_SUBJECT`, `DENY_TENANT_READ_ONLY`, `DENY_MFA_STALE`, …): `contracts/gateway-deny-codes.json`, `gatewayDenyCode(problem)`. Registry: [`docs/problem-details/`](../docs/problem-details/README.md).
+Every API error is an RFC 9457 problem decoded as gincommon's client does (`contracts/problem-types.json`; non-problem responses become synthetic problems). Gateway deny codes (`DENY_UNRESOLVABLE_SUBJECT`, `DENY_MEMBER_SUSPENDED`, `DENY_TENANT_READ_ONLY`, `DENY_MFA_STALE`, …, each with `retryable` and `action`): `contracts/gateway-deny-codes.json`, `gatewayDenyCode(problem)`. Registry: [`docs/problem-details/`](../docs/problem-details/README.md).
 
 ## Identity Provider (Keycloak)
 

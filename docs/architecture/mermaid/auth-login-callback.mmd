@@ -19,7 +19,7 @@ sequenceDiagram
     else iss ≠ record's issuer (RFC 9207)
         P-->>S: anonymous 'none' (error log), the code is never exchanged
     else ?error=login_required | interaction_required | consent_required on a restore
-        P-->>S: anonymous 'login-required' + the record's workspace
+        P-->>S: anonymous 'login-required' + the record's workspace<br/>(trial: re-checked with PUB-1, absent if not found)
     else ?code
         P->>KC: POST /token grant_type=authorization_code · code_verifier · redirect_uri · client_id (15 s)
         KC-->>P: access_token · id_token · refresh_token · expires_in · refresh_expires_in

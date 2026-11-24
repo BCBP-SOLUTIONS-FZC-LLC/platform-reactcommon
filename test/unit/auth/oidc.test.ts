@@ -299,6 +299,110 @@ describe('callback', () => {
     expect(page.url.pathname).toBe('/t/acme/tenders');
   });
 
+  // web-shell ask 1 (2026-11-24): after a trial → paid conversion the shell signs in to this workspace, so a
+  // trial one is re-checked with PUB-1 before the interactive sign-in.
+  it.each([
+    ['converted: the new realm', async () => ({ realm: 'tenant-beta-labs', trial: false }), { realm: 'tenant-beta-labs', trial: false, slug: 'beta-labs' }],
+    ['PUB-1 down: the saved trial workspace', async () => Promise.reject(new Error('503')), { realm: 'trial', trial: true, slug: 'beta-labs' }],
+    ['not found: no workspace (the shell asks)', async () => undefined, undefined],
+  ])('a trial login-required is re-checked with PUB-1 (%s)', async (_name, answer, expected) => {
+    const page = new FakePage('/t/beta-labs/tenders');
+    cache(page, [{ slug: 'beta-labs', realm: 'trial', trial: true }]);
+    page.install();
+    void provider().init();
+    await flush(() => page.assigned.length > 0);
+    expect(new URL(page.assigned.at(-1)!).pathname).toContain('/realms/trial/');
+    page.url = new URL(kc.deny(page.assigned.at(-1)!, 'login_required'));
+    resolver.resolve.mockImplementation(answer);
+    expect(await provider().init()).toEqual({ status: 'anonymous', reason: 'login-required', ...(expected ? { workspace: expected } : {}) });
+    expect(resolver.resolve).toHaveBeenCalledExactlyOnceWith('beta-labs', expect.any(AbortSignal));
+  });
+
+  // Code review (2026-11-24): init() must not wait on a slow PUB-1, and a malformed record slug never reaches it.
+  it('a trial re-check slower than 5 s settles with the tried workspace', async () => {
+    const page = new FakePage('/t/beta-labs/');
+    cache(page, [{ slug: 'beta-labs', realm: 'trial', trial: true }]);
+    page.install();
+    void provider().init();
+    await flush(() => page.assigned.length > 0);
+    page.url = new URL(kc.deny(page.assigned.at(-1)!, 'login_required'));
+    resolver.resolve.mockImplementation(() => new Promise(() => {})); // ignores the signal, never answers
+    let settled: unknown;
+    void provider().init().then((s) => (settled = s));
+    await flush(() => resolver.resolve.mock.calls.length > 0); // the 5 s timer is set in the same synchronous step as the PUB-1 call
+    expect(settled).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flush(() => settled !== undefined);
+    expect(settled).toEqual({ status: 'anonymous', reason: 'login-required', workspace: { realm: 'trial', trial: true, slug: 'beta-labs' } });
+    expect(resolver.resolve.mock.calls[0]![1]).toBeInstanceOf(AbortSignal);
+    expect((resolver.resolve.mock.calls[0]![1] as AbortSignal).aborted).toBe(true);
+  });
+
+  it('a pending record without a usable slug is not re-checked: the trial realm cannot name the tenant (code review)', async () => {
+    const page = new FakePage('/t/beta-labs/');
+    cache(page, [{ slug: 'beta-labs', realm: 'trial', trial: true }]);
+    page.install();
+    void provider().init();
+    await flush(() => page.assigned.length > 0);
+    const state = authorizeParams(page).get('state')!;
+    const record = JSON.parse(page.session.getItem(`${PENDING_PREFIX}${state}`)!);
+    page.session.setItem(`${PENDING_PREFIX}${state}`, JSON.stringify({ ...record, workspace: { ...record.workspace, slug: null } }));
+    page.url = new URL(kc.deny(page.assigned.at(-1)!, 'login_required'));
+    await provider().init();
+    expect(resolver.resolve).not.toHaveBeenCalled();
+  });
+
+  it('a sign-out in another tab during the re-check settles as signed out (code review)', async () => {
+    const page = new FakePage('/t/beta-labs/');
+    cache(page, [{ slug: 'beta-labs', realm: 'trial', trial: true }]);
+    page.install();
+    void provider().init();
+    await flush(() => page.assigned.length > 0);
+    page.url = new URL(kc.deny(page.assigned.at(-1)!, 'login_required'));
+    resolver.resolve.mockImplementation(async () => {
+      page.local.setItem(SIGNED_OUT_KEY, '1'); // tab B signed out meanwhile
+      return { realm: 'trial', trial: true, slug: 'beta-labs' };
+    });
+    expect(await provider().init()).toEqual({ status: 'anonymous', workspace: { realm: 'trial', trial: true, slug: 'beta-labs' }, reason: 'signed-out' });
+  });
+
+  it('a workspace switch in another tab during the re-check settles without the stale workspace (code review)', async () => {
+    const page = new FakePage('/t/beta-labs/');
+    cache(page, [{ slug: 'beta-labs', realm: 'trial', trial: true }]);
+    page.install();
+    void provider().init();
+    await flush(() => page.assigned.length > 0);
+    page.url = new URL(kc.deny(page.assigned.at(-1)!, 'login_required'));
+    resolver.resolve.mockImplementation(async () => {
+      new FakeBroadcastChannel('platform-auth').postMessage({ type: 'workspace-switched' }); // tab B
+      return { realm: 'trial', trial: true, slug: 'beta-labs' };
+    });
+    expect(await provider().init()).toEqual({ status: 'anonymous', reason: 'none' });
+  });
+
+  it('a sign-in finishing while another tab switched workspace is dropped (code review)', async () => {
+    const page = new FakePage('/');
+    page.install();
+    await provider().login({ workspace: ACME, returnUrl: '/t/acme/' });
+    page.url = new URL(kc.approve(page.assigned.at(-1)!));
+    const idp = provider();
+    const settled = idp.init();
+    new FakeBroadcastChannel('platform-auth').postMessage({ type: 'workspace-switched' }); // tab B, during the exchange
+    expect(await settled).toEqual({ status: 'anonymous', reason: 'none' });
+    expect(await idp.getAccessToken()).toBeUndefined();
+  });
+
+  it('a paid login-required is not re-checked', async () => {
+    const page = new FakePage('/t/acme/');
+    cache(page, [{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
+    page.install();
+    void provider().init();
+    await flush(() => page.assigned.length > 0);
+    page.url = new URL(kc.deny(page.assigned.at(-1)!, 'login_required'));
+    await provider().init();
+    expect(resolver.resolve).not.toHaveBeenCalled();
+  });
+
   it('an error on an interactive login is anonymous none', async () => {
     const page = new FakePage('/');
     page.install();
@@ -784,6 +888,48 @@ describe('switchWorkspace', () => {
     await flush();
     expect(tabB.getState()).toEqual({ status: 'expired', workspace: ACME, serverEnded: false, idle: false });
   });
+
+  // web-shell ask 3 (2026-11-24): from a refusal screen, a switch within the same realm must not ride the SSO session.
+  it("passes prompt: 'login' through, and sends no prompt by default", async () => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page);
+    await idp.switchWorkspace(BETA, { prompt: 'login' });
+    expect(authorizeParams(page).get('prompt')).toBe('login');
+    const { idp: again } = await signIn(page);
+    await again.switchWorkspace(GLOBEX);
+    expect(authorizeParams(page).get('prompt')).toBeNull();
+  });
+
+  // Code review (2026-11-24): a switch within the realm would ride the SSO session back to the same user.
+  it('a switch within the current realm asks for credentials without the option', async () => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page);
+    await idp.switchWorkspace(ACME);
+    expect(authorizeParams(page).get('prompt')).toBe('login');
+  });
+
+  it('from an anonymous login-required state, a switch within its realm asks for credentials (code review)', async () => {
+    const page = new FakePage('/t/acme/');
+    cache(page, [{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
+    page.install();
+    void provider().init();
+    await flush(() => page.assigned.length > 0);
+    page.url = new URL(kc.deny(page.assigned.at(-1)!, 'login_required'));
+    const idp = provider();
+    await idp.init();
+    await idp.switchWorkspace(ACME);
+    expect(authorizeParams(page).get('prompt')).toBe('login');
+    await idp.switchWorkspace(GLOBEX); // another realm: no prompt
+    expect(authorizeParams(page).get('prompt')).toBeNull();
+  });
+
+  it("after a sign-out, a switch asks for credentials as login() does (invariant review)", async () => {
+    const page = new FakePage('/');
+    const { idp } = await signIn(page);
+    await idp.logout({ global: false });
+    await idp.switchWorkspace(GLOBEX);
+    expect(authorizeParams(page).get('prompt')).toBe('login');
+  });
 });
 
 describe('step-up', () => {
@@ -871,7 +1017,7 @@ describe('signInAgain', () => {
     page.install();
     resolver.resolve.mockResolvedValue({ realm: 'tenant-beta-labs', trial: false });
     await signInAgain({ idp: provider(), state: expired({ serverEnded: true, idle: false }), resolver, cfg: cfg.auth, ask: vi.fn() });
-    expect(resolver.resolve).toHaveBeenCalledWith('beta-labs', undefined);
+    expect(resolver.resolve).toHaveBeenCalledWith('beta-labs', expect.any(AbortSignal));
     expect(new URL(page.assigned.at(-1)!).pathname).toContain('/realms/tenant-beta-labs/');
     expect(authorizeParams(page).get('prompt')).toBeNull();
   });
