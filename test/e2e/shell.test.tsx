@@ -258,8 +258,18 @@ describe('the reference shell', () => {
     await load('/t/beta-labs/tenders');
     await until(() => page.assigned.length > 0);
     await approveLogin();
-    await act(async () => void (await vi.advanceTimersByTimeAsync(60_000))); // the 3 bounded retries
-    await until(() => $('#unavailable-title') !== null);
+    // The retries are scheduled only once the code exchange (real time on a slow runner) has led to the first
+    // context load: wait for that, then drive the clock through the ApiClient's and the shell's backoffs
+    // (≈1 + 2 + 4 s, each with its own quick retries), bounded by real time, not by a fixed number of turns.
+    await until(() => net.sent('/api/v1/me/session-context').length > 0);
+    const start = process.hrtime.bigint();
+    while ($('#unavailable-title') === null && Number(process.hrtime.bigint() - start) / 1e6 < 10_000) {
+      await act(async () => {
+        await new Promise((r) => setImmediate(r));
+        await vi.advanceTimersByTimeAsync(250);
+      });
+    }
+    expect($('#unavailable-title')).not.toBeNull();
     expect($('main')).toBeNull();
     expect(page.url.pathname).toBe('/t/beta-labs/tenders');
   });
