@@ -101,7 +101,7 @@ Where the two disagree, the code and this LLD describe what ships; the design do
 | Header names, identity headers, propagation | gincommon `pkg/gincommon` + AuthZ Enrichment injected headers | `contracts/headers.json`, `gateway-headers.json` → `FORBIDDEN_REQUEST_HEADERS` |
 | Log redaction rules | gincommon `log_sanitizer.go` | `contracts/redaction.json` → `/core` `isSensitiveKey`, `/logging` |
 | Problem types, status mapping, wire rules | gincommon `pkg/problem` + `internal/problem` | `contracts/problem-types.json` → `/problem` |
-| Gateway deny codes | AuthZ Enrichment `decision.go` | `contracts/gateway-deny-codes.json` |
+| Gateway deny codes | AuthZ Enrichment `api/deny-codes.json` (checked against `decision.go`) | `contracts/gateway-deny-codes.json` |
 | PUB-1 / P-35 response shapes | org-membership swagger | `contracts/tenant-resolve-cases.json`, `session-context-cases.json` (cases checked against the swagger) |
 | Behaviour across languages | platform-interop-tests | shared fixtures + pair 4 (ts-probe) |
 
@@ -241,7 +241,7 @@ A body over 1 MiB, or one that isn't `application/problem+json`, is never parsed
 | `headers.json`, `gateway-headers.json` | go-probe + gincommon `internal/core/domain`; AuthZ Enrichment | `/core`, `/http`, eslint-plugin |
 | `redaction.json` | gincommon log sanitizer | `/core`, `/logging` |
 | `log-fields.json` | gincommon logging middleware | `/logging` |
-| `gateway-deny-codes.json` | AuthZ Enrichment `decision.go` (checked against its pinned test) | `/problem` |
+| `gateway-deny-codes.json` | AuthZ Enrichment `api/deny-codes.json`, with `retryable` and `action` (checked against `decision.go`) | `/problem` |
 | `tenant-resolve-cases.json`, `session-context-cases.json` | SDK-authored cases, each checked against the org-membership swagger | `/auth` tests, the shell's port tests |
 | `fixtures/*.json` | platform-interop-tests (byte copies) | `/core`, `/http`, `/problem` tests |
 
@@ -319,7 +319,7 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 | `getAccessToken()` | `undefined` when anonymous, expired or restoring; joins the refresh when within 5 s of expiry, and waits out a refresh backoff (§8.5) instead of failing |
 | `refresh()` | Single-flight; `true` with new tokens, `false` otherwise (state already moved, §8.5); a 429 / 503 + `Retry-After` backoff is awaited inside it |
 | `logout({ global? })` (global unless `global: false`) | §8.7 |
-| `switchWorkspace(w)` | Local logout of the current realm without the signed-out mark, broadcast `workspace-switched`, then `login(w)` with reason `switch` |
+| `switchWorkspace(w, { prompt? })` | Local logout of the current realm without the signed-out mark, broadcast `workspace-switched`, then `login(w)` with reason `switch`; `prompt: 'login'` (also implied when `w` is in the current realm, the signed-in one or the one an anonymous or expired state names, and after a sign-out as for `login`) forces credentials (a switch within the same realm, e.g. from a refusal screen, would otherwise ride the live SSO session back to the same user) |
 | `reauthenticate({ maxAgeSeconds, returnUrl? })` | `prompt=login&max_age=<s>` with reason `step-up`; needs a session |
 | `needsStepUp(s)` | `now − auth_time > s`; `false` when `auth_time` is unknown |
 | `subscribe` / `beforeRedirect` / `getState` | Listeners isolated (a throwing one is logged, others still run) |
@@ -492,13 +492,15 @@ See §5.4.1. One logical call is one span (`HTTP <METHOD>`, attributes `http.req
 
 ### 8.2 Workspace choice (before login)
 The rules, in order:
-1. **The URL has a slug** (`/t/<slug>/…`): use the cached workspace for that slug. Otherwise call PUB-1 `resolve(slug)`, and accept the result only if the realm fits the slug, then cache it.
+1. **The URL has a slug** (`/t/<slug>/…`): use the cached workspace for that slug when it is **paid**. Otherwise (no entry, or a trial entry) call PUB-1 `resolve(slug)`, and accept the result only if the realm fits the slug, then cache it. A trial entry is never trusted: a trial → paid conversion moves the tenant and every user to `tenant-<slug>`, and the `trial` realm's sign-in page can then only refuse them (web-shell ask 1, 2026-11-24). It costs one PUB-1 call before a trial sign-in.
 2. **PUB-1 fails** (unreachable or rate-limited): use the cached entry if there is one.
-3. **PUB-1 answers "not found":** return `undefined`, which means the identifier-first screen. A different cached workspace is never used.
-4. **The URL has no slug:** use the most recently cached workspace.
-5. **`forceResolve`** (a session the server ended): skip the cache.
+3. **PUB-1 answers "not found":** return `undefined`, which means the identifier-first screen, and drop the cached entry for that slug while it still names the realm that was checked. A different cached workspace is never used.
+4. **The URL has no slug:** use the most recently cached workspace, re-checked as in rule 1 when it is trial; if PUB-1 no longer knows it, it is dropped and the next cached one is used.
+   A re-check of a cached entry waits at most 5 s (`RECHECK_TIMEOUT_MS`), then uses the cached entry; an answer arriving later does not change the cache, and a caller's abort settles it at once. Every trial sign-in costs one PUB-1 call (rate-limited per IP); the answer is not reused, so its `tenantIdHint` is always there for `isWrongWorkspace`.
+5. **`forceResolve`** (a session the server ended): re-check a paid entry for the URL's slug too; with no slug in the URL, the most recent paid entry is used as it is.
+6. **A silent restore answered `login_required`:** `init()` hands the shell the workspace it tried; a trial one with its own slug is first re-checked with PUB-1 (the trial realm cannot name the tenant, so one without a slug is not) (the provider's only use of the resolver, bounded at 5 s). PUB-1 down or slow → the tried workspace; not found → no workspace, so the shell shows the identifier-first screen (never another cached workspace).
 
-After sign-in, the shell calls `rememberWorkspace({ ...workspace, slug })`, taking the slug from P-35 for trial workspaces. The URL then becomes `/t/<slug>/…` if it had no slug. A trial result from an invitation email has no slug and is never cached.
+After sign-in, the shell calls `rememberWorkspace({ ...workspace, slug })`, taking the slug from P-35 for trial workspaces. The URL then becomes `/t/<slug>/…` if it had no slug, and another slug in it is replaced (the user signed in to another workspace than the URL named, e.g. after "not found"), so the next load restores the signed-in workspace; replacing a slug dispatches `popstate` for a router already mounted. A trial result from an invitation email has no slug and is never cached.
 
 ### 8.3 Login and callback
 - **Pending record:** one per `state` (128-bit `state` and `nonce`, a 32-byte verifier, an S256 challenge), in sessionStorage, expiring after 10 minutes. The callback deletes it before the exchange.
@@ -508,7 +510,7 @@ After sign-in, the shell calls `rememberWorkspace({ ...workspace, slug })`, taki
   3. The code is exchanged, with a 15 s timeout.
   4. ID-token claims: `iss`, `aud` contains `client_id`, `azp` if present, `nonce`. Times are judged on the **provider's clock**: the token came straight from the token endpoint, so its `iat` is the provider's time at receipt, and the device's offset is taken from it (also for `auth_time` and step-up). An offset beyond 10 minutes (`MAX_CLOCK_OFFSET_S`) fails visibly: `anonymous { device-clock }` and an error log with `clock_offset_s` (report Issue 8). There's no signature check, because the token came straight from the token endpoint over TLS (OIDC Core §3.1.3.7).
   5. In the trial realm, a valid `tenant_id` sets the storage namespace; without one it stays `anon` and an error is logged.
-- **Errors:** `?error=` answering a silent attempt (`login_required`, `interaction_required`, `consent_required`) becomes `anonymous { login-required, workspace }`. Any other error becomes `anonymous { none }`.
+- **Errors:** `?error=` answering a silent attempt (`login_required`, `interaction_required`, `consent_required`) becomes `anonymous { login-required, workspace? }`: the workspace it tried, a trial one first re-checked with PUB-1 (§8.2 rule 6; absent when PUB-1 answers not found). Any other error becomes `anonymous { none }`.
 - **URL:** before `init()` resolves, it is replaced with the record's `returnUrl` (which must be a safe redirect, else `/`).
 
 ### 8.4 Silent restore (page load)

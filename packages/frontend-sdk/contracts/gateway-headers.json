@@ -7,6 +7,7 @@
     "x-tenant-roles",
     "x-plan",
     "x-feature-flags",
-    "x-residency-mode"
+    "x-residency-mode",
+    "x-auth-time"
   ]
 }

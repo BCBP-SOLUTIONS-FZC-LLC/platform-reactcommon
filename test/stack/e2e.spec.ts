@@ -78,6 +78,7 @@ test.describe('sign-in through PUB-1, Keycloak and the gateway', () => {
     const forged = {
       'x-tenant-id': STACK.tenants.globex.id, 'x-user-id': carol.id, 'x-tenant-roles': 'tenant_owner', 'x-departments': 'x:approver',
       'x-plan': 'enterprise', 'x-feature-flags': 'everything', 'x-residency-mode': 'strict',
+      'x-auth-time': '2000-01-01T00:00:00Z', // AuthZ Enrichment's AE-49 header (ceff0df)
     };
     // Authenticated route (go-probe /whoami: what gincommon's RequireAuth parsed).
     const who = await page.request.get('/api/v1/probe/whoami', { headers: { authorization: `Bearer ${token}`, ...forged } });
@@ -85,7 +86,8 @@ test.describe('sign-in through PUB-1, Keycloak and the gateway', () => {
     const w = (await who.json()) as { tenant_id: string; user_id: string; roles: string[] };
     expect(w).toMatchObject({ tenant_id: STACK.tenants.acme.id, user_id: alice.id });
     expect(w.roles).not.toContain('tenant_owner');
-    // What arrived on an authenticated route: the seven enriched headers, and no Authorization (forward: false).
+    // What arrived on an authenticated route: the eight enriched headers (x-auth-time: Keycloak's access token
+    // carries auth_time), and no Authorization (forward: false). The forged values were stripped first.
     const echo = (await (await page.request.get('/api/v1/probe/echo', { headers: { authorization: `Bearer ${token}`, ...forged } })).json()) as { identity_headers: string[]; authorization: boolean };
     expect(echo.identity_headers.sort()).toEqual(Object.keys(forged).sort());
     expect(echo.authorization).toBe(false);

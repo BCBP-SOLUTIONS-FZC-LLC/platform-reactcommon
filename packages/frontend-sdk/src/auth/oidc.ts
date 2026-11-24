@@ -12,7 +12,7 @@ import { swapFlagProvider } from '../internal/flag-provider.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { rotateSessionId } from '../internal/session.ts';
 import type { IdentityProvider, SessionState, SessionUser, Workspace, WorkspaceResolver } from './types.ts';
-import { cachedWorkspace, slugFromPath } from './workspace.ts';
+import { cachedWorkspace, isSlug, resolveSlug, slugFromPath } from './workspace.ts';
 
 type Reason = 'step-up' | 'restore' | 'login' | 'switch';
 type Settled = Extract<SessionState, { status: 'authenticated' | 'anonymous' }>;
@@ -315,7 +315,8 @@ function userFrom(claims: Record<string, unknown>, trial: boolean): SessionUser 
 
 /** Auth Code + PKCE (S256) against Keycloak, realm per Workspace. */
 export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: WorkspaceResolver): IdentityProvider {
-  void resolver; // the provider never resolves: the realm comes from a Workspace chooseWorkspace checked
+  // The provider resolves only one case: a trial workspace whose silent restore answered login_required
+  // (see confirmTrial). Every other realm comes from a Workspace chooseWorkspace checked.
   const issuer = (realm: string) => `${cfg.idpOrigin}/realms/${encodeURIComponent(realm)}`;
   const endpoint = (realm: string, path: 'auth' | 'token' | 'logout') => `${issuer(realm)}/protocol/openid-connect/${path}`;
   const redirectUri = () => `${globalThis.location?.origin ?? ''}${cfg.redirectPath}`;
@@ -336,6 +337,8 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   let lastActivityWrite = 0;
   /** Another tab signed out while this one was not signed in (loading): its sign-in in progress is dropped. */
   let signedOutElsewhere = false;
+  /** Another tab switched workspace while this one was loading (during init()'s PUB-1 re-check). */
+  let switchedElsewhere = false;
   /** Refreshes retried in a row after the token endpoint refused one (refusedUnprocessed). */
   let unavailableRetries = 0;
   const listeners = new Set<(s: SessionState) => void>();
@@ -376,6 +379,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
         dropTokens();
         forgetUser();
         if (type === 'logout') signedOutElsewhere = true; // a sign-in this tab is finishing must not undo it
+        if (type === 'workspace-switched') switchedElsewhere = true;
         if (type === 'logout' && state.status === 'expired') setState({ status: 'anonymous', ...(workspace ? { workspace } : {}), reason: 'signed-out' });
       }
       return;
@@ -779,6 +783,19 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   }
 
   // --- init ----------------------------------------------------------------------------------
+  /**
+   * The workspace the shell signs in to after a failed silent restore. A trial one is re-checked with PUB-1
+   * first: after a trial → paid conversion its users exist only in `tenant-<slug>`, and the trial realm's
+   * sign-in page can only refuse them. PUB-1 down, or slower than RECHECK_TIMEOUT_MS (init() must not hang
+   * on it) → `w`; not found → undefined (the shell shows the identifier-first screen).
+   */
+  async function confirmTrial(w: Workspace): Promise<Workspace | undefined> {
+    // Only by the record's own slug (readPending does not validate it): every trial tenant shares the trial
+    // realm, so the realm cannot name the tenant, and a workspace signed in by email has no slug here.
+    if (!w.trial || !isSlug(w.slug)) return w;
+    return resolveSlug({ slug: w.slug, cached: w, resolver, cfg });
+  }
+
   async function handleCallback(params: URLSearchParams): Promise<Settled | undefined> {
     const now = internals.now();
     const record = takePending(params.get('state'), now);
@@ -790,8 +807,10 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     }
     replaceUrl(safeReturnUrl(record.returnUrl));
     const w = record.workspace;
-    const anonymous = (reason: 'none' | 'login-required' | 'device-clock'): Settled => {
-      const s = { status: 'anonymous', reason, ...(reason === 'login-required' ? { workspace: w } : {}) } as const;
+    // `named`: the workspace a login-required answer hands the shell (confirmTrial's; absent when PUB-1 no longer knows it).
+    const anonymous = (reason: 'none' | 'device-clock' | { loginRequired: Workspace | undefined }): Settled => {
+      const named = typeof reason === 'object' ? reason.loginRequired : undefined;
+      const s = { status: 'anonymous', reason: typeof reason === 'object' ? 'login-required' : reason, ...(named ? { workspace: named } : {}) } as const;
       setState(s);
       return s;
     };
@@ -801,7 +820,19 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     }
     const error = params.get('error');
     if (error !== null) {
-      if (SILENT_ERRORS.has(error) && record.reason === 'restore') return anonymous('login-required');
+      if (SILENT_ERRORS.has(error) && record.reason === 'restore') {
+        const named = await confirmTrial(w);
+        // Another tab signed out during the PUB-1 re-check: the signed-out screen, never an automatic sign-in.
+        if (signedOutElsewhere || flag('local', SIGNED_OUT_KEY)) {
+          const s = { status: 'anonymous', workspace: named ?? w, reason: 'signed-out' } as const;
+          setState(s);
+          return s;
+        }
+        // Another tab switched workspace meanwhile: no workspace from this stale record; the shell chooses again
+        // from the URL and the cache as they are now.
+        if (switchedElsewhere) return anonymous('none');
+        return anonymous({ loginRequired: named });
+      }
       log().warn('sign-in failed', { error_code: error.slice(0, 64), reason: record.reason, essential: true });
       return anonymous('none');
     }
@@ -819,7 +850,15 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       if (!res.ok) throw new Error(`token endpoint answered ${res.status} ${typeof body?.error === 'string' ? body.error : ''}`.trim());
       const t = accept(body, w, record.nonce);
       if (signedOutElsewhere) {
+        user = undefined; // accept() read it from the dropped ID token
         log().info('sign-in dropped: another tab signed out meanwhile');
+        return anonymous('none');
+      }
+      // Another tab switched workspace and cleared storage meanwhile: this sign-in would write the old
+      // workspace's storage again. The shell chooses again from the URL and the cache as they are now.
+      if (switchedElsewhere) {
+        user = undefined;
+        log().info('sign-in dropped: another tab switched workspace meanwhile');
         return anonymous('none');
       }
       await forgetPreviousUser(w.realm, t.sub);
@@ -915,14 +954,21 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
 
     refresh,
 
-    async switchWorkspace(w) {
+    async switchWorkspace(w, o) {
+      // The current realm: the signed-in one, else the one an anonymous or expired state names.
+      const current = workspace ?? (state.status === 'anonymous' || state.status === 'expired' ? state.workspace : undefined);
       restoring = false;
       dropTokens(); // old-realm tokens are discarded, never exchanged
       clearAllAppStorage();
       rotateSessionId();
       broadcast('workspace-switched');
       forgetUser();
-      await authorize({ workspace: w, reason: 'switch' });
+      // Credentials are asked for when the switch stays in the same realm (the same workspace, or another trial:
+      // Keycloak's live SSO session would sign the same user straight back in), after a sign-out as login()
+      // does, and when the caller asks.
+      const sameRealm = current !== undefined && current.realm === w?.realm;
+      const prompt = o?.prompt === 'login' || sameRealm || flag('local', SIGNED_OUT_KEY) ? 'login' : undefined;
+      await authorize({ workspace: w, reason: 'switch', prompt });
     },
 
     async reauthenticate(o) {

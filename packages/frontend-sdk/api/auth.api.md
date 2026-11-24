@@ -54,7 +54,9 @@ export interface IdentityProvider {
     refresh(): Promise<boolean>;
     // (undocumented)
     subscribe(l: (s: SessionState) => void): () => void;
-    switchWorkspace(w: Workspace): Promise<void>;
+    switchWorkspace(w: Workspace, o?: {
+        prompt?: 'login';
+    }): Promise<void>;
 }
 
 // @public

@@ -37,7 +37,7 @@ export function createApiClient(opts?: {
 }): ApiClient;
 
 // @public (undocumented)
-export const FORBIDDEN_REQUEST_HEADERS: readonly ["x-user-id", "x-tenant-id", "x-tenant-roles", "x-departments", "x-plan", "x-feature-flags", "x-residency-mode"];
+export const FORBIDDEN_REQUEST_HEADERS: readonly ["x-user-id", "x-tenant-id", "x-tenant-roles", "x-departments", "x-plan", "x-feature-flags", "x-residency-mode", "x-auth-time"];
 
 // @public
 export function isOnline(): boolean;

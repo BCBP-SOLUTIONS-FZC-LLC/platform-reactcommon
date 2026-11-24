@@ -28,17 +28,18 @@ From platform-gincommon `pkg/problem` (`go-probe contracts-export`). In the SDK:
 
 ## Gateway deny codes
 
-Sent by IAM AuthZ Enrichment as `errorCode` on its `platform/unauthorized`, `platform/forbidden` or `platform/service-unavailable` problems. `gatewayDenyCode(e)` returns one of these, else `undefined`. See [README.md](README.md#gateway-denials) for how the UI reacts to each.
+Sent by IAM AuthZ Enrichment as `errorCode` on its `platform/unauthorized`, `platform/forbidden` or `platform/service-unavailable` problems. `gatewayDenyCode(e)` returns one of these, else `undefined`. Retryable and Action are AuthZ Enrichment's, for the code's usual cause (`step_up`: `prompt=login` with `max_age`, then retry; `none`: show the denial, do not loop). See [README.md](README.md#gateway-denials) for how the UI reacts to each.
 
-| `errorCode` | Status |
-|---|---|
-| `DENY_UNRESOLVABLE_SUBJECT` | 403 |
-| `DENY_TENANT_READ_ONLY` | 403 |
-| `DENY_MFA_STALE` | 403 |
-| `DENY_TENDER_ACL_INSUFFICIENT` | 403 |
-| `DENY_ROLE_INSUFFICIENT` | 403 |
-| `DENY_SERVICE_UNAVAILABLE` | 503 |
-| `DENY_MALFORMED_IDENTITY` | 401 |
+| `errorCode` | Status | Retryable | Action |
+|---|---|---|---|
+| `DENY_MALFORMED_IDENTITY` | 401 | no | `none` |
+| `DENY_UNRESOLVABLE_SUBJECT` | 403 | no | `none` |
+| `DENY_MEMBER_SUSPENDED` | 403 | no | `none` |
+| `DENY_TENANT_READ_ONLY` | 403 | no | `none` |
+| `DENY_ROLE_INSUFFICIENT` | 403 | no | `none` |
+| `DENY_TENDER_ACL_INSUFFICIENT` | 403 | no | `none` |
+| `DENY_MFA_STALE` | 403 | no | `step_up` |
+| `DENY_SERVICE_UNAVAILABLE` | 503 | yes | `retry_with_backoff` |
 
 ## Wire rules
 

@@ -189,7 +189,7 @@ Give new public symbols a TSDoc comment; it ends up in the API report (api-extra
 ## Guardrails and forbidden patterns
 
 - **No token ever leaves memory.** Not to `localStorage`, `sessionStorage`, the `BroadcastChannel`, a log, a span or a URL. `test/unit/auth/oidc.test.ts` asserts it.
-- **The browser never sends identity headers** (`FORBIDDEN_REQUEST_HEADERS`: `x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`). The gateway injects them.
+- **The browser never sends identity headers** (`FORBIDDEN_REQUEST_HEADERS`: `x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`, `x-auth-time`). The gateway injects them.
 - **Never edit generated files** (`packages/frontend-sdk/contracts/`, `src/internal/generated/`, `docs/observability/metric-registry.md`, the embedded diagram blocks). Change the source and run the sync command.
 - **CSP-safe always:** no `eval`, `new Function`, inline script or runtime CSS-in-JS; HTML only through `sanitizeHtml`.
 - **Unload requests start inside the listener.** Anything sent on `pagehide` is `sendBeacon` / keepalive started synchronously within the shared budget (`onUnload`, LLD §7.5); never `await` before it.

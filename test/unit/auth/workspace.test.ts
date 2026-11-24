@@ -113,11 +113,166 @@ describe('chooseWorkspace', () => {
     expect(await chooseWorkspace({ pathname: '/', resolver: resolverFor({}), cfg })).toBeUndefined();
   });
 
-  it('a cached slug skips PUB-1 (rate-limited per IP)', async () => {
-    rememberWorkspace({ realm: 'trial', trial: true, slug: 'beta-labs' });
+  it('a cached paid slug skips PUB-1 (rate-limited per IP)', async () => {
+    rememberWorkspace({ realm: 'tenant-acme', trial: false, slug: 'acme' });
     const resolver = resolverFor({});
-    expect(await chooseWorkspace({ pathname: '/t/beta-labs/x', resolver, cfg })).toEqual({ realm: 'trial', trial: true, slug: 'beta-labs' });
+    expect(await chooseWorkspace({ pathname: '/t/acme/x', resolver, cfg })).toEqual({ realm: 'tenant-acme', trial: false, slug: 'acme' });
     expect(resolver.resolve).not.toHaveBeenCalled();
+  });
+
+  // web-shell ask 1 (2026-11-24): a trial → paid conversion moves every user to tenant-<slug>; the email
+  // links to /t/<slug>/ in a fresh tab, so a cached trial entry would send them to a realm that refuses them.
+  it('a cached trial entry is re-checked with PUB-1 and replaced when the tenant converted', async () => {
+    rememberWorkspace({ realm: 'trial', trial: true, slug: 'acme' });
+    const resolver = resolverFor({ acme: { found: true, realm: 'tenant-acme', strategy: 'dedicated' } });
+    expect(await chooseWorkspace({ pathname: '/t/acme/', resolver, cfg })).toEqual({ realm: 'tenant-acme', trial: false, slug: 'acme' });
+    expect(resolver.resolve).toHaveBeenCalledWith('acme', expect.any(AbortSignal));
+    expect(cachedWorkspace('acme')).toEqual({ slug: 'acme', realm: 'tenant-acme', trial: false });
+  });
+
+  it('a most recent trial entry (no slug in the URL) is re-checked too', async () => {
+    rememberWorkspace({ realm: 'tenant-globex', trial: false, slug: 'globex' });
+    rememberWorkspace({ realm: 'trial', trial: true, slug: 'acme' });
+    const resolver = resolverFor({ acme: { found: true, realm: 'tenant-acme', strategy: 'dedicated' } });
+    expect(await chooseWorkspace({ pathname: '/', resolver, cfg })).toEqual({ realm: 'tenant-acme', trial: false, slug: 'acme' });
+    expect(cachedWorkspace()).toEqual({ slug: 'acme', realm: 'tenant-acme', trial: false });
+  });
+
+  it('a trial entry still in trial keeps its realm and gains the hint for isWrongWorkspace', async () => {
+    rememberWorkspace({ realm: 'trial', trial: true, slug: 'beta-labs' });
+    const trial = RESOLVE.find((c) => c.name === 'trial workspace by slug')!;
+    const resolver = resolverFor({ 'beta-labs': trial.response });
+    expect(await chooseWorkspace({ pathname: '/t/beta-labs/x', resolver, cfg })).toEqual(trial.expected);
+  });
+
+  it('not found drops the stale entry, so a deleted tenant is not restored on every visit (code review)', async () => {
+    rememberWorkspace({ realm: 'tenant-globex', trial: false, slug: 'globex' });
+    rememberWorkspace({ realm: 'trial', trial: true, slug: 'acme' });
+    expect(await chooseWorkspace({ pathname: '/t/acme/', resolver: resolverFor({}), cfg })).toBeUndefined();
+    expect(cachedWorkspace('acme')).toBeUndefined();
+    expect(cachedWorkspace('globex')).toBeDefined();
+  });
+
+  it('no slug in the URL: a most recent trial entry PUB-1 no longer knows is dropped and the next one used (code review)', async () => {
+    rememberWorkspace({ realm: 'tenant-acme', trial: false, slug: 'acme' });
+    rememberWorkspace({ realm: 'trial', trial: true, slug: 'gone' });
+    const resolver = resolverFor({});
+    expect(await chooseWorkspace({ pathname: '/', resolver, cfg })).toEqual({ realm: 'tenant-acme', trial: false, slug: 'acme' });
+    expect(cachedWorkspace('gone')).toBeUndefined();
+    expect(resolver.resolve).toHaveBeenCalledOnce();
+  });
+
+  it('no slug in the URL: a cache that cannot be written ends at the identifier screen, without looping', async () => {
+    rememberWorkspace({ realm: 'tenant-acme', trial: false, slug: 'acme' });
+    rememberWorkspace({ realm: 'trial', trial: true, slug: 'gone' });
+    vi.spyOn(page.local, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError');
+    });
+    const resolver = resolverFor({});
+    expect(await chooseWorkspace({ pathname: '/', resolver, cfg })).toBeUndefined();
+    expect(resolver.resolve).toHaveBeenCalledOnce();
+  });
+
+  it('no slug in the URL: forceResolve leaves a paid most recent entry alone', async () => {
+    rememberWorkspace({ realm: 'tenant-acme', trial: false, slug: 'acme' });
+    const resolver = resolverFor({});
+    expect(await chooseWorkspace({ pathname: '/', resolver, cfg, forceResolve: true })).toEqual({ realm: 'tenant-acme', trial: false, slug: 'acme' });
+    expect(resolver.resolve).not.toHaveBeenCalled();
+  });
+
+  // Code review (2026-11-24): a re-check of a cached entry must not hold sign-in on a slow PUB-1.
+  it('a re-check slower than 5 s uses the cached entry; an unknown slug still waits for PUB-1', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      rememberWorkspace({ realm: 'trial', trial: true, slug: 'acme' });
+      const resolver = { resolve: vi.fn((_id: string, _s?: AbortSignal) => new Promise<Workspace | undefined>(() => {})) };
+      const chosen = chooseWorkspace({ pathname: '/t/acme/', resolver, cfg });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await chosen).toEqual({ realm: 'trial', trial: true, slug: 'acme' });
+      expect(resolver.resolve.mock.calls[0]![1]?.aborted).toBe(true);
+      let unknown: unknown = 'pending';
+      void chooseWorkspace({ pathname: '/t/globex/', resolver, cfg }).then((w) => (unknown = w));
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(unknown).toBe('pending');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a caller's abort during a re-check is passed through", async () => {
+    rememberWorkspace({ realm: 'trial', trial: true, slug: 'acme' });
+    const ctrl = new AbortController();
+    const resolver = {
+      resolve: vi.fn(async (_id: string, signal?: AbortSignal) => {
+        ctrl.abort(new Error('left the page'));
+        throw signal?.reason;
+      }),
+    };
+    await expect(chooseWorkspace({ pathname: '/t/acme/', resolver, cfg, signal: ctrl.signal })).rejects.toThrow('left the page');
+  });
+
+  it("a caller's abort settles the call at once when the resolver ignores the signal (code review)", async () => {
+    rememberWorkspace({ realm: 'trial', trial: true, slug: 'acme' });
+    const ctrl = new AbortController();
+    const resolver = { resolve: vi.fn(() => new Promise<Workspace | undefined>(() => {})) };
+    const chosen = chooseWorkspace({ pathname: '/t/acme/', resolver, cfg, signal: ctrl.signal });
+    const unknown = chooseWorkspace({ pathname: '/t/globex/', resolver, cfg, signal: ctrl.signal });
+    ctrl.abort(new Error('left the page'));
+    await expect(chosen).rejects.toThrow('left the page');
+    await expect(unknown).rejects.toThrow('left the page'); // no cached entry: no 5 s bound, but the abort still settles it
+  });
+
+  it("a caller's abort is passed through even when the resolver ignores the signal (code review)", async () => {
+    rememberWorkspace({ realm: 'trial', trial: true, slug: 'acme' });
+    const ctrl = new AbortController();
+    const resolver = {
+      resolve: vi.fn(async () => {
+        ctrl.abort(new Error('left the page'));
+        return { realm: 'tenant-acme', trial: false, slug: 'acme' };
+      }),
+    };
+    await expect(chooseWorkspace({ pathname: '/t/acme/', resolver, cfg, signal: ctrl.signal })).rejects.toThrow('left the page');
+    expect(cachedWorkspace('acme')?.realm).toBe('trial');
+    const unknown = new AbortController();
+    const unknownResolver = { resolve: vi.fn(async () => (unknown.abort(new Error('gone')), undefined)) };
+    await expect(chooseWorkspace({ pathname: '/t/globex/', resolver: unknownResolver, cfg, signal: unknown.signal })).rejects.toThrow('gone');
+  });
+
+  // Code review (2026-11-24): a 'not found' drops the entry only while it names the realm that was checked.
+  it('not found keeps an entry another tab re-cached with another realm', async () => {
+    rememberWorkspace({ realm: 'trial', trial: true, slug: 'acme' });
+    const resolver = {
+      resolve: vi.fn(async () => {
+        rememberWorkspace({ realm: 'tenant-acme', trial: false, slug: 'acme' }); // tab B, meanwhile
+        return undefined;
+      }),
+    };
+    expect(await chooseWorkspace({ pathname: '/t/acme/', resolver, cfg })).toBeUndefined();
+    expect(cachedWorkspace('acme')?.realm).toBe('tenant-acme');
+  });
+
+  it('a late answer after the 5 s re-check gave up does not change the cache', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      rememberWorkspace({ realm: 'trial', trial: true, slug: 'acme' });
+      let answer!: (w: Workspace | undefined) => void;
+      const resolver = { resolve: vi.fn(() => new Promise<Workspace | undefined>((r) => (answer = r))) }; // ignores the signal
+      const chosen = chooseWorkspace({ pathname: '/t/acme/', resolver, cfg });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await chosen).toEqual({ realm: 'trial', trial: true, slug: 'acme' });
+      answer({ realm: 'tenant-acme', trial: false, slug: 'acme' });
+      await new Promise((r) => setImmediate(r)); // not faked: runs after every pending microtask, the late lookup's included
+      expect(cachedWorkspace('acme')).toEqual({ slug: 'acme', realm: 'trial', trial: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('PUB-1 down: a cached trial entry is still used', async () => {
+    rememberWorkspace({ realm: 'trial', trial: true, slug: 'acme' });
+    const resolver = { resolve: vi.fn(async () => Promise.reject(new Error('503'))) };
+    expect(await chooseWorkspace({ pathname: '/t/acme/', resolver, cfg })).toEqual({ realm: 'trial', trial: true, slug: 'acme' });
+    expect(await chooseWorkspace({ pathname: '/', resolver, cfg })).toEqual({ realm: 'trial', trial: true, slug: 'acme' });
   });
 
   it('resolves an unknown slug and caches the result without the hint', async () => {
@@ -176,11 +331,19 @@ describe('chooseWorkspace', () => {
 describe('rememberWorkspace and the cache', () => {
   it('caches by slug, most recent first, and moves a slug-less URL to /t/<slug>/…', () => {
     page.url = new URL('https://app.example.com/tenders/42?tab=open#top');
+    let popstates = 0;
+    vi.stubGlobal('PopStateEvent', class extends Event {});
+    vi.stubGlobal('dispatchEvent', (e: Event) => (e.type === 'popstate' && popstates++, true));
     rememberWorkspace({ realm: 'tenant-acme', trial: false, slug: 'acme', tenantIdHint: 'x' } as Workspace & { slug: string });
+    expect(popstates).toBe(0); // adding a missing slug keeps the route
     expect(page.url.pathname + page.url.search + page.url.hash).toBe('/t/acme/tenders/42?tab=open#top');
     expect(JSON.parse(page.local.getItem(WORKSPACE_CACHE_KEY)!)).toEqual([{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
     rememberWorkspace({ realm: 'trial', trial: true, slug: 'beta-labs' });
-    expect(page.url.pathname).toBe('/t/acme/tenders/42'); // already has a slug
+    expect(page.url.pathname).toBe('/t/beta-labs/tenders/42'); // another slug is replaced: the next load restores beta-labs (code review)
+    expect(popstates).toBe(1); // and a mounted router is told
+    rememberWorkspace({ realm: 'trial', trial: true, slug: 'beta-labs' });
+    expect(page.url.pathname).toBe('/t/beta-labs/tenders/42'); // the same slug: unchanged
+    expect(popstates).toBe(1);
     expect(cachedWorkspace()?.slug).toBe('beta-labs');
     rememberWorkspace({ realm: 'tenant-acme', trial: false, slug: 'acme' });
     expect(JSON.parse(page.local.getItem(WORKSPACE_CACHE_KEY)!).map((e: { slug: string }) => e.slug)).toEqual(['acme', 'beta-labs']);

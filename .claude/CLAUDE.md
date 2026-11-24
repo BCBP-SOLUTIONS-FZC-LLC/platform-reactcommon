@@ -51,7 +51,7 @@ Six layers inside the SDK (`subpaths.json` is the single source; `test/unit/sdk/
 ## Critical Rules (do not break)
 
 - **No token ever leaves memory.** Not to `localStorage`, `sessionStorage`, the `BroadcastChannel`, logs or spans. `test/unit/auth/oidc.test.ts` asserts it; keep it asserted.
-- **The browser never sends identity headers** (`x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`: `FORBIDDEN_REQUEST_HEADERS`, generated from AuthZ Enrichment). The gateway injects them.
+- **The browser never sends identity headers** (`x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`, `x-auth-time`: `FORBIDDEN_REQUEST_HEADERS`, generated from AuthZ Enrichment). The gateway injects them.
 - **gincommon is the behavioural source of truth** for the registry, log field names, redaction, problem types and header names. Backend-shaped data is **generated** into `packages/frontend-sdk/contracts/` and `src/internal/generated/` from pinned commits (`contracts/sources.json`): never edit generated files; run `pnpm contracts:sync`. Move a pin by editing its sha (or `--update-pins`, then review every moved pin).
 - **CSP-safe always:** no `eval`, `new Function` or runtime CSS-in-JS; Trusted Types policies `platform-sdk` / `platform-webpack`. `zod/mini` in jitless mode.
 - **Unload requests start inside the listener.** Anything sent on `pagehide` is `sendBeacon` / fetch `keepalive` started synchronously, within the shared budget (`onUnload`, LLD §7.5). Never `await` before it.

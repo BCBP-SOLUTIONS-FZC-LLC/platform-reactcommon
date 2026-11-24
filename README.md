@@ -139,7 +139,7 @@ An error from an API is always an RFC 9457 problem. A non-problem answer is repl
 |---|---|
 | The page identity uses the registry vocabulary | `initializeCore`: `domain` ∈ registry domains, `environment` ∈ `local\|dev\|test\|staging\|prod`, service pattern → `InvalidIdentityError`; a different second identity → `IdentityMismatchError` |
 | `runtime.json` is strict | Unknown keys rejected at every level; exact origins; same-origin paths; bounded numbers → `RuntimeConfigError` with every offending key path (the bootstrap shows a static "unavailable" page) |
-| Identity headers are never sent | `x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode` (generated from gincommon + AuthZ Enrichment): dropped with an essential warn log; `TypeError` in local/dev |
+| Identity headers are never sent | `x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`, `x-auth-time` (generated from gincommon + AuthZ Enrichment): dropped with an essential warn log; `TypeError` in local/dev |
 | API paths are route templates | `/…` with no query, fragment, whitespace or `..`; every `:name` filled, no unused params → `TypeError`. The template is the metric `route` label |
 | Tokens go to the page's origin only | `Authorization` only for same-origin URLs; correlation headers only for the page and exact allowlisted origins |
 | Sign-in callbacks are verified | One-time PKCE record per `state` (10-minute expiry), RFC 9207 `iss`, then ID-token `iss` / `aud` / `azp` / `nonce` / `exp` / `iat` (±60 s) → otherwise `anonymous`, the code never exchanged |
@@ -246,7 +246,7 @@ installGlobalErrorHandlers();
 const idp = createOidcProvider(cfg.auth, workspaceResolver);
 setTokenSource(initializeAuth(idp));
 const session = await idp.init();             // may redirect once (prompt=none) and never settle
-// anonymous → signed-out screen / login-required → idp.login / none → chooseWorkspace ?? identifier screen
+// anonymous → signed-out screen / login-required → idp.login(state.workspace ?? identifier screen) / none → chooseWorkspace ?? identifier screen
 // authenticated → session context → authorizer, flags, rememberWorkspace → i18n → loadManifest → render
 ```
 
@@ -333,6 +333,7 @@ Gateway denials: `gatewayDenyCode(e)`.
 | `DENY_MFA_STALE` | Step-up |
 | `DENY_TENANT_READ_ONLY` | `useReadOnly()` |
 | `DENY_UNRESOLVABLE_SUBJECT` | "Workspace being set up" with bounded retries, never a sign-out |
+| `DENY_MEMBER_SUSPENDED` | "Access paused" (a suspended member) |
 
 Details: [docs/problem-details](docs/problem-details/README.md).
 

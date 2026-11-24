@@ -62,6 +62,8 @@ export type SessionState =
       /**
        * 'signed-out': the signed-out mark is set, so never log in automatically.
        * 'login-required': a prompt=none attempt for `workspace` answered login_required, interaction_required or consent_required.
+       *   A trial `workspace` has been re-checked with PUB-1 (a trial → paid conversion moves it to `tenant-<slug>`);
+       *   it is absent when PUB-1 no longer knows the slug: show the identifier-first screen, not another cached workspace.
        * 'device-clock': the sign-in was refused because the device's clock is more than 10 minutes off
        *   the identity provider's; tell the user to set it (signing in again cannot succeed until then).
        * 'none': no session and no hint (first visit, rejected callback, loop guard).
@@ -97,8 +99,12 @@ export interface IdentityProvider {
   getAccessToken(): Promise<string | undefined>;
   /** Single-flight per tab: concurrent callers share one in-flight refresh. */
   refresh(): Promise<boolean>;
-  /** Local logout of the current realm, then login(w). */
-  switchWorkspace(w: Workspace): Promise<void>;
+  /**
+   * Local logout of the current realm, then login(w). Credentials are asked for (`prompt=login`) when `w` is in
+   * the current realm (the same workspace, or another trial: Keycloak's live SSO session would sign the same
+   * user straight back in), after a sign-out, and when `prompt: 'login'` is passed.
+   */
+  switchWorkspace(w: Workspace, o?: { prompt?: 'login' }): Promise<void>;
   /** Step-up: top-level redirect with prompt=login&max_age=<s> (IAM HLD §11.3). */
   reauthenticate(o: { maxAgeSeconds: number; returnUrl?: string }): Promise<void>;
   /** now − auth_time > maxAgeSeconds; false when unknown. */

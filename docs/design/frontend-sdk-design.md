@@ -38,7 +38,7 @@ Sources of truth this design was checked against (read from source, not READMEs)
 | Identity vocabulary, metric naming, labels | `go/platform-gincommon/internal/obsregistry/registry.json` |
 | Realm model, login flows, token lifetimes, ingress strip-list | `XPertPMS/IAM/iam-hld-docs/iam-hld-tender-saas-v1.58.md` §4.1, §5.4, §8.2, §8.10.2, §11.1, §11.3 |
 | Workspace resolution (PUB-1) | `iam-org-membership` `internal/adapter/inbound/http/router.go`, LLD `docs/lld/iam-lld-org-membership-service.md` rev 2.14 (§5.4, OQ-10, OQ-11) |
-| Gateway deny codes, MFA freshness | `iam-authz-enrichment` `internal/domain/decision.go`, `internal/adapter/inbound/grpc/response.go`, LLD §8.4, §17, AE-42 |
+| Gateway deny codes, MFA freshness | `iam-authz-enrichment` `api/deny-codes.json`, `internal/domain/decision.go`, `internal/adapter/inbound/grpc/response.go`, LLD §8.4, §17, AE-42 |
 | Realms and OIDC clients | `iam-realm-provisioner` `internal/adapter/outbound/keycloak/realm-template.json`, LLD RP-INV-2, RP-3 |
 | Verification and invitation emails | `iam-realm-provisioner` `internal/adapter/outbound/keycloak/admin_users.go` (`CreateTrialUser`, `CreateInvitedUser`); `iam-org-membership` `internal/core/service/invitation_service.go` |
 | Trial signup (SB-1…SB-5), first sign-in timing (G-3) | `XPertPMS/BFF/bff-signup` `internal/adapter/inbound/http/dto.go`, LLD `docs/lld/signup-bff-lld.md` v0.7 (§5.4, §5.5, §8.2, §10.4) |
@@ -515,8 +515,8 @@ export class AbortedError extends Error {}                     // caller aborted
 export type ApiError = ProblemError | TimeoutError | NetworkError;
 
 /** Gateway (ext_authz) deny codes, sent as the problem's `errorCode` (§D6 H); generated from iam-authz-enrichment (§C5). */
-export const GATEWAY_DENY_CODES: readonly ['DENY_UNRESOLVABLE_SUBJECT', 'DENY_TENANT_READ_ONLY', 'DENY_MFA_STALE',
-  'DENY_TENDER_ACL_INSUFFICIENT', 'DENY_ROLE_INSUFFICIENT', 'DENY_SERVICE_UNAVAILABLE', 'DENY_MALFORMED_IDENTITY'];
+export const GATEWAY_DENY_CODES: readonly ['DENY_MALFORMED_IDENTITY', 'DENY_UNRESOLVABLE_SUBJECT', 'DENY_MEMBER_SUSPENDED',
+  'DENY_TENANT_READ_ONLY', 'DENY_ROLE_INSUFFICIENT', 'DENY_TENDER_ACL_INSUFFICIENT', 'DENY_MFA_STALE', 'DENY_SERVICE_UNAVAILABLE'];
 export type GatewayDenyCode = (typeof GATEWAY_DENY_CODES)[number];
 export function gatewayDenyCode(p: ProblemError): GatewayDenyCode | undefined; // p.errorCode when it is one of GATEWAY_DENY_CODES
 export function parseProblemResponse(res: Response, init?: { requestId?: string }): Promise<ProblemError>;
@@ -538,7 +538,7 @@ Parse rules, mirroring Go `FromResponse`/`UnmarshalJSON`:
   `errorCode`, never the full URI.
   `gatewayDenyCode(p)` returns `p.errorCode` when it is in `GATEWAY_DENY_CODES`. The UI reacts by code: `DENY_MFA_STALE` → step-up re-auth
   (`/auth` `reauthenticate`), `DENY_TENANT_READ_ONLY` → read-only state, `DENY_MALFORMED_IDENTITY` →
-  sign in again, `DENY_UNRESOLVABLE_SUBJECT` → "workspace not ready / no access" with a bounded
+  show an error, never a sign-in loop, `DENY_MEMBER_SUSPENDED` → "access paused", `DENY_UNRESOLVABLE_SUBJECT` → "workspace not ready / no access" with a bounded
   retry, never a sign-out (`/auth`, "First sign-in after signup").
 - Any other non-2xx gives a synthetic problem built from `typeForStatus(status)`, with `traceId` from
   `X-Trace-ID`, `synthetic: true`, and no detail. The raw body is never surfaced.
@@ -574,7 +574,7 @@ export function setTokenSource(t: TokenSource): void;                 // shell o
 export function isOnline(): boolean; export function subscribeOnline(l: (online: boolean) => void): () => void;
 // gincommon's three identity headers plus the rest of the IAM ingress strip-list (IAM HLD §11.1)
 export const FORBIDDEN_REQUEST_HEADERS: readonly ['x-user-id', 'x-tenant-id', 'x-tenant-roles',
-  'x-departments', 'x-plan', 'x-feature-flags', 'x-residency-mode'];
+  'x-departments', 'x-plan', 'x-feature-flags', 'x-residency-mode', 'x-auth-time'];
 ```
 
 Request pipeline (fixed order): offline check (short-circuit with `NetworkError{offline:true}`) →
@@ -652,7 +652,7 @@ export interface IdentityProvider {
   logout(o?: { global?: boolean }): Promise<void>;
   getAccessToken(): Promise<string | undefined>;
   refresh(): Promise<boolean>;   // single-flight per tab: concurrent callers share one in-flight refresh
-  switchWorkspace(w: Workspace): Promise<void>;  // local logout of the current realm, then login(w)
+  switchWorkspace(w: Workspace, o?: { prompt?: 'login' }): Promise<void>;  // local logout of the current realm, then login(w); credentials always asked for within the same realm or after a sign-out, else only with prompt: 'login'
   /** Step-up: top-level redirect with prompt=login&max_age=<s> (IAM HLD §11.3). */
   reauthenticate(o: { maxAgeSeconds: number; returnUrl?: string }): Promise<void>;
   needsStepUp(maxAgeSeconds: number): boolean;   // now − auth_time > maxAgeSeconds; false when unknown
@@ -667,11 +667,12 @@ export function slugFromPath(pathname: string, cfg: RuntimeConfig['auth']): stri
 /** Cached Workspace for `slug` (or the most recent one when omitted). Keyed by slug; every cached entry has one. SDK-reserved localStorage key, outside /storage namespaces. */
 export function cachedWorkspace(slug?: string): (Workspace & { slug: string }) | undefined;
 /** Shell only, after sign-in: caches the signed-in Workspace with its slug (paid: from the realm; trial: SessionContext.slug)
- *  and replaces the URL with `/t/<slug>/…` when it has no slug. */
+ *  and puts it in the URL: `/t/<slug>/…` when it has no slug, in place of another slug when it names another workspace. */
 export function rememberWorkspace(w: Workspace & { slug: string }): void;
 /**
- * Realm choice before login (see "Choosing the realm"): slug from path → cached Workspace for it, else resolver.resolve(slug);
- * no slug in path → the most recent cached Workspace. undefined → identifier-first screen.
+ * Realm choice before login (see "Choosing the realm"): slug from path → its cached Workspace when paid, else resolver.resolve(slug)
+ * (a cached trial entry is always re-checked; PUB-1 down → the cached entry); no slug in path → the most recent cached Workspace,
+ * re-checked the same way when trial. undefined → identifier-first screen.
  */
 export function chooseWorkspace(o: { pathname: string; resolver: WorkspaceResolver; cfg: RuntimeConfig['auth'];
   forceResolve?: boolean; signal?: AbortSignal }): Promise<Workspace | undefined>;
@@ -778,7 +779,8 @@ load starts with no tokens: an F5, a new tab, `reloadOnceForChunkError`, and `us
 (The step-up and login redirects are not affected: they return with `?code=`.) `init()` therefore runs:
 1. **Callback:** `?code=&state=` that passes the checks in "Login and callback" → token exchange → `authenticated`. An
    `?error=login_required|interaction_required|consent_required` answering a `prompt=none` attempt →
-   `anonymous` with that record's workspace and `reason: 'login-required'`. Both move the URL to the
+   `anonymous` with `reason: 'login-required'` and that record's workspace (a trial one re-checked with
+   PUB-1 first; none when PUB-1 no longer knows the slug). Both move the URL to the
    record's `returnUrl` (see "Callback location").
 2. **Silent restore:** no callback and no tokens. The workspace to restore is:
    - URL has a slug: `cachedWorkspace(slug)`. If there is **no entry for that slug, skip step 2**. Never fall
@@ -795,8 +797,10 @@ load starts with no tokens: an F5, a new tab, `reloadOnceForChunkError`, and `us
 What the shell does with `anonymous` (§C2 step 7):
 - `'signed-out'`: shows a "you are signed out" screen with a **Sign in** button. It never calls `login()`
   on its own; otherwise the still-live Keycloak SSO session would undo a local logout at once.
-- `'login-required'`: calls `login({ workspace: session.workspace })` (interactive), with no PUB-1 call
-  and no cache lookup. That is the workspace the silent attempt was for.
+- `'login-required'`: calls `login({ workspace: session.workspace })` (interactive). That is the workspace
+  the silent attempt was for; `init()` has already re-checked a trial one with PUB-1 (one call, at most 5 s). When
+  `session.workspace` is absent (PUB-1 no longer knows the slug), show the identifier-first screen; never
+  fall back to another cached workspace.
 - `'none'`: runs "Choosing the realm" below, then `login()`.
 
 Loop guard: one `prompt=none` attempt per tab, marked in `sessionStorage` before the redirect and
@@ -830,9 +834,10 @@ Tenant model (§D2), as IAM implements it:
 
 Choosing the realm (HLD §8.2.7), before any token exists. `chooseWorkspace()` implements steps 1–3:
 1. **Slug:** `slugFromPath(location.pathname)` → step 2. No slug in the path → the most recent
-   `cachedWorkspace()`, and stop. Every emailed link lands on `/t/<slug>/` (§D6 F), so a first login
+   `cachedWorkspace()`; stop when it is paid, otherwise re-check its slug as in step 2. Every emailed link lands on `/t/<slug>/` (§D6 F), so a first login
    normally comes through the path.
-2. **Slug → Workspace:** `cachedWorkspace(slug)` if present, otherwise `resolver.resolve(slug)` (PUB-1),
+2. **Slug → Workspace:** `cachedWorkspace(slug)` if present and **paid**, otherwise (no entry, or a trial entry: a trial → paid
+   conversion moves the tenant to `tenant-<slug>`) `resolver.resolve(slug)` (PUB-1),
    whose result is cached. A slug alone is not enough, because **trial tenants also have `/t/<slug>`
    links** (HLD §8.2.7) and belong to the shared `trial` realm. Building `tenant-<slug>` blindly would
    send a trial user to a realm that does not exist, and Keycloak would show its own 404 page, which the SPA never sees.
@@ -861,14 +866,14 @@ with sign-out and switch-workspace actions, and does not cache it. Without a hin
 Keycloak needs no hint, because emails are unique in the `trial` realm. The field is optional, so the
 check simply stops running if OQ-10 removes it.
 
-`forceResolve: true` skips the cache. The shell passes it only when the session was
+`forceResolve: true` re-checks a paid entry for the URL's slug too (a trial entry is always re-checked). The shell passes it only when the session was
 **ended by the server early**, not on every expiry:
 - **Early end:** a refresh fails with `invalid_grant` before the refresh token's own expiry. The SDK
   records that expiry from each token response's `refresh_expires_in`, so it can tell the two cases
   apart. This is what trial → paid conversion looks like (sessions terminated, RP-3), and also an admin
   revocation. The `expired` state carries `serverEnded: true`.
 - **Natural end:** 8 h idle or 12 h absolute (HLD §11.3), or the SDK idle timeout. `serverEnded: false`, and
-  the cache is reused. Without this split, every user would call PUB-1 at least once a day, and an
+  a paid entry is reused (a trial entry still costs one PUB-1 call). Without this split, every user would call PUB-1 at least once a day, and an
   office behind one NAT would hit its per-IP limit.
 
 Session expiry during use. `expired` is a runtime transition. It comes from a refresh that fails with
@@ -909,8 +914,8 @@ It is a fallback, not the main path.
 First sign-in after signup (BFF LLD G-3). Realm Provisioner sends the verification email before
 org-membership creates the tenant row, so a fast user can sign in before a membership exists. Every
 API call is then denied `403 DENY_UNRESOLVABLE_SUBJECT`, and AuthZ Enrichment caches that answer for
-5 s (`AE_NEG_TTL`). The same code also means a removed member, or (since AE-47, AuthZ Enrichment #36) a
-suspended one, and the SDK cannot tell these apart. IAM confirmed this handling (no IAM change for G-3).
+5 s (`AE_NEG_TTL`). The same code also means a removed member, or, while AuthZ Enrichment #44 rolls out, a
+suspended one (afterwards a suspended member gets `DENY_MEMBER_SUSPENDED`, "access paused"). IAM confirmed this handling (no IAM change for G-3).
 Rule: the shell (via `useSessionContext`'s load and `/problem`'s `gatewayDenyCode`) shows "your
 workspace is being set up" and retries the session-context load at 6 s, 12 s and 24 s (each past the
 negative-cache TTL); after that it shows "you do not have access to this workspace" with sign-out and
@@ -919,13 +924,17 @@ retries the original mutating request.
 
 `switchWorkspace(w)`: local logout of the current realm (`clearAllAppStorage()`, rotate the session
 id, broadcast `workspace-switched`), then `login({ workspace: w })`. Old-realm tokens are discarded,
-never exchanged.
+never exchanged. A switch within the current realm (e.g. from a refusal screen to another trial), and a switch after
+a sign-out, always ask for credentials (`prompt=login`): the live SSO session would otherwise sign the
+same user straight back in. `{ prompt: 'login' }` asks for them on a switch to another realm too.
 
 Trial → paid conversion (HLD §8.10.2): the tenant moves to realm `tenant-<slug>` (from RP #46 on; before that, RP-3 named it `tenant-<tenant_id>`, §D6 N) and trial sessions are
 terminated (`shared_sessions_terminated`, RP-3). The next refresh fails with `invalid_grant` before the
 refresh token's expiry, so the state becomes `expired` with `serverEnded: true`, and the shell runs the
 realm choice again with `forceResolve: true`; resolving the slug now returns
-the dedicated realm, which replaces the cached `trial` entry. The
+the dedicated realm, which replaces the cached `trial` entry. Without an open tab (the conversion email's `/t/<slug>/`
+link), `chooseWorkspace` re-checks the cached trial entry with PUB-1, and a failed silent restore
+re-checks it in `init()`. The
 welcome screen (FE spec A5) is the shell's, never an error. The "your workspace has moved" email
 (§8.10.2 step 8) is sent by the Notification Service from `TenantConverted` (§D6 M); the SDK does not
 depend on it.
@@ -1127,7 +1136,7 @@ index.html ─► bootstrap.ts (async import boundary required by MF)
     state = await idp.init()                                          ?code=/?error= callback, else one prompt=none restore per tab
     anonymous, reason:                                                init() never returns expired (a page load has no tokens)
       'signed-out'     → signed-out screen; login only on the user's click
-      'login-required' → idp.login({workspace: state.workspace, returnUrl})   no PUB-1, no cache lookup
+      'login-required' → idp.login({workspace: state.workspace ?? identifier-first screen, returnUrl})   a trial workspace was re-checked with PUB-1 in init()
       'none'           → workspace = chooseWorkspace() ?? identifier-first screen + resolve(); idp.login({workspace, returnUrl})
     isWrongWorkspace(state.workspace, state.user) → wrong-workspace screen (sign out / switch), stop
     idp.subscribe: expired → "session ended" dialog → signInAgain()   runtime only; forceResolve = serverEnded, prompt=login if idle
@@ -1238,7 +1247,7 @@ rolled back only to an SDK version at or above the newest one any deployed remot
 
 | Path | Origin | Cache policy | Origin request | Notes |
 |---|---|---|---|---|
-| `/api/*` | API gateway / ALB | CachingDisabled | AllViewerExceptHostHeader | All methods. WAF. Envoy strips the HLD §11.1 list (`x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`). `/api/v1/public/tenants/resolve` must route without `jwt_authn`/`ext_authz`, with a per-IP rate limit and CAPTCHA (D2 item B) |
+| `/api/*` | API gateway / ALB | CachingDisabled | AllViewerExceptHostHeader | All methods. WAF. Envoy strips the HLD §11.1 list (`x-user-id`, `x-tenant-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`, `x-auth-time`). `/api/v1/public/tenants/resolve` must route without `jwt_authn`/`ext_authz`, with a per-IP rate limit and CAPTCHA (D2 item B) |
 | `/otel/*` | OTel Collector (OTLP/HTTP) | CachingDisabled | no cookies, no `Authorization` | POST only. WAF rate-based rule + 1 MB body limit. Unauthenticated by design (pre-login errors), so the collector drops unknown resource attrs and enforces label allowlists |
 | `/csp-report` | Lambda function URL (AuthType NONE) + secret origin header `x-origin-verify` | CachingDisabled | no cookies | POST only, WAF rate rule, 64 KB limit. Not OAC: a Lambda URL behind OAC needs the viewer to send `x-amz-content-sha256` on POST, which a browser's report can't. CloudFront adds the secret header; the Lambda compares it in constant time with `ORIGIN_VERIFY_SECRET` (comma-separated current and previous, for rotation) and returns 403 without it, or when the variable is unset. The browser posts `application/reports+json` (`report-to`) or `application/csp-report` (`report-uri`, for browsers without Reporting-API CSP reports), which the OTel Collector has no receiver for. The Lambda drops query strings from `blocked-uri`/`document-uri`, sanitizes with the shared redaction rules, and forwards to the Collector as OTLP logs (`event.name=csp.violation`) |
 | `/config/runtime.json` | S3 | TTL 0, honour origin `Cache-Control: no-cache` + ETag | — | Per-environment object |
@@ -1474,7 +1483,7 @@ never reaches a label. `canEdit` is a UI hint, and the PUT is authorised by the 
 | 5 | `typeForStatus` mapping (400 → bad-request, unknown → about:blank + status text) | `TypeForStatus` | synthetic problems |
 | 6 | Timestamp layout `YYYY-MM-DDTHH:MM:SSZ` | `TimestampLayout` | parser (string, validated) |
 | 7 | Server timeout = 503 + `REQUEST_TIMEOUT` | `errors.go` | `ProblemError`, not `TimeoutError` |
-| 8 | Header names: `x-request-id`, `traceparent`, `tracestate`; response `X-Trace-ID`, `X-Request-ID`; forbidden `x-user-id`, `x-tenant-id`, `x-tenant-roles` + IAM strip-list `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode` | `transport.go`, `propagate.go`; IAM HLD §11.1 | `contracts/headers.json` |
+| 8 | Header names: `x-request-id`, `traceparent`, `tracestate`; response `X-Trace-ID`, `X-Request-ID`; forbidden `x-user-id`, `x-tenant-id`, `x-tenant-roles` + IAM strip-list `x-departments`, `x-plan`, `x-feature-flags`, `x-residency-mode`, `x-auth-time` | `transport.go`, `propagate.go`; IAM HLD §11.1 | `contracts/headers.json` |
 | 9 | Request-id rule `^[a-zA-Z0-9._-]+$`, ≤128 B | `validation.go` | `newRequestId` |
 | 10 | Roles parse rule (regex, 64 B, 64 roles, 4096 B, fail-closed) | `validation.go` | `/authz` |
 | 11 | Trace id: W3C, 32 lower-hex, not all-zero; no baggage to third parties | OTel / `propagate.go` | `/tracing` |
@@ -1483,7 +1492,7 @@ never reaches a label. `canEdit` is a UI hint, and the PUT is authorised by the 
 | 14 | Resource attrs + sampler semantics | `otel/setup.go` | `/tracing` |
 | 15 | Observability standard: tiers, metric entries, label vocabulary, required/const labels, prohibited labels/suffixes, suffix and unit rules, bucket presets | `registry.json`, `metricslint` (`validate.go`, `ServicePrefix`) | `contracts/metric-registry.json` → `/metrics` registration checks; `metricslint check` in CI |
 | 16 | Log field names: `trace_id`, `request_id` snake_case (not the problem-body camelCase); `path` = server route template | `middleware/logging.go`, `recovery.go` | `/logging` envelope, `contracts/log-fields.json` |
-| 17 | Gateway deny codes, their statuses, and their problem shape (`errorCode` = reason, platform type per status, §D6 H) | `iam-authz-enrichment` `internal/domain/decision.go`, pinned by its `TestDenyCodes_Pinned`; LLD §17 | `contracts/gateway-deny-codes.json` → `GATEWAY_DENY_CODES`; denial bodies in `problem_bodies.json` |
+| 17 | Gateway deny codes, their statuses, and their problem shape (`errorCode` = reason, platform type per status, §D6 H) | `iam-authz-enrichment` `api/deny-codes.json` (its published list, with `retryable` and `action`), checked against `internal/domain/decision.go`; LLD §17 | `contracts/gateway-deny-codes.json` → `GATEWAY_DENY_CODES`; denial bodies in `problem_bodies.json` |
 | 18 | PUB-1 request/response shape (`found`, `realm`, `strategy`, trial-only `tenant_id`; no `slug`, by design) and session-context shape (P-35, including `slug`, §D6 A) | `iam-org-membership` LLD §5.4, PUBRES-1…4, P-35 | `contracts/tenant-resolve-cases.json`, `contracts/session-context-cases.json`; contract tests in `/testing`; `/auth` mocks |
 | 19 | Realm naming (`trial`, `tenant-<slug>`), workspace URL `/t/<slug>` used by **both** paid and trial tenants | IAM HLD §8.2.7, §8.10.2 | `RuntimeConfig.auth` defaults, `slugFromPath`, realm sanity check in `chooseWorkspace` |
 
@@ -1497,9 +1506,10 @@ never reaches a label. `canEdit` is a UI hint, and the PUT is authorised by the 
    and `iam-org-membership`). `contracts/sources.json` pins each repo to a commit SHA on `main`. CI checks
    them out at those SHAs with a read-only deploy key. Locally, the script reads `IAM_REPOS_DIR`
    (default `../../../XPertPMS/IAM`) and fails if a checkout is not at the pinned SHA.
-   - Deny codes and statuses come from the `DenyReason` constants and the `HTTPStatus()` table in
-     `internal/domain/decision.go`. The script fails if the extracted set differs from the list in
-     `TestDenyCodes_Pinned`, so a parsing slip cannot pass silently.
+   - Deny codes come from AuthZ Enrichment's published `api/deny-codes.json` (status, problem type,
+     `retryable`, `action`; adding a code is MINOR, changing or removing one MAJOR). The script fails
+     if its codes and statuses differ from the `DenyReason` constants and the `HTTPStatus()` table in
+     `internal/domain/decision.go`, so neither a stale list nor a parsing slip passes silently.
    - The PUB-1 and P-35 shapes come from org-membership's committed OpenAPI file
      (`docs/swagger/swagger.json`, kept fresh by its `check-swagger-stale.sh`). The case fixtures are
      validated against it.

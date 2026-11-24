@@ -323,39 +323,77 @@ func (r DenyReason) HTTPStatus() int {
 		return 403
 	}
 }`;
-const pinnedTest = `
-func TestDenyCodes_Pinned(t *testing.T) {
-	cases := []struct{}{
-		{domain.DenyUnresolvableSubject, "DENY_UNRESOLVABLE_SUBJECT", 403},
-		{domain.DenyMFAStale, "DENY_MFA_STALE", 403},
-		{domain.DenyMalformedIdentity, "DENY_MALFORMED_IDENTITY", 401},
-		{domain.DenyServiceUnavailable, "DENY_SERVICE_UNAVAILABLE", 503},
-	}
+const denyList = `{
+  "codes": [
+    { "errorCode": "DENY_UNRESOLVABLE_SUBJECT", "status": 403, "type": "https://errors.company.com/platform/forbidden", "title": "Forbidden", "detail": "D", "retryable": false, "action": "none", "meaning": "M" },
+    { "errorCode": "DENY_MFA_STALE", "status": 403, "type": "https://errors.company.com/platform/forbidden", "title": "Forbidden", "detail": "D", "retryable": false, "action": "step_up", "meaning": "M" },
+    { "errorCode": "DENY_MALFORMED_IDENTITY", "status": 401, "type": "https://errors.company.com/platform/unauthorized", "title": "Unauthorized", "detail": "D", "retryable": false, "action": "none", "meaning": "M" },
+    { "errorCode": "DENY_SERVICE_UNAVAILABLE", "status": 503, "type": "https://errors.company.com/platform/service-unavailable", "title": "Service Unavailable", "detail": "D", "retryable": true, "action": "retry_with_backoff", "meaning": "M" }
+  ]
 }`;
-const denySources = { decision: 'd.go', test: 'd_test.go' };
+const denySources = { list: 'deny-codes.json', decision: 'd.go' };
+const platform = {
+  defaultTypeBase: 'https://errors.company.com',
+  typeForStatus: [
+    { status: 401, id: 'platform/unauthorized', title: 'Unauthorized' },
+    { status: 403, id: 'platform/forbidden', title: 'Forbidden' },
+    { status: 503, id: 'platform/service-unavailable', title: 'Service Unavailable' },
+  ],
+};
+const editList = (f: (codes: Record<string, unknown>[]) => void) => {
+  const l = JSON.parse(denyList) as { codes: Record<string, unknown>[] };
+  f(l.codes);
+  return JSON.stringify(l);
+};
 
 describe('gateway deny codes', () => {
-  it('reads codes and statuses (with the default) and checks them against the pinned test', () => {
-    expect(buildGatewayDenyCodes(decisionGo, pinnedTest, denySources).codes).toEqual([
-      { code: 'DENY_UNRESOLVABLE_SUBJECT', status: 403 },
-      { code: 'DENY_MFA_STALE', status: 403 },
-      { code: 'DENY_MALFORMED_IDENTITY', status: 401 },
-      { code: 'DENY_SERVICE_UNAVAILABLE', status: 503 },
+  it('reads the published list, without the prose, and checks it against decision.go (with its default status)', () => {
+    const codes = buildGatewayDenyCodes(denyList, decisionGo, platform, denySources).codes;
+    expect(codes.map((c) => [c.code, c.status, c.retryable, c.action])).toEqual([
+      ['DENY_UNRESOLVABLE_SUBJECT', 403, false, 'none'],
+      ['DENY_MFA_STALE', 403, false, 'step_up'],
+      ['DENY_MALFORMED_IDENTITY', 401, false, 'none'],
+      ['DENY_SERVICE_UNAVAILABLE', 503, true, 'retry_with_backoff'],
     ]);
+    expect(codes[0]).toEqual({
+      code: 'DENY_UNRESOLVABLE_SUBJECT',
+      status: 403,
+      type: 'https://errors.company.com/platform/forbidden',
+      title: 'Forbidden',
+      detail: 'D',
+      retryable: false,
+      action: 'none',
+    });
   });
 
-  it('fails when a reason is added without a pin', () => {
-    const added = decisionGo.replace(')\n', '\tDenyNew DenyReason = "DENY_NEW"\n)\n');
-    expect(() => buildGatewayDenyCodes(added, pinnedTest, denySources)).toThrow('disagree');
+  it('fails when decision.go has a reason the list lacks', () => {
+    const added = decisionGo.replace('\n)\n', '\n\tDenyNew DenyReason = "DENY_NEW"\n)\n');
+    expect(() => buildGatewayDenyCodes(denyList, added, platform, denySources)).toThrow('disagree');
   });
 
-  it('fails when a status changes without the pin', () => {
+  it('fails when a status differs between the list and decision.go', () => {
     const changed = decisionGo.replace('return 401', 'return 403');
-    expect(() => buildGatewayDenyCodes(changed, pinnedTest, denySources)).toThrow('disagree');
+    expect(() => buildGatewayDenyCodes(denyList, changed, platform, denySources)).toThrow('disagree');
+  });
+
+  it('fails on a malformed entry or a duplicate', () => {
+    expect(() => buildGatewayDenyCodes(editList((c) => (c[0]!.action = 'reload')), decisionGo, platform, denySources)).toThrow('action');
+    expect(() => buildGatewayDenyCodes(editList((c) => (c[0]!.retryable = 'no')), decisionGo, platform, denySources)).toThrow('retryable');
+    expect(() => buildGatewayDenyCodes(editList((c) => (c[0]!.status = 200)), decisionGo, platform, denySources)).toThrow('status');
+    expect(() => buildGatewayDenyCodes(editList((c) => delete c[0]!.title), decisionGo, platform, denySources)).toThrow('title');
+    expect(() => buildGatewayDenyCodes(editList((c) => (c[0]!.errorCode = 'NOPE')), decisionGo, platform, denySources)).toThrow('not a deny code');
+    expect(() => buildGatewayDenyCodes(editList((c) => c.push(c[0]!)), decisionGo, platform, denySources)).toThrow('twice');
+    // Code review (2026-11-24): a type or title that is not the platform type for the status is drift too.
+    const wrongType = editList((c) => (c[0]!.type = 'https://errors.company.com/platform/service-unavailable'));
+    expect(() => buildGatewayDenyCodes(wrongType, decisionGo, platform, denySources)).toThrow('DENY_UNRESOLVABLE_SUBJECT has type');
+    expect(() => buildGatewayDenyCodes(editList((c) => (c[0]!.title = 'Nope')), decisionGo, platform, denySources)).toThrow('has type');
+    expect(() => buildGatewayDenyCodes('null', decisionGo, platform, denySources)).toThrow('not a JSON object');
+    expect(() => buildGatewayDenyCodes('{"codes": [null]}', decisionGo, platform, denySources)).toThrow('codes[0] must be an object');
+    expect(() => buildGatewayDenyCodes('{"codes": []}', decisionGo, platform, denySources)).toThrow('no codes');
   });
 
   it('fails when the constants are gone', () => {
-    expect(() => buildGatewayDenyCodes('const (\n)\n', pinnedTest, denySources)).toThrow('no DenyReason constants');
+    expect(() => buildGatewayDenyCodes(denyList, 'const (\n)\n', platform, denySources)).toThrow('no DenyReason constants');
   });
 });
 

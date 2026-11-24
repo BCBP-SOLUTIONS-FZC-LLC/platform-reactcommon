@@ -31,7 +31,7 @@
     "iam-authz-enrichment": {
       "repo": "BCBP-SOLUTIONS-FZC-LLC/iam-authz-enrichment",
       "path": "iam-authz-enrichment",
-      "sha": "fae20d1f02ff6f548eed40eae99e3bf4f752b792"
+      "sha": "ceff0df5779373693357c60ffa5ad2a3d928a987"
     },
     "iam-org-membership": {
       "repo": "BCBP-SOLUTIONS-FZC-LLC/iam-org-membership",

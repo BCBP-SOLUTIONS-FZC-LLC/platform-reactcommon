@@ -281,7 +281,7 @@ The SDK targets evergreen browsers (ES2022), with Trusted Types where the browse
 | platform-fastapicommon | `b0fcdfd` (after #50) |
 | platform-interop-tests | `93e3481` (#9, pair 4) |
 | platform-events · platform-pgcommon | `d85f6c8` · `9daebf8` (to build go-probe) |
-| iam-authz-enrichment · iam-org-membership | `fae20d1` · `98cf517` |
+| iam-authz-enrichment · iam-org-membership | `ceff0df` (#44: `api/deny-codes.json`, `DENY_MEMBER_SUSPENDED`, `x-auth-time`) · `98cf517` |
 
 A backend change that alters a contract (a new problem type, deny code, registry domain or metric) reaches the SDK only through a reviewed pin move (`pnpm contracts:sync --update-pins`) and a release.
 

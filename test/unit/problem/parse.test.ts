@@ -236,16 +236,22 @@ describe('gateway denials (iam-authz-enrichment deniedResponse, AE-42)', () => {
       status,
     );
 
-  it('lists the seven deny codes generated from decision.go', () => {
+  it('lists the eight deny codes of api/deny-codes.json, DENY_MEMBER_SUSPENDED included (web-shell ask 2)', () => {
     expect(GATEWAY_DENY_CODES).toEqual([
-      'DENY_UNRESOLVABLE_SUBJECT',
-      'DENY_TENANT_READ_ONLY',
-      'DENY_MFA_STALE',
-      'DENY_TENDER_ACL_INSUFFICIENT',
-      'DENY_ROLE_INSUFFICIENT',
-      'DENY_SERVICE_UNAVAILABLE',
       'DENY_MALFORMED_IDENTITY',
+      'DENY_UNRESOLVABLE_SUBJECT',
+      'DENY_MEMBER_SUSPENDED',
+      'DENY_TENANT_READ_ONLY',
+      'DENY_ROLE_INSUFFICIENT',
+      'DENY_TENDER_ACL_INSUFFICIENT',
+      'DENY_MFA_STALE',
+      'DENY_SERVICE_UNAVAILABLE',
     ]);
+  });
+
+  it('a suspended member is a gateway denial', async () => {
+    const p = await parseProblemResponse(denial('DENY_MEMBER_SUSPENDED', 403, 'forbidden'));
+    expect(gatewayDenyCode(p)).toBe('DENY_MEMBER_SUSPENDED');
   });
 
   it('are ordinary problems whose errorCode is the deny reason', async () => {

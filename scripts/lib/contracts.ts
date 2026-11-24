@@ -197,13 +197,22 @@ export function extractGoVarRegexp(source: string, varName: string, file: string
 // ---------------------------------------------------------------------------------------------
 // Gateway deny codes (iam-authz-enrichment internal/domain/decision.go)
 
+export const DENY_ACTIONS = ['none', 'step_up', 'retry_with_backoff'] as const;
+
 /**
- * The gateway's deny reasons and their HTTP statuses, read from decision.go and checked against
- * the TestDenyCodes_Pinned table in its tests: a parsing slip, or a reason added without a pin,
- * fails the sync (design doc §C5 row 17).
+ * Gateway deny codes from AuthZ Enrichment's published list (api/deny-codes.json, kept in step with the
+ * code by its TestDenyCodesJSON_MatchesDenyReasons), cross-checked against decision.go's DenyReason
+ * constants and HTTPStatus(), so a list that drifts from the code fails the sync (design doc §C5 row 17).
+ * `meaning` (prose) is dropped. Each `type` and `title` must be the platform problem type for its status
+ * (gincommon's typeForStatus), which is what the gateway's denial bodies carry (§D6 H).
  */
-export function buildGatewayDenyCodes(decisionGo: string, pinnedTestGo: string, sources: { decision: string; test: string }) {
-  const constBlock = sliceBetween(decisionGo, 'const (', ')', sources.decision, 'DenyReason constants');
+export function buildGatewayDenyCodes(
+  denyCodesJson: string,
+  decisionGo: string,
+  platform: { defaultTypeBase: string; typeForStatus: readonly { status: number; id: string | null; title: string }[] },
+  sources: { list: string; decision: string },
+) {
+  const constBlock = sliceBetween(decisionGo, 'const (', '\n)', sources.decision, 'DenyReason constants');
   const names = new Map<string, string>(); // Go identifier → wire value
   for (const m of constBlock.matchAll(/^\s*(Deny\w+)\s+DenyReason\s*=\s*"([A-Z_]+)"/gm)) names.set(m[1]!, m[2]!);
   if (names.size === 0) throw new Error(`${sources.decision}: no DenyReason constants found`);
@@ -215,22 +224,56 @@ export function buildGatewayDenyCodes(decisionGo: string, pinnedTestGo: string, 
     if (m[1] === 'default') fallback = Number(m[3]);
     else for (const id of m[2]!.split(',')) status.set(id.trim(), Number(m[3]));
   }
-  const codes = [...names].map(([id, code]) => {
+  const fromGo = [...names].map(([id, code]) => {
     const s = status.get(id) ?? fallback;
     if (s === undefined) throw new Error(`${sources.decision}: no HTTP status for ${id}`);
     return { code, status: s };
   });
 
-  const pinnedFn = sliceBetween(pinnedTestGo, 'func TestDenyCodes_Pinned(t *testing.T) {', '\n}', sources.test, 'TestDenyCodes_Pinned');
-  const pinned = [...pinnedFn.matchAll(/\{domain\.Deny\w+,\s*"([A-Z_]+)",\s*(\d+)\}/g)].map((m) => ({
-    code: m[1]!,
-    status: Number(m[2]),
-  }));
-  const key = (l: { code: string; status: number }[]) => JSON.stringify([...l].sort((a, b) => a.code.localeCompare(b.code)));
-  if (key(codes) !== key(pinned)) {
-    throw new Error(`${sources.decision} and ${sources.test} disagree: extracted ${key(codes)}, pinned ${key(pinned)}`);
+  const list = JSON.parse(denyCodesJson) as { codes?: unknown } | null;
+  if (typeof list !== 'object' || list === null || Array.isArray(list)) throw new Error(`${sources.list}: not a JSON object`);
+  if (!Array.isArray(list.codes) || list.codes.length === 0) throw new Error(`${sources.list}: no codes`);
+  const codes = list.codes.map((e: Record<string, unknown>, i) => {
+    if (typeof e !== 'object' || e === null || Array.isArray(e)) throw new Error(`${sources.list}: codes[${i}] must be an object`);
+    const str = (k: string) => {
+      if (typeof e?.[k] !== 'string' || e[k] === '') throw new Error(`${sources.list}: codes[${i}].${k} must be a non-empty string`);
+      return e[k] as string;
+    };
+    const code = str('errorCode');
+    if (!/^DENY_[A-Z_]+$/.test(code)) throw new Error(`${sources.list}: codes[${i}].errorCode ${JSON.stringify(code)} is not a deny code`);
+    if (!Number.isInteger(e.status) || (e.status as number) < 400 || (e.status as number) > 599) {
+      throw new Error(`${sources.list}: ${code}.status must be a 4xx or 5xx integer`);
+    }
+    if (typeof e.retryable !== 'boolean') throw new Error(`${sources.list}: ${code}.retryable must be a boolean`);
+    if (!(DENY_ACTIONS as readonly unknown[]).includes(e.action)) {
+      throw new Error(`${sources.list}: ${code}.action ${JSON.stringify(e.action)} is not one of ${DENY_ACTIONS.join(', ')}`);
+    }
+    const expected = platform.typeForStatus.find((t) => t.status === e.status && t.id !== null && t.id !== '');
+    const type = str('type');
+    const title = str('title');
+    if (!expected || type !== `${platform.defaultTypeBase}/${expected.id}` || title !== expected.title) {
+      throw new Error(
+        `${sources.list}: ${code} has type ${JSON.stringify(type)} / title ${JSON.stringify(title)}, but status ${String(e.status)} is ` +
+          (expected ? `${platform.defaultTypeBase}/${expected.id} / ${expected.title}` : 'no platform type'),
+      );
+    }
+    return {
+      code,
+      status: e.status as number,
+      type,
+      title,
+      detail: str('detail'),
+      retryable: e.retryable,
+      action: e.action as (typeof DENY_ACTIONS)[number],
+    };
+  });
+  const key = (l: { code: string; status: number }[]) =>
+    JSON.stringify(l.map(({ code, status: s }) => ({ code, status: s })).sort((a, b) => a.code.localeCompare(b.code)));
+  if (new Set(codes.map((c) => c.code)).size !== codes.length) throw new Error(`${sources.list}: a code is listed twice`);
+  if (key(codes) !== key(fromGo)) {
+    throw new Error(`${sources.list} and ${sources.decision} disagree: listed ${key(codes)}, code ${key(fromGo)}`);
   }
-  return { _generated: generatedHeader([sources.decision, sources.test]), codes };
+  return { _generated: generatedHeader([sources.list, sources.decision]), codes };
 }
 
 /**
