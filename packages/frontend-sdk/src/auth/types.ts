@@ -39,8 +39,10 @@ export interface SessionContext {
 
 /**
  * PUB-1, `GET /api/v1/public/tenants/resolve?identifier=` (a slug or a pending-invite email), implemented
- * by the shell with an /http ApiClient on the same origin, so /auth never imports /http. `{found:false}`
- * resolves to undefined.
+ * by the shell with an /http ApiClient on the same origin, so /auth never imports /http. Only `{found:false}`
+ * resolves to undefined ("not found": the SDK drops a saved entry for that slug). Anything that is not a
+ * resolve response (a 429, a WAF challenge or CAPTCHA page, even one sent with a 2xx such as AWS WAF's 202,
+ * an empty body) must throw, so the SDK keeps the saved workspace.
  */
 export interface WorkspaceResolver {
   resolve(identifier: string, signal?: AbortSignal): Promise<Workspace | undefined>;
