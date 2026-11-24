@@ -12,6 +12,10 @@ How this file is organised:
 
 ## [Unreleased]
 
+### Changed (2026-11-25 — AuthZ Enrichment pin on its release tag)
+
+- **iam-authz-enrichment is pinned at `v0.2.0`** (`5404641`, #46) in `packages/frontend-sdk/contracts/sources.json` (*Previously:* the untagged commit `ceff0df`, #44, because no release tag had `api/deny-codes.json`). `api/deny-codes.json` and `internal/domain/decision.go` are the same at both commits, so `pnpm contracts:sync` changes no generated file: `GATEWAY_DENY_CODES` and `FORBIDDEN_REQUEST_HEADERS` stay as in `1.0.0-alpha.7`. `VERSIONING.md`'s pin table names the tag.
+
 ## [1.0.0-alpha.7] - 2026-11-24
 
 Breaking for code that sends `x-auth-time`, switches exhaustively over `GatewayDenyCode`, or signs in to `chooseWorkspace` when `login-required` has no workspace (below). The shell upgrades first: a remote built against this version requires it (`^<this version>`).
