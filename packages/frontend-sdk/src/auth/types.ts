@@ -65,7 +65,10 @@ export type SessionState =
        * 'signed-out': the signed-out mark is set, so never log in automatically.
        * 'login-required': a prompt=none attempt for `workspace` answered login_required, interaction_required or consent_required.
        *   A trial `workspace` has been re-checked with PUB-1 (a trial → paid conversion moves it to `tenant-<slug>`);
-       *   it is absent when PUB-1 no longer knows the slug: show the identifier-first screen, not another cached workspace.
+       *   it is absent when PUB-1 no longer knows the slug (its cache entry is dropped), which is also the state when
+       *   a saved paid workspace's realm is gone and PUB-1 no longer knows it (no redirect was made). Then, under `/t/<slug>`, show
+       *   the identifier-first screen, never another cached workspace (the URL names this one); with no slug in the
+       *   URL, chooseWorkspace (the next cached workspace, the one a reload would restore), else the identifier-first screen.
        * 'device-clock': the sign-in was refused because the device's clock is more than 10 minutes off
        *   the identity provider's; tell the user to set it (signing in again cannot succeed until then).
        * 'none': no session and no hint (first visit, rejected callback, loop guard).

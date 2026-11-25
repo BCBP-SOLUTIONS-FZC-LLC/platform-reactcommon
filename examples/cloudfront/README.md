@@ -82,7 +82,7 @@ report-uri /csp-report; report-to csp
 ```
 
 - `connect-src` names Keycloak (`auth.bcbpsolutions.com`, not proxied, §D4) for the token and refresh
-  fetches. Login and `prompt=none` are top-level navigations, which CSP does not restrict.
+  fetches and the realm discovery probe before a redirect to a saved paid workspace. Login and `prompt=none` are top-level navigations, which CSP does not restrict.
 - `form-action` names Keycloak too (`buildCsp({ idpOrigin })`): the global sign-out is a form POST to the
   realm's end-session endpoint (the ID token in the body, never the URL). Without it the browser blocks the
   POST, the SSO session stays alive, and the SDK logs a `content security policy violation` warn.

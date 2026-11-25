@@ -299,6 +299,127 @@ describe('callback', () => {
     expect(page.url.pathname).toBe('/t/acme/tenders');
   });
 
+  // web-shell alpha.8 follow-up 1 (2026-11-25): a reverted conversion (RP-4) or an offboarding deletes
+  // tenant-<slug>; the page-load restore would end on Keycloak's 404 page, so the saved paid realm is probed first.
+  it('restore: a saved paid realm Keycloak still serves is restored without asking PUB-1', async () => {
+    const page = new FakePage('/t/acme/tenders');
+    cache(page, [{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
+    page.install();
+    void provider().init();
+    await flush(() => page.assigned.length > 0);
+    expect(new URL(page.assigned.at(-1)!).pathname).toBe('/realms/tenant-acme/protocol/openid-connect/auth');
+    expect(kc.discoveries).toEqual(['tenant-acme']);
+    expect(resolver.resolve).not.toHaveBeenCalled();
+  });
+
+  it('restore: a saved paid realm that is gone and reverted to trial restores the trial realm and replaces the entry', async () => {
+    const page = new FakePage('/t/acme/tenders');
+    cache(page, [{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
+    page.install();
+    kc.deletedRealms.add('tenant-acme');
+    resolver.resolve.mockResolvedValue({ realm: 'trial', trial: true, tenantIdHint: 'tenant-1' });
+    void provider().init();
+    await flush(() => page.assigned.length > 0);
+    expect(resolver.resolve).toHaveBeenCalledWith('acme', expect.any(AbortSignal));
+    expect(new URL(page.assigned.at(-1)!).pathname).toBe('/realms/trial/protocol/openid-connect/auth');
+    expect(authorizeParams(page).get('prompt')).toBe('none');
+    expect(JSON.parse(page.local.getItem(WORKSPACE_CACHE_KEY)!)).toEqual([{ slug: 'acme', realm: 'trial', trial: true }]);
+  });
+
+  // Code review: login-required with no workspace (as after a trial re-check), so the shell asks under
+  // /t/<slug> instead of running chooseWorkspace and a second, unbounded PUB-1 call.
+  it('restore: a saved paid realm that is gone and unknown to PUB-1 is dropped: login-required with no workspace, no redirect', async () => {
+    const page = new FakePage('/t/acme/tenders');
+    cache(page, [{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
+    page.install();
+    kc.deletedRealms.add('tenant-acme');
+    expect(await provider().init()).toEqual({ status: 'anonymous', reason: 'login-required' });
+    expect(resolver.resolve).toHaveBeenCalledOnce();
+    expect(page.assigned).toEqual([]);
+    expect(JSON.parse(page.local.getItem(WORKSPACE_CACHE_KEY) ?? '[]')).toEqual([]);
+  });
+
+  // Invariant review (2026-11-25): two probes (1.5 s each on the restore) and the PUB-1 re-check (5 s) can take up to 8 s.
+  it.each([
+    ['another tab signs out: signed-out, no restore', { type: 'logout' }, { status: 'anonymous', reason: 'signed-out', workspace: { realm: 'tenant-acme', trial: false, slug: 'acme' } }],
+    ['another tab switches workspace: no restore of the stale entry', { type: 'workspace-switched' }, { status: 'anonymous', reason: 'none' }],
+  ])('restore: %s during the paid-realm re-check', async (_n, message, expected) => {
+    const page = new FakePage('/t/acme/tenders');
+    cache(page, [{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
+    page.install();
+    kc.deletedRealms.add('tenant-acme');
+    let answer!: (w: Workspace | undefined) => void;
+    resolver.resolve.mockImplementation(() => new Promise<Workspace | undefined>((r) => (answer = r)));
+    const settled = provider().init();
+    await flush(() => resolver.resolve.mock.calls.length > 0);
+    new FakeBroadcastChannel('platform-auth').postMessage(message);
+    if (message.type === 'logout') page.local.setItem(SIGNED_OUT_KEY, '1');
+    answer({ realm: 'tenant-acme', trial: false });
+    expect(await settled).toEqual(expected);
+    expect(page.assigned).toEqual([]);
+  });
+
+  // Code review: a sign-out elsewhere while PUB-1 says "not found" must not name the deleted workspace.
+  it('restore: another tab signs out while PUB-1 drops the saved paid workspace: signed-out with no workspace', async () => {
+    const page = new FakePage('/t/acme/tenders');
+    cache(page, [{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
+    page.install();
+    kc.deletedRealms.add('tenant-acme');
+    let answer!: (w: Workspace | undefined) => void;
+    resolver.resolve.mockImplementation(() => new Promise<Workspace | undefined>((r) => (answer = r)));
+    const settled = provider().init();
+    await flush(() => resolver.resolve.mock.calls.length > 0);
+    new FakeBroadcastChannel('platform-auth').postMessage({ type: 'logout' });
+    answer(undefined);
+    expect(await settled).toEqual({ status: 'anonymous', reason: 'signed-out' });
+    expect(page.assigned).toEqual([]);
+  });
+
+  // Code review: every reload waits for the probe, so it is bounded at 1.5 s there (3 s elsewhere).
+  it('restore: a probe Keycloak does not answer in 1.5 s keeps the saved realm and redirects', async () => {
+    const page = new FakePage('/t/acme/tenders');
+    cache(page, [{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
+    page.install();
+    vi.stubGlobal('fetch', vi.fn((u: string, init?: RequestInit) =>
+      String(u).includes('/.well-known/')
+        ? new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal!.reason)))
+        : kc.fetch(u, init)));
+    void provider().init();
+    await vi.advanceTimersByTimeAsync(1_499);
+    expect(page.assigned).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    await flush(() => page.assigned.length > 0);
+    expect(new URL(page.assigned.at(-1)!).pathname).toBe('/realms/tenant-acme/protocol/openid-connect/auth');
+    expect(resolver.resolve).not.toHaveBeenCalled();
+  });
+
+  // Code review: PUB-1 answered this workspace just before the restore; a login_required answer must not ask again.
+  it('restore: after a revert, login_required from the trial realm does not ask PUB-1 a second time', async () => {
+    const page = new FakePage('/t/acme/tenders');
+    cache(page, [{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
+    page.install();
+    kc.deletedRealms.add('tenant-acme');
+    resolver.resolve.mockResolvedValue({ realm: 'trial', trial: true, tenantIdHint: 'tenant-1' });
+    void provider().init();
+    await flush(() => page.assigned.length > 0);
+    page.url = new URL(kc.deny(page.assigned.at(-1)!, 'login_required'));
+    expect(await provider().init()).toEqual({
+      status: 'anonymous', reason: 'login-required', workspace: { realm: 'trial', trial: true, slug: 'acme', tenantIdHint: 'tenant-1' },
+    });
+    expect(resolver.resolve).toHaveBeenCalledOnce();
+  });
+
+  it('restore: a saved paid realm that is gone with PUB-1 down still restores the saved realm', async () => {
+    const page = new FakePage('/t/acme/tenders');
+    cache(page, [{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
+    page.install();
+    kc.deletedRealms.add('tenant-acme');
+    resolver.resolve.mockRejectedValue(new TypeError('Failed to fetch'));
+    void provider().init();
+    await flush(() => page.assigned.length > 0);
+    expect(new URL(page.assigned.at(-1)!).pathname).toBe('/realms/tenant-acme/protocol/openid-connect/auth');
+  });
+
   // web-shell ask 1 (2026-11-24): after a trial → paid conversion the shell signs in to this workspace, so a
   // trial one is re-checked with PUB-1 before the interactive sign-in.
   it.each([
@@ -1020,6 +1141,22 @@ describe('signInAgain', () => {
     expect(resolver.resolve).toHaveBeenCalledWith('beta-labs', expect.any(AbortSignal));
     expect(new URL(page.assigned.at(-1)!).pathname).toContain('/realms/tenant-beta-labs/');
     expect(authorizeParams(page).get('prompt')).toBeNull();
+  });
+
+  // web-shell alpha.8 follow-up 3 (2026-11-25): the shell decides per chosen workspace (a trial one it cannot
+  // check after sign-in asks for credentials); the idle timeout still forces them.
+  it.each([
+    ['the callback answers login', { idle: false, answer: 'login' as const }, 'login'],
+    ['the callback answers undefined, not idle', { idle: false, answer: undefined }, null],
+    ['idle: login whatever the callback answers', { idle: true, answer: undefined }, 'login'],
+  ])('prompt callback: %s', async (_n, o, expected) => {
+    const page = new FakePage('/t/acme/tenders');
+    cache(page, [{ slug: 'acme', realm: 'tenant-acme', trial: false }]);
+    page.install();
+    const prompt = vi.fn((_w: Workspace) => o.answer);
+    await signInAgain({ idp: provider(), state: expired({ serverEnded: false, idle: o.idle }), resolver, cfg: cfg.auth, ask: vi.fn(), prompt });
+    expect(authorizeParams(page).get('prompt')).toBe(expected);
+    if (!o.idle) expect(prompt).toHaveBeenCalledWith({ realm: 'tenant-acme', trial: false, slug: 'acme' });
   });
 
   it('falls back to ask() when no workspace can be chosen', async () => {

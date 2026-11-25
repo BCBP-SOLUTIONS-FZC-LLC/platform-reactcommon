@@ -200,7 +200,7 @@ L2  tracing · logging · metrics     L5  react · testing
 | Concern | Technology | Notes |
 |---|---|---|
 | **Page state** | `PlatformRuntime` on `globalThis` (memory) | One per page, shared by every SDK copy; config, manifest and flags frozen |
-| **Tokens** | `/auth` closure (memory only) | Never storage, the channel, a log or a span; every page load restores with one silent `prompt=none` round trip |
+| **Tokens** | `/auth` closure (memory only) | Never storage, the channel, a log or a span; every page load restores with one silent `prompt=none` round trip (after one discovery-document request for a paid workspace) |
 | **Durable state** | `localStorage` | SDK-reserved keys (session id, workspace cache, signed-out mark, last activity, last user) and `/storage` values per workspace; LLD §12.3 |
 | **Per-tab state** | `sessionStorage` | Pending login (10 min), restore loop guard, chunk-reload guard, `/storage` area `session` |
 | **Cross-tab messages** | `BroadcastChannel('platform-auth')` | `logout` and `workspace-switched` only |
@@ -246,7 +246,7 @@ installGlobalErrorHandlers();
 const idp = createOidcProvider(cfg.auth, workspaceResolver);
 setTokenSource(initializeAuth(idp));
 const session = await idp.init();             // may redirect once (prompt=none) and never settle
-// anonymous → signed-out screen / login-required → idp.login(state.workspace ?? identifier screen) / none → chooseWorkspace ?? identifier screen
+// anonymous → signed-out screen / login-required → idp.login(state.workspace ?? (no /t/<slug>: chooseWorkspace) ?? identifier screen) / none → chooseWorkspace ?? identifier screen
 // authenticated → session context → authorizer, flags, rememberWorkspace → i18n → loadManifest → render
 ```
 
@@ -292,7 +292,7 @@ A remote's code that also runs inside a shell never initializes anything; it rea
 ### 4. Implementing the IAM ports (shell)
 
 `/auth` never calls IAM directly. The shell implements two ports over the `ApiClient` ([`examples/shell/src/iam.ts`](examples/shell/src/iam.ts)), tested against the contract cases:
-- **`WorkspaceResolver`:** PUB-1 `GET /api/v1/public/tenants/resolve?identifier=` → `Workspace`. A `shared` strategy is the trial realm; a paid slug is the realm after `tenant-`; `tenant_id` becomes `tenantIdHint`.
+- **`WorkspaceResolver`:** PUB-1 `GET /api/v1/public/tenants/resolve?identifier=` → `Workspace`. A `shared` strategy is the trial realm; a paid slug is the realm after `tenant-`; `tenant_id` becomes `tenantIdHint`. Only `{ found: false }` is "not found"; anything else that is not a resolve response (a 429, a WAF challenge page even with a 2xx) must throw, so the SDK keeps the saved workspace. The SDK asks it for a saved trial workspace before each sign-in, and for a saved paid one when Keycloak no longer serves its realm (a reverted conversion or an offboarding deletes it) or the server ended the session (`forceResolve`, for the URL's slug).
 - **`SessionContextSource`:** P-35 `GET /api/v1/me/session-context` → `SessionContext` (snake_case → camelCase, lists never null).
 
 ### 5. API calls

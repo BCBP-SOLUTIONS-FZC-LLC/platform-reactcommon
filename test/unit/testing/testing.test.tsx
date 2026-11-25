@@ -4,6 +4,7 @@ import { getSession, type IdentityProvider } from '../../../packages/frontend-sd
 import { hasPermission } from '../../../packages/frontend-sdk/src/authz/index.ts';
 import { hasConsent } from '../../../packages/frontend-sdk/src/core/index.ts';
 import { getFlag } from '../../../packages/frontend-sdk/src/flags/index.ts';
+import { getConfig } from '../../../packages/frontend-sdk/src/config/index.ts';
 import { createApiClient } from '../../../packages/frontend-sdk/src/http/index.ts';
 import { getRuntime } from '../../../packages/frontend-sdk/src/internal/runtime.ts';
 import { getLogger } from '../../../packages/frontend-sdk/src/logging/index.ts';
@@ -228,6 +229,17 @@ describe('mockApi and mockProblem', () => {
     const before = globalThis.fetch;
     p.reset();
     expect(globalThis.fetch).not.toBe(before);
+  });
+
+  // A consumer's test with a saved paid workspace: /auth's realm probe must not read the mock's 404 as "gone".
+  it("answers a realm's discovery document on the IdP origin, so the realm counts as existing", async () => {
+    createTestPlatform();
+    mockApi({});
+    const idp = getConfig().auth.idpOrigin;
+    const res = await fetch(`${idp}/realms/tenant-acme/.well-known/openid-configuration`);
+    expect([res.status, await res.json()]).toEqual([200, { issuer: `${idp}/realms/tenant-acme` }]);
+    expect((await fetch(`${idp}/realms/tenant-acme/other`)).status).toBe(404);
+    expect((await fetch(`${idp}/realms/tenant-acme/.well-known/openid-configuration`, { method: 'POST' })).status).toBe(404); // GET only
   });
 
   it('rejects malformed routes', () => {

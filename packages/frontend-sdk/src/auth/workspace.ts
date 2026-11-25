@@ -118,9 +118,13 @@ export function rememberWorkspace(w: Workspace & { slug: string }): void {
  * identifier-first screen (with no slug in the URL, a most recent entry PUB-1 no longer knows is dropped and
  * the next one is tried). A cached **trial** entry is always re-checked with PUB-1: a trial → paid
  * conversion moves the tenant and its users to `tenant-<slug>`, and the trial realm's sign-in page can then
- * only refuse them (one PUB-1 call per trial sign-in). `forceResolve` also
- * re-checks a paid entry for the URL's slug (a session the server ended early). If PUB-1 then fails or
- * answers nonsense, the cached entry is still used.
+ * only refuse them (one PUB-1 call per trial sign-in). A cached **paid** entry is kept while Keycloak still
+ * serves its realm (`confirmPaid`: one request to Keycloak, no PUB-1 call); a realm deleted under it (a
+ * reverted conversion, an offboarded tenant) is re-checked with PUB-1. `forceResolve` re-checks a paid entry
+ * for the URL's slug with PUB-1 directly (a session the server ended early). If PUB-1 then fails or answers
+ * nonsense, the cached entry is still used. A cached paid entry therefore costs one request to Keycloak (two when
+ * the first fails), may come back as the trial workspace (a reverted conversion) or `undefined` (dropped), and
+ * the caller's `signal` aborting rejects with its reason, as for a trial entry.
  */
 export async function chooseWorkspace(o: {
   pathname: string;
@@ -133,9 +137,11 @@ export async function chooseWorkspace(o: {
   const cached = pathSlug === undefined ? cachedWorkspace() : cachedWorkspace(pathSlug);
   const slug = pathSlug ?? cached?.slug;
   if (slug === undefined) return undefined;
-  // A paid realm never changes; forceResolve re-checks it only for the URL's own slug.
-  if (cached && !cached.trial && (!o.forceResolve || pathSlug === undefined)) return cached;
-  const w = await resolveSlug({ slug, cached, resolver: o.resolver, cfg: o.cfg, signal: o.signal });
+  // A paid entry: kept while its realm exists; forceResolve re-checks it with PUB-1 only for the URL's own slug.
+  const w =
+    cached && !cached.trial && (!o.forceResolve || pathSlug === undefined)
+      ? await confirmPaid({ cached, resolver: o.resolver, cfg: o.cfg, signal: o.signal })
+      : await resolveSlug({ slug, cached, resolver: o.resolver, cfg: o.cfg, signal: o.signal });
   // No slug in the URL and the most recent entry is gone (not found, now dropped): the next cached one.
   // Only when the drop took effect, so a cache that cannot be written ends here instead of looping.
   if (w === undefined && pathSlug === undefined && cachedWorkspace()?.slug !== slug) return chooseWorkspace(o);
@@ -144,6 +150,106 @@ export async function chooseWorkspace(o: {
 
 /** How long a re-check of a cached entry may wait on PUB-1 before the cached entry is used. */
 export const RECHECK_TIMEOUT_MS = 5_000;
+
+/** How long one probe of a saved paid realm may take before it counts as slow (the realm kept). */
+export const REALM_PROBE_TIMEOUT_MS = 3_000;
+/**
+ * The same bound on the page-load silent restore, which every reload of a paid workspace waits for before its
+ * prompt=none redirect: a slow Keycloak stalls a reload by at most this (twice when the first probe fails).
+ */
+export const RESTORE_PROBE_TIMEOUT_MS = 1_500;
+
+/**
+ * One realm's OIDC discovery document (credentials omitted, never cached), within `timeoutMs`:
+ * 'document' — this realm's discovery document;
+ * 'answered' — a readable error other than 404 (5xx, 429): Keycloak answered, without saying the realm is gone;
+ * 'slow' — no complete answer in time (also when the body was still arriving);
+ * 'gone' — a readable 404, or a body that arrived but is not this realm's document (an edge's HTML fallback page);
+ * 'failed' — the fetch or the body download failed: Keycloak answers a missing realm 404 *without* CORS headers,
+ *   which the browser reports exactly as it does an unreachable Keycloak (down, DNS, offline, a proxy error page
+ *   without CORS, a connection dropped mid-body).
+ * The caller's abort gives 'failed'; the caller checks its signal.
+ */
+export async function probeRealm(
+  realm: string,
+  cfg: RuntimeConfig['auth'],
+  signal?: AbortSignal,
+  timeoutMs = REALM_PROBE_TIMEOUT_MS,
+): Promise<'document' | 'answered' | 'slow' | 'gone' | 'failed'> {
+  const ctrl = new AbortController();
+  const onAbort = () => ctrl.abort(signal?.reason);
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener('abort', onAbort, { once: true });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    ctrl.abort(new Error('realm probe timed out'));
+  }, timeoutMs);
+  const slow = () => timedOut && !signal?.aborted;
+  const issuer = `${cfg.idpOrigin}/realms/${encodeURIComponent(realm)}`;
+  try {
+    const res = await fetch(`${issuer}/.well-known/openid-configuration`, { credentials: 'omit', cache: 'no-store', signal: ctrl.signal });
+    if (res.status === 404) return 'gone';
+    if (!res.ok) return 'answered';
+    const text = await res.text(); // a download that fails throws: 'failed' or 'slow' below, never 'gone'
+    let doc: unknown;
+    try {
+      doc = JSON.parse(text);
+    } catch {
+      return 'gone'; // it arrived, and it is not a discovery document
+    }
+    return typeof doc === 'object' && doc !== null && (doc as { issuer?: unknown }).issuer === issuer ? 'document' : 'gone';
+  } catch {
+    return slow() ? 'slow' : 'failed';
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/**
+ * Whether Keycloak may still serve `realm` (probeRealm). False only on evidence that the realm is gone: its probe
+ * answers 'gone', or it fails while the trial realm (`cfg.trialRealm`, which always exists and is public) answers
+ * its own document, so Keycloak is up and only this realm is missing. Anything else about the trial realm (slow,
+ * failed, an error, not its document) proves nothing, and the entry is kept: a slow, degraded or unreachable
+ * Keycloak never costs a PUB-1 call on every page load. A slow or erroring probe of `realm` itself is true too.
+ * Each probe is bounded by `timeoutMs`. The caller's abort gives false; the caller checks its signal. CSP
+ * `connect-src` already allows `idpOrigin`.
+ */
+export async function realmAvailable(
+  realm: string,
+  cfg: RuntimeConfig['auth'],
+  signal?: AbortSignal,
+  timeoutMs = REALM_PROBE_TIMEOUT_MS,
+): Promise<boolean> {
+  const r = await probeRealm(realm, cfg, signal, timeoutMs);
+  if (r !== 'failed') return r !== 'gone';
+  if (signal?.aborted) return false;
+  const trial = await probeRealm(cfg.trialRealm, cfg, signal, timeoutMs);
+  if (signal?.aborted) return false;
+  return trial !== 'document';
+}
+
+/**
+ * A saved paid entry before any redirect to its realm: kept, with no PUB-1 call, while Keycloak serves the
+ * realm. A realm deleted under it (Realm Provisioner RP-4 reverts a conversion within 7 days, back to the
+ * trial realm; offboarding deletes it) would leave the redirect on Keycloak's 404 page, which the SPA never
+ * sees, so then it is re-checked with PUB-1 as a trial entry is (resolveSlug): the trial workspace replaces
+ * it, "not found" drops it (undefined), PUB-1 down or slow keeps it. The caller's abort is thrown.
+ */
+export async function confirmPaid(o: {
+  cached: CachedWorkspace;
+  resolver: WorkspaceResolver;
+  cfg: RuntimeConfig['auth'];
+  signal?: AbortSignal | undefined;
+  /** Each probe's bound: REALM_PROBE_TIMEOUT_MS, or RESTORE_PROBE_TIMEOUT_MS on the page-load restore. */
+  probeTimeoutMs?: number;
+}): Promise<Workspace | undefined> {
+  if (await realmAvailable(o.cached.realm, o.cfg, o.signal, o.probeTimeoutMs)) return o.cached;
+  if (o.signal?.aborted) throw o.signal.reason;
+  getLogger().warn('saved workspace realm unavailable, re-checking it with PUB-1', { slug: o.cached.slug, realm: o.cached.realm, essential: true });
+  return resolveSlug({ slug: o.cached.slug, cached: o.cached, resolver: o.resolver, cfg: o.cfg, signal: o.signal });
+}
 
 /**
  * PUB-1 for `slug`; the answer is cached when its realm fits the slug. Not found → undefined (and the cached

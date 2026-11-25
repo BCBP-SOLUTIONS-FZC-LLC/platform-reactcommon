@@ -9,9 +9,9 @@ flowchart TD
     consent --> tel["5. initializeTracing · initializeLogging · initializeMetrics → /otel<br/>installGlobalErrorHandlers() · startWebVitals()  (never fatal)"]
     tel --> flags["6. setFlagProvider(runtimeConfigFlagProvider())"]
     flags --> auth["7. idp = createOidcProvider(cfg.auth, workspaceResolver)<br/>setTokenSource(initializeAuth(idp)) · state = await idp.init()"]
-    auth -->|"no tokens + cached workspace"| restore["one prompt=none redirect per tab<br/>(init never settles; the page unloads)"]
+    auth -->|"no tokens + cached workspace"| restore["one prompt=none redirect per tab<br/>(a paid realm probed on Keycloak first;<br/>init never settles; the page unloads)"]
     auth -->|"anonymous 'signed-out'"| signedout["signed-out screen; login only on click"]
-    auth -->|"anonymous 'login-required'"| login1["idp.login({ workspace: state.workspace ?? identifier screen })<br/>(a trial one re-checked with PUB-1 in init())"]
+    auth -->|"anonymous 'login-required'"| login1["idp.login({ workspace: state.workspace<br/>?? (no /t/&lt;slug&gt;: chooseWorkspace()) ?? identifier screen })<br/>(a trial one re-checked with PUB-1 in init())"]
     auth -->|"anonymous 'none'"| choose["chooseWorkspace() ?? identifier-first screen → idp.login()"]
     auth -->|"authenticated"| wrong{"isWrongWorkspace?"}
     wrong -->|yes| wrongscreen["wrong-workspace screen (sign out / switch); stop"]

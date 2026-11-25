@@ -75,8 +75,11 @@ export async function bootstrap(): Promise<void> {
   let app: Root | undefined;
   const contextRetry = new AbortController();
   idp.subscribe((s) => {
+    // A trial workspace with neither a slug nor a tenantIdHint cannot be checked after sign-in (the shared trial
+    // realm's SSO session may be another tenant's): ask for credentials.
     if (s.status === 'expired') showSessionEnded(s, () =>
-      signInAgain({ idp, state: s, resolver: workspaceResolver, cfg: cfg.auth, ask: askForWorkspace }));
+      signInAgain({ idp, state: s, resolver: workspaceResolver, cfg: cfg.auth, ask: askForWorkspace,
+                    prompt: (w) => (w.trial && w.slug === undefined && !w.tenantIdHint ? 'login' : undefined) }));
     // Signed out here or in another tab (the SDK drops this tab's tokens on the broadcast): unmount the
     // app, so the previous user's data is not left under the dialog on a shared device. The next sign-in
     // asks for credentials (prompt=login).

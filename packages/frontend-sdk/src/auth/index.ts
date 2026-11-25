@@ -62,7 +62,8 @@ export function getSession(): SessionState {
 /**
  * Sign in again after `expired`: chooseWorkspace with `forceResolve: state.serverEnded`, falling back to
  * `ask()`, then idp.login() back to the current URL, with `prompt: 'login'` when `state.idle` (Keycloak's
- * SSO session outlives the idle timeout, so a plain login would skip the credentials).
+ * SSO session outlives the idle timeout, so a plain login would skip the credentials) or when `prompt`
+ * answers 'login' for the chosen workspace (e.g. a trial one the shell cannot check after sign-in).
  */
 export async function signInAgain(o: {
   idp: IdentityProvider;
@@ -70,13 +71,19 @@ export async function signInAgain(o: {
   resolver: WorkspaceResolver;
   cfg: RuntimeConfig['auth'];
   ask: () => Promise<Workspace>;
+  /**
+   * Called with the chosen workspace (signInAgain chooses it, so the shell cannot know it in advance);
+   * 'login' forces the credentials page. `state.idle` forces it whatever this returns.
+   */
+  prompt?: (workspace: Workspace) => 'login' | undefined;
 }): Promise<void> {
   const loc = globalThis.location;
   const workspace =
     (await chooseWorkspace({ pathname: loc?.pathname ?? '/', resolver: o.resolver, cfg: o.cfg, forceResolve: o.state.serverEnded })) ?? (await o.ask());
+  const prompt = o.state.idle || o.prompt?.(workspace) === 'login' ? 'login' : undefined;
   await o.idp.login({
     workspace,
     returnUrl: loc ? `${loc.pathname}${loc.search}${loc.hash}` : '/',
-    ...(o.state.idle ? { prompt: 'login' as const } : {}),
+    ...(prompt ? { prompt } : {}),
   });
 }

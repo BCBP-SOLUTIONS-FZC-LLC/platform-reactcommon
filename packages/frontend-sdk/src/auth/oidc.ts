@@ -12,7 +12,7 @@ import { swapFlagProvider } from '../internal/flag-provider.ts';
 import { getRuntime } from '../internal/runtime.ts';
 import { rotateSessionId } from '../internal/session.ts';
 import type { IdentityProvider, SessionState, SessionUser, Workspace, WorkspaceResolver } from './types.ts';
-import { cachedWorkspace, isSlug, resolveSlug, slugFromPath } from './workspace.ts';
+import { RESTORE_PROBE_TIMEOUT_MS, cachedWorkspace, confirmPaid, isSlug, resolveSlug, slugFromPath } from './workspace.ts';
 
 type Reason = 'step-up' | 'restore' | 'login' | 'switch';
 type Settled = Extract<SessionState, { status: 'authenticated' | 'anonymous' }>;
@@ -79,6 +79,8 @@ interface PendingLogin {
   createdAt: number;
   /** Step-up: the max_age asked for, checked against the answer's auth_time (OIDC Core §3.1.2.1). */
   maxAge?: number;
+  /** A trial workspace PUB-1 answered just before this restore (confirmPaid, a reverted conversion): confirmTrial skips it. */
+  rechecked?: true;
 }
 
 interface Tokens {
@@ -315,8 +317,9 @@ function userFrom(claims: Record<string, unknown>, trial: boolean): SessionUser 
 
 /** Auth Code + PKCE (S256) against Keycloak, realm per Workspace. */
 export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: WorkspaceResolver): IdentityProvider {
-  // The provider resolves only one case: a trial workspace whose silent restore answered login_required
-  // (see confirmTrial). Every other realm comes from a Workspace chooseWorkspace checked.
+  // The provider resolves two cases: a trial workspace whose silent restore answered login_required
+  // (see confirmTrial), and a saved paid workspace whose realm Keycloak no longer serves (confirmPaid,
+  // before the silent restore). Every other realm comes from a Workspace chooseWorkspace checked.
   const issuer = (realm: string) => `${cfg.idpOrigin}/realms/${encodeURIComponent(realm)}`;
   const endpoint = (realm: string, path: 'auth' | 'token' | 'logout') => `${issuer(realm)}/protocol/openid-connect/${path}`;
   const redirectUri = () => `${globalThis.location?.origin ?? ''}${cfg.redirectPath}`;
@@ -570,6 +573,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     prompt?: 'none' | 'login' | undefined;
     maxAge?: number | undefined;
     loginHint?: string | undefined;
+    rechecked?: boolean | undefined;
   }): Promise<void> {
     const w = o.workspace;
     if (!w || typeof w.realm !== 'string' || !REALM.test(w.realm) || typeof w.trial !== 'boolean') {
@@ -585,6 +589,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
       reason: o.reason,
       createdAt: now,
       ...(o.maxAge !== undefined ? { maxAge: o.maxAge } : {}),
+      ...(o.rechecked ? { rechecked: true as const } : {}),
     };
     const challenge = await s256(record.codeVerifier);
     purgePending(now);
@@ -613,10 +618,10 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
   }
 
   /** One silent (prompt=none) attempt per tab: the loop guard is set first, cleared only on success. */
-  async function silentRestore(w: Workspace, reason: Reason): Promise<boolean> {
+  async function silentRestore(w: Workspace, reason: Reason, rechecked = false): Promise<boolean> {
     if (!flag('session', RESTORE_MARK_KEY, true)) return false; // no guard, no attempt: never risk a loop
     try {
-      await authorize({ workspace: w, reason, returnUrl: currentUrl(), prompt: 'none' });
+      await authorize({ workspace: w, reason, returnUrl: currentUrl(), prompt: 'none', rechecked });
       return true;
     } catch (e) {
       log().error('silent sign-in could not start', { error: e });
@@ -789,7 +794,8 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
    * sign-in page can only refuse them. PUB-1 down, or slower than RECHECK_TIMEOUT_MS (init() must not hang
    * on it) → `w`; not found → undefined (the shell shows the identifier-first screen).
    */
-  async function confirmTrial(w: Workspace): Promise<Workspace | undefined> {
+  async function confirmTrial(w: Workspace, rechecked = false): Promise<Workspace | undefined> {
+    if (rechecked) return w; // PUB-1 answered this workspace just before the restore (confirmPaid)
     // Only by the record's own slug (readPending does not validate it): every trial tenant shares the trial
     // realm, so the realm cannot name the tenant, and a workspace signed in by email has no slug here.
     if (!w.trial || !isSlug(w.slug)) return w;
@@ -821,7 +827,7 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     const error = params.get('error');
     if (error !== null) {
       if (SILENT_ERRORS.has(error) && record.reason === 'restore') {
-        const named = await confirmTrial(w);
+        const named = await confirmTrial(w, record.rechecked === true);
         // Another tab signed out during the PUB-1 re-check: the signed-out screen, never an automatic sign-in.
         if (signedOutElsewhere || flag('local', SIGNED_OUT_KEY)) {
           const s = { status: 'anonymous', workspace: named ?? w, reason: 'signed-out' } as const;
@@ -904,8 +910,29 @@ export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: Workspa
     if (signedOut || flag('session', RESTORE_MARK_KEY) || !loc) return anonymous();
     const slug = slugFromPath(loc.pathname, cfg);
     // A slug with no cache entry skips the restore: never another cached workspace under this URL.
-    const w = slug !== undefined ? cachedWorkspace(slug) : cachedWorkspace();
-    if (!w || !(await silentRestore(w, 'restore'))) return anonymous();
+    const saved = slug !== undefined ? cachedWorkspace(slug) : cachedWorkspace();
+    // A saved paid realm may have been deleted (a reverted conversion, an offboarded tenant), and the
+    // prompt=none redirect would then end on Keycloak's 404 page: probed first (confirmPaid).
+    // Every reload waits for this, so each probe is bounded at RESTORE_PROBE_TIMEOUT_MS (1.5 s), not 3 s.
+    const w = saved && !saved.trial ? await confirmPaid({ cached: saved, resolver, cfg, probeTimeoutMs: RESTORE_PROBE_TIMEOUT_MS }) : saved;
+    // Another tab signed out during that wait (up to 1.5 s + 1.5 s + 5 s: two probes, then PUB-1): never restore over it, as the callback
+    // path does after its PUB-1 re-check. Another tab switched workspace: the saved entry is stale.
+    if (signedOutElsewhere || flag('local', SIGNED_OUT_KEY)) {
+      const named = w; // never the saved entry PUB-1 just said is gone
+      const s = { status: 'anonymous', reason: 'signed-out', ...(named ? { workspace: named } : {}) } as const;
+      setState(s);
+      return s;
+    }
+    if (switchedElsewhere) return anonymous();
+    // PUB-1 no longer knows the saved paid workspace (its entry is dropped): login-required with no workspace,
+    // as after a trial re-check, so the shell asks under /t/<slug> (no second PUB-1 call) and with no slug
+    // chooses the next cached workspace.
+    if (saved && !w) {
+      const s = { status: 'anonymous', reason: 'login-required' } as const;
+      setState(s);
+      return s;
+    }
+    if (!w || !(await silentRestore(w, 'restore', w !== saved && w.trial))) return anonymous();
     return new Promise<never>(() => {}); // the page is leaving for Keycloak
   }
 
