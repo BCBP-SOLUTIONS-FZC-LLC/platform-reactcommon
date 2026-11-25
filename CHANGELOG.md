@@ -12,6 +12,10 @@ How this file is organised:
 
 ## [Unreleased]
 
+## [1.0.0-alpha.10] - 2026-11-25
+
+Not breaking. A remote can ask the shell to reload the session context (`useRefreshSessionContext`, the shell's optional `refreshContext`); `<Writable>` gates mutation controls in a read-only workspace; the `navigate()` contract is written down, and the reference shell gets a navigator (below).
+
 ### Added (2026-11-25 — web-shell's shared-components and navigation ask, for mfe-admin)
 
 - **`/react`: `<Writable fallback?>`**, a read-only gate shaped like `<Can>`: `children` while the workspace is writable, `fallback` (e.g. the same control, disabled) when `useReadOnly()` is true (the session context's `readOnly`, or a `DENY_TENANT_READ_ONLY` seen on the page without a new context); nothing without a fallback. No styling and no text: the shell tells the user why. It checks no permission and shows its children before the session context loads, so a mutation control goes inside `<Can>` (deny-all until then) (`packages/frontend-sdk/src/react/provider.tsx`; design doc §C1 `/react`, LLD §5.4.6). The tenders remote shows Save disabled in a read-only workspace (`examples/remote-tenders/src/EditTender.tsx`, design doc §C4). Tests: `test/unit/react/react.test.tsx` ("Writable: …"), `test/e2e/shell.test.tsx` ("a read-only workspace keeps the form but stops offering Save …").
@@ -432,7 +436,8 @@ Fixed before the first release, after a security and production-readiness review
 - `/i18n`: a namespace registered during a locale change loads the new locale; `/logging`: `Map` and `Set` keep their contents.
 - `@bcbp-solutions-fzc-llc/eslint-plugin`: `no-identity-headers` sees computed `['headers']`; the import rules see template-literal `require` / `import()`.
 
-[Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.9...HEAD
+[Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.10...HEAD
+[1.0.0-alpha.10]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.9...v1.0.0-alpha.10
 [1.0.0-alpha.9]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.8...v1.0.0-alpha.9
 [1.0.0-alpha.8]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.7...v1.0.0-alpha.8
 [1.0.0-alpha.7]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.6...v1.0.0-alpha.7
