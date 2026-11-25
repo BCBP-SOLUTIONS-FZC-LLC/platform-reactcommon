@@ -29,7 +29,7 @@ graph LR
         vf --> gates --> np --> pub
     end
 
-    nightly["stack-nightly.yml — 01:30 UTC and on dispatch<br/>the integrated stack (test/stack) against pinned backends<br/>a failing scheduled run opens an issue"]
+    nightly["stack-nightly.yml — 01:30 UTC, on dispatch, and on PRs that change<br/>the pins, the stack config or test/stack (not required)<br/>the integrated stack (test/stack) against pinned backends<br/>a failing scheduled run opens an issue"]
 
     cs["changelog-check.yml<br/>published package changed → .changeset/*.md + CHANGELOG.md<br/>(release PR: changesets consumed, incl. moved to .changeset/pre/)"]
     rpr["release PR: pnpm changeset version"] --> tag["tag the merge commit"] --> vf

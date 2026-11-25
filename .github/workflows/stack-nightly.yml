@@ -1,6 +1,11 @@
 # Nightly — the integrated deployment (test/stack, docker-compose.yml): the example shell in Chromium,
 # Firefox and WebKit against Keycloak, Envoy with the real IAM services, the distribution on floci and the
-# reference two-tier Collector (docs/e2e/integrated-deployment-report.md). About 20 minutes, so not per PR.
+# reference two-tier Collector (docs/e2e/integrated-deployment-report.md). About 20 minutes, so not on every PR:
+# nightly, and on a PR that changes what only the stack can check (the backend pins in contracts/sources.json,
+# the compose file and service config, the CloudFront and Collector examples it deploys, the stack tests).
+# A pin that lacks a backend change a stack test needs then fails on its PR, not on main the next night
+# (.claude/skills/ci-triage/known-causes.md, PR #64). Not a required check. Skipped on PRs from forks and
+# Dependabot, which get no secrets; the nightly covers them.
 #
 # The services are built from source, checked out next to this repo in the local workspace layout
 # (SHARED_ROOT = the workspace root, IAM_ROOT = iam/), as validate-contracts.yml does:
@@ -18,6 +23,18 @@ name: Nightly / Stack
 "on":
   schedule:
     - cron: '30 1 * * *'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/frontend-sdk/contracts/sources.json'
+      - 'docker-compose.yml'
+      - 'docker/**'
+      - 'scripts/init-db.sql'
+      - 'scripts/init-floci.sh'
+      - 'examples/cloudfront/**'
+      - 'examples/collector/**'
+      - 'test/stack/**'
+      - '.github/workflows/stack-nightly.yml'
   workflow_dispatch:
     inputs:
       upstream:
@@ -29,9 +46,10 @@ name: Nightly / Stack
 permissions:
   contents: read
 
+# One run per PR (a new push cancels the old one); scheduled and dispatched runs queue, never cancelled.
 concurrency:
-  group: stack-nightly
-  cancel-in-progress: false
+  group: stack-${{ github.event.pull_request.number || 'nightly' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -39,6 +57,7 @@ env:
 jobs:
   stack:
     name: stack (Chromium, Firefox, WebKit)
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
