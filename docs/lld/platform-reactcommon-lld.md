@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Packages | `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin` (one version, changesets `fixed`) |
-| Version | `1.0.0-alpha.9` (tag `v1.0.0-alpha.9`, 2026-11-25, GitHub Packages, dist-tag `alpha`; a deleted paid realm re-checked with PUB-1 after a Keycloak probe, `signInAgain({ prompt })`; not breaking, shell first, §14.2), after `1.0.0-alpha.1` (the first release) and `1.0.0-alpha.2` on 2026-11-03, `1.0.0-alpha.3` on 2026-11-04, `1.0.0-alpha.4` (breaking), `1.0.0-alpha.5` and `1.0.0-alpha.6` on 2026-11-05, `1.0.0-alpha.7` (breaking) on 2026-11-24, `1.0.0-alpha.8` on 2026-11-25; `1.0.0-alpha.N` until the first end-to-end environment |
+| Version | `1.0.0-alpha.10` (tag `v1.0.0-alpha.10`, 2026-11-25, GitHub Packages, dist-tag `alpha`; `useRefreshSessionContext`, `<Writable>`, the `navigate()` contract; not breaking, shell first, §14.2), after `1.0.0-alpha.1` (the first release) and `1.0.0-alpha.2` on 2026-11-03, `1.0.0-alpha.3` on 2026-11-04, `1.0.0-alpha.4` (breaking), `1.0.0-alpha.5` and `1.0.0-alpha.6` on 2026-11-05, `1.0.0-alpha.7` (breaking) on 2026-11-24, `1.0.0-alpha.8` and `1.0.0-alpha.9` on 2026-11-25; `1.0.0-alpha.N` until the first end-to-end environment |
 | Runtime | Evergreen browsers (ES2022, Trusted Types where supported); build tooling on Node ≥ 22 |
 | Peers | `react` / `react-dom` `^19.0.0` (one major; floor tested in CI), `@opentelemetry/api` `~1.10.0`, `webpack` `^5.100.0`, `@rspack/core` `^2.2.0`, `@rsbuild/core` `^2.2.0` (the preset's bundler peers, each optional: an app installs the one it builds with; `/rsbuild` uses the Rspack inside `@rsbuild/core`), `eslint` `^9 \|\| ^10` |
 | Design record | [`docs/design/frontend-sdk-design.md`](../design/frontend-sdk-design.md) (decisions, public API per subpath, contracts, backend changes) |
@@ -27,6 +27,7 @@
 | 1.9 | 2026-11-25 | `1.0.0-alpha.7` (2026-11-24, PR #60, breaking), `1.0.0-alpha.8` (PRs #62–#64) and `1.0.0-alpha.9` (PR #67) released: version line, §14.1, §14.2 |
 | 1.10 | 2026-11-25 | `[Unreleased]`: `useRefreshSessionContext` and `ShellContextValue.refreshContext` (§5.3, §5.4.5, §6.1 `contextRefresh`), `createTestPlatform`'s `refreshContext` option (§11.3), its log event (§11.1) |
 | 1.11 | 2026-11-25 | `[Unreleased]`: `Writable` (§5.3, §5.4.6); the `navigate()` contract (§5.4.6) |
+| 1.12 | 2026-11-25 | `1.0.0-alpha.10` released (PRs #70, #71): version line, §14.1, §14.2 |
 
 ### Table of Contents
 
@@ -804,7 +805,7 @@ The packages are released together with one version (changesets `fixed`):
 4. `npm-publish` publishes the three tarballs to **GitHub Packages** (`@bcbp-solutions-fzc-llc/*`, dist-tag from `publish:check`: `alpha`, `rc` or `latest`), with a build-provenance attestation each. It runs in the `npm` environment and refuses to publish unless publishing is gated (`.github/scripts/check-npm-environment.sh`): required reviewers, or (this private repository on GitHub Team) the environment accepts only release tags and an active tag ruleset limits creating, moving and deleting `v*` tags to admins and named teams. A version already published with the same integrity is skipped; a different one is refused.
 5. It publishes a GitHub Release with the three tarballs, a CycloneDX SBOM, and `checksums.txt` with a Cosign keyless signature bundle. Pre-release tags (`v1.0.0-alpha.N`) are marked as pre-releases.
 
-The first release is `v1.0.0-alpha.1` (2026-11-03); `v1.0.0-alpha.4` (2026-11-05; PRs #41–#46) had breaking changes; `v1.0.0-alpha.5` (2026-11-05; PR #50); `v1.0.0-alpha.6` (2026-11-05; PRs #54, #55); `v1.0.0-alpha.7` (2026-11-24; PR #60) had breaking changes; `v1.0.0-alpha.8` (2026-11-25; PRs #62–#64); the latest is `v1.0.0-alpha.9` (2026-11-25; PR #67). Changesets v3's pre mode moves consumed changesets into `.changeset/pre/`; `changelog-check.yml` recognises that as a release PR.
+The first release is `v1.0.0-alpha.1` (2026-11-03); `v1.0.0-alpha.4` (2026-11-05; PRs #41–#46) had breaking changes; `v1.0.0-alpha.5` (2026-11-05; PR #50); `v1.0.0-alpha.6` (2026-11-05; PRs #54, #55); `v1.0.0-alpha.7` (2026-11-24; PR #60) had breaking changes; `v1.0.0-alpha.8` (2026-11-25; PRs #62–#64); `v1.0.0-alpha.9` (2026-11-25; PR #67); the latest is `v1.0.0-alpha.10` (2026-11-25; PRs #70, #71). Changesets v3's pre mode moves consumed changesets into `.changeset/pre/`; `changelog-check.yml` recognises that as a release PR.
 
 ### 14.2 Compatibility
 - **During the alpha:** breaking changes bump `N` and are listed in the CHANGELOG. The shell shares the SDK under `^1.0.0-0`; each remote requires `^<the SDK version it was built against>`. Two pre-release SDK copies share the runtime only at the same version (§6.1).
@@ -814,6 +815,7 @@ The first release is `v1.0.0-alpha.1` (2026-11-03); `v1.0.0-alpha.4` (2026-11-05
 - **`alpha.7`:** breaking: `x-auth-time` is a forbidden request header; `GATEWAY_DENY_CODES` follows AuthZ Enrichment's order and adds `DENY_MEMBER_SUSPENDED` (compare by value; an exhaustive `switch` needs the new case); `anonymous { login-required }` can come without a workspace (§8.2 rule 6). The shell upgrades first.
 - **`alpha.8`:** not breaking. A shell's `WorkspaceResolver` must throw on anything that is not a PUB-1 resolve response (§8.2 rule 2). The shell upgrades first.
 - **`alpha.9`:** not breaking (the paid-realm probe, §8.2 rules 1 and 7; `signInAgain({ prompt })`). The shell upgrades first.
+- **`alpha.10`:** not breaking (`useRefreshSessionContext` and the optional `refreshContext`, §5.4.5; `<Writable>` and the `navigate()` contract, §5.4.6: a shell's navigator routes by the path). The shell upgrades first.
 - **From `1.0.0`:** SemVer is strict. A remote built for another major fails share negotiation, and that failure stays inside its boundary.
 
 ### 14.3 Testing

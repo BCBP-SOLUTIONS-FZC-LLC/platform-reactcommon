@@ -75,6 +75,7 @@ The shell provides the SDK to every remote as a **strict singleton** shared unde
   - **`1.0.0-alpha.7`** (released 2026-11-24) is **breaking**: `x-auth-time` is a forbidden request header, `GATEWAY_DENY_CODES` follows AuthZ Enrichment's order and adds `DENY_MEMBER_SUSPENDED`, and `anonymous { login-required }` can come without a workspace. It also re-checks a saved trial workspace with PUB-1 before each sign-in and adds `switchWorkspace(w, { prompt: 'login' })`. The shell upgrades first.
   - **`1.0.0-alpha.8`** (released 2026-11-25): a shell's `WorkspaceResolver` must throw on anything that is not a PUB-1 resolve response (the reference shell does); not breaking. The shell upgrades first.
   - **`1.0.0-alpha.9`** (released 2026-11-25): a saved paid workspace whose realm was deleted is re-checked with PUB-1 after a Keycloak probe; `signInAgain({ prompt })`; `/testing`'s `mockApi` answers realm discovery documents; not breaking. The shell upgrades first.
+  - **`1.0.0-alpha.10`** (released 2026-11-25): `useRefreshSessionContext` and the shell's optional `refreshContext`, `<Writable>`, and the `navigate()` contract (a shell's navigator routes by the path); not breaking. The shell upgrades first.
 - **MAJOR `1` (from `1.0.0`, cut with the first end-to-end environment):** we avoid breaking changes within `1.x`. When one is required, we release `2.0.0` and document the migration in the CHANGELOG.
 - **MINOR:** safe to upgrade without code changes unless you opt into new features (shell first, see above).
 - **PATCH:** drop-in replacement; upgrade recommended for security fixes.
@@ -88,7 +89,7 @@ None. During the alpha, breaking changes are expected and recorded in the CHANGE
 
 | Version | Status | Supported until |
 |---------|--------|-----------------|
-| `1.0.0-alpha.N` | **Current** pre-release line: latest release `1.0.0-alpha.9` (2026-11-25) (first tag: `v1.0.0-alpha.1`; `1.0.0-alpha.0` was never released) | Until `1.0.0` |
+| `1.0.0-alpha.N` | **Current** pre-release line: latest release `1.0.0-alpha.10` (2026-11-25) (first tag: `v1.0.0-alpha.1`; `1.0.0-alpha.0` was never released) | Until `1.0.0` |
 | `[Unreleased]` | What the next release contains: [CHANGELOG.md § Unreleased](CHANGELOG.md#unreleased) | — |
 | `1.x` | Planned, from `1.0.0` | Active once released |
 
@@ -98,7 +99,7 @@ None. During the alpha, breaking changes are expected and recorded in the CHANGE
 | `v1.0.0-alpha.3` | `alpha` | 2026-11-04 |
 | `v1.0.0-alpha.4` (breaking) · `alpha.5` · `alpha.6` | `alpha` | 2026-11-05 |
 | `v1.0.0-alpha.7` (breaking) | `alpha` | 2026-11-24 |
-| `v1.0.0-alpha.8` · `alpha.9` | `alpha` | 2026-11-25 |
+| `v1.0.0-alpha.8` · `alpha.9` · `alpha.10` | `alpha` | 2026-11-25 |
 
 **`1.0.0` is not cut yet, by design.** It waits for the first end-to-end environment. Before it:
 - staging validation on real AWS and Keycloak (the integrated stack emulates AWS);
@@ -135,8 +136,8 @@ The packages are published to **GitHub Packages** (the npm registry at `npm.pkg.
 - **GitHub Actions:** `NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` with `permissions: packages: read`. On each package's settings page (*Manage Actions access*), give the consuming repository read access once.
 
 ```bash
-pnpm add @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.9
-pnpm add -D @bcbp-solutions-fzc-llc/webpack-preset@1.0.0-alpha.9 @bcbp-solutions-fzc-llc/eslint-plugin@1.0.0-alpha.9
+pnpm add @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.10
+pnpm add -D @bcbp-solutions-fzc-llc/webpack-preset@1.0.0-alpha.10 @bcbp-solutions-fzc-llc/eslint-plugin@1.0.0-alpha.10
 ```
 
 | Pin style | Use when |
@@ -160,8 +161,8 @@ pnpm add -D @bcbp-solutions-fzc-llc/webpack-preset@1.0.0-alpha.9 @bcbp-solutions
 **Provenance.** Each tarball has a GitHub build-provenance attestation from the release workflow:
 
 ```bash
-npm pack @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.9
-gh attestation verify bcbp-solutions-fzc-llc-frontend-sdk-1.0.0-alpha.9.tgz --repo BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
+npm pack @bcbp-solutions-fzc-llc/frontend-sdk@1.0.0-alpha.10
+gh attestation verify bcbp-solutions-fzc-llc-frontend-sdk-1.0.0-alpha.10.tgz --repo BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
 ```
 
 The same tarballs are attached to the GitHub Release, with Cosign-signed `checksums.txt` (see *Verifying a release* in the [README](README.md#cutting-a-release)).
