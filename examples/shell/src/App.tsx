@@ -1,4 +1,6 @@
-// The shell's routes: a home page and the tenders remote's edit page under /t/<slug>/.
+// The shell's routes: a home page and the tenders remote's edit page under /t/<slug>/. The route follows the
+// URL on popstate: the shell's navigator (navigator.ts) and rememberWorkspace move it without a page load.
+import { useSyncExternalStore } from 'react';
 import { RemoteBoundary, useRouteTemplate, useSignOut, useWorkspace } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
 
 const EDIT_TENDER = /^\/t\/[a-z0-9-]+\/tenders\/([^/]+)\/edit$/;
@@ -27,8 +29,15 @@ function SignOut() {
   );
 }
 
+const subscribeLocation = (l: () => void) => {
+  addEventListener('popstate', l);
+  return () => removeEventListener('popstate', l);
+};
+const currentPath = () => location.pathname;
+
 export function App() {
-  const edit = EDIT_TENDER.exec(location.pathname);
+  const pathname = useSyncExternalStore(subscribeLocation, currentPath, currentPath);
+  const edit = EDIT_TENDER.exec(pathname);
   return (
     <>
       <header>

@@ -772,7 +772,7 @@ sequenceDiagram
 | `session` | Runtime topic | `useSession`, `useCurrentUser`, `useWorkspace` |
 | `flags` | Runtime topic | `useFeatureFlag` |
 | `authz` | Runtime topic | `useHasPermission`, `<Can>` |
-| `read-only` | Runtime topic | `useReadOnly` |
+| `read-only` | Runtime topic | `useReadOnly`, `<Writable>` |
 | `i18n` | Runtime topic | `useT`, `useLocale` |
 
 Listeners are snapshotted before they are notified, and a throwing listener never stops the others. Without `BroadcastChannel`, other tabs learn of a sign-out at their next refresh.
@@ -1071,7 +1071,7 @@ During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `
 
 | Layer | How |
 |---|---|
-| Unit | Vitest per subpath (`test/unit/<subpath>`). Node by default; `happy-dom` for React; `jsdom` for DOMPurify. Coverage gate ≥ 98 % statements of `packages/*/src` (`pnpm test`: 1659 tests in 60 files, 98.6 %) |
+| Unit | Vitest per subpath (`test/unit/<subpath>`). Node by default; `happy-dom` for React; `jsdom` for DOMPurify. Coverage gate ≥ 98 % statements of `packages/*/src` (`pnpm test`: 1662 tests in 60 files, 98.6 %) |
 | Integration / E2E | `test/integration`: subpaths wired together; `test/e2e`: the reference shell and remote booted end to end (both in-process, jsdom) |
 | Browser | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP: the keepalive budget on hide and tab close, page-lifecycle event order, SRI on lazy JS and CSS chunks (webpack and Rspack builds of the example remote and of `styled-remote/`), `AbortSignal.any` native and absent, Trusted Types (CI job `browser`); engine limits in `engine-notes.ts` |
 | Collector | `test/collector`: the reference two-tier Collector (`examples/collector`) in the Collector image, two gateways and two aggregators: per-stream routing, totals across device clocks, allowlists (`pnpm test-collector`, CI job `collector`); `examples/collector/test` keeps the allowlists equal to the registry |

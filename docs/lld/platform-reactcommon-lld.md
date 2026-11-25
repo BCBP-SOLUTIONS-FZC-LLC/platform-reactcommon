@@ -26,6 +26,7 @@
 | 1.8 | 2026-11-06 | `1.0.0-alpha.6` released (tag `v1.0.0-alpha.6`, PRs #54, #55): version line, §14.1, §14.2 |
 | 1.9 | 2026-11-25 | `1.0.0-alpha.7` (2026-11-24, PR #60, breaking), `1.0.0-alpha.8` (PRs #62–#64) and `1.0.0-alpha.9` (PR #67) released: version line, §14.1, §14.2 |
 | 1.10 | 2026-11-25 | `[Unreleased]`: `useRefreshSessionContext` and `ShellContextValue.refreshContext` (§5.3, §5.4.5, §6.1 `contextRefresh`), `createTestPlatform`'s `refreshContext` option (§11.3), its log event (§11.1) |
+| 1.11 | 2026-11-25 | `[Unreleased]`: `Writable` (§5.3, §5.4.6); the `navigate()` contract (§5.4.6) |
 
 ### Table of Contents
 
@@ -292,7 +293,7 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 | `/auth` | `createOidcProvider` · `initializeAuth` · `getSession` · `chooseWorkspace` · `cachedWorkspace` · `rememberWorkspace` · `slugFromPath` · `isWrongWorkspace` · `signInAgain` · types `IdentityProvider`, `SessionState`, `SessionUser`, `Workspace`, `SessionContext`, `WorkspaceResolver`, `SessionContextSource` |
 | `/mfe` | `loadManifest` · `loadRemote` · `isChunkLoadError` · `reloadOnceForChunkError` · `startVersionPolling` · `subscribeAppUpdate` · `RemoteDisabledError` · `RemoteLoadError` · types `RemoteManifest`, `RemoteManifestEntry` |
 | `/nav` | `navigate(appId, path)` · `registerNavigator` · `isSafeRedirect` |
-| `/react` | `PlatformProvider` · `useSession` · `useCurrentUser` · `useWorkspace` · `useSessionContext` · `useBeforeAuthRedirect` · `useReadOnly` · `useStepUp` · `useLocale` · `useSwitchWorkspace` · `useRefreshSessionContext` · `useFeatureFlag` · `useHasPermission` · `Can` · `useApi` · `useApiClient` · `useRouteTemplate` · `useOnlineStatus` · `useAppUpdate` · `useSignOut` · `useT` · `MFEErrorBoundary` · `RemoteBoundary` · `installGlobalErrorHandlers` · types `ShellContextValue`, `ErrorInfoView` |
+| `/react` | `PlatformProvider` · `useSession` · `useCurrentUser` · `useWorkspace` · `useSessionContext` · `useBeforeAuthRedirect` · `useReadOnly` · `useStepUp` · `useLocale` · `useSwitchWorkspace` · `useRefreshSessionContext` · `useFeatureFlag` · `useHasPermission` · `Can` · `Writable` · `useApi` · `useApiClient` · `useRouteTemplate` · `useOnlineStatus` · `useAppUpdate` · `useSignOut` · `useT` · `MFEErrorBoundary` · `RemoteBoundary` · `installGlobalErrorHandlers` · types `ShellContextValue`, `ErrorInfoView` |
 | `/testing` | `createTestPlatform` (`signOuts`, `contextRefreshes`, `reset`) · `mockApi` · `mockProblem` · `renderMetricInventory` · types `LogRecord`, `SpanRecord` |
 
 ### 5.4 Key behaviour specifications
@@ -361,6 +362,25 @@ A remote asks the shell to reload the session context (IAM P-35) through `ShellC
 | Shell contract | `refreshContext` must settle (bound its load): later calls queue behind it |
 | Re-render | Through the provider's new `context` and the authz and flag topics the shell's apply emits; the SDK adds no topic |
 | Reference shell | `examples/shell/src/bootstrap.tsx`: same workspace → set and apply, `true`; another tenant (`tenantId`; a new slug for the same tenant is applied) → unmount, the wrong-workspace dialog, `false`; any failure (refusals included: it has no refusal screens) → the old context, `false`; after a sign-out → `false`. Loads are numbered when they start: an answer is dropped once a later-started load was applied (a refresh and the background retry overlap), and an applied refresh ends the retry. The tenders remote refreshes once on `DENY_ROLE_INSUFFICIENT` |
+
+#### 5.4.6 Cross-app navigation (`navigate`) and the read-only gate (`Writable`)
+
+The reference shell's navigator is `examples/shell/src/navigator.ts` (routes by the path; the App follows `popstate`).
+
+`navigate(appId, path, { replace? })` validates `appId` (`^[a-z][a-z0-9_-]{0,62}$`) and `path` (`isSafeRedirect`, a same-origin path, not `//`), then calls the shell's registered navigator, or does a full page load (`location.assign`, `replace` with `{ replace: true }`) when none is registered. The rules remotes and shells follow (design doc §C1 `/nav`):
+
+| Rule | Detail |
+|---|---|
+| The path decides | The shell's navigator routes by `path`: a path under its router's basename (`${auth.workspacePathPrefix}<slug>/`, default `/t/<slug>/`) is a router navigation with no page load; any other same-origin path (another workspace, a page outside the router) is a full page load |
+| `appId` | The app the path belongs to (a remote's name, or `'shell'`). Informational: a shell's navigator may ignore it |
+| Full workspace path | A cross-remote path carries the workspace prefix (`/t/${slug}/admin/users` with the default prefix), the slug from `useSessionContext()` (`useWorkspace()` may have none: a trial signed in from an invitation), never hard-coded. Offer the link once the context has loaded: before that the slug is undefined and the path would be `/t/undefined/…`. A bare `/admin/users` leaves the router's basename: a full page load |
+| Within a remote | The remote's own router (`Link`, `useNavigate`), not `navigate()` |
+| Links | Not a root-relative `<a href="/t/…">` into another remote: it is a full page load (a silent sign-in round trip, the page's state lost) |
+| Standalone | No registered navigator: a full page load |
+| The mounted remote | A shell's navigator must make a path inside the remote already mounted reach that remote's router (remount it, or have its router follow the URL); otherwise the URL changes and the page does not |
+| Routers | `react-router-dom` is not shared: no remote imports another's routes or router |
+
+`<Writable fallback?>` renders `children` unless `useReadOnly()` (the session context's `readOnly`, or a `DENY_TENANT_READ_ONLY` seen on the page), else `fallback`; nothing when that is absent. It re-renders through `useReadOnly()`'s subscriptions, ships no styling or text, and nests inside `<Can>`. It checks no permission and shows `children` while the session context has not loaded, so a mutation control belongs inside `<Can>` (deny-all until the context loads).
 
 ---
 

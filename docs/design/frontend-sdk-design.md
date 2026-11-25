@@ -1012,6 +1012,20 @@ export function navigate(appId: string, path: string, o?: { replace?: boolean })
 export function isSafeRedirect(url: string, base?: string): boolean; // same origin, http(s), no '//' or '\\' tricks, no control chars
 ```
 
+The contract between remotes and the shell's navigator (web-shell's shared-components ask, mfe-admin's
+cross-remote navigation):
+
+| Rule | Detail |
+|---|---|
+| The path decides | The shell's navigator routes by `path`: a path under its router's basename (`${auth.workspacePathPrefix}<slug>/`, default `/t/<slug>/`) is a router navigation with no page load; any other same-origin path (another workspace, a page outside the router) is a full page load |
+| `appId` | The app the path belongs to (a remote's name, or `'shell'`). Informational: a shell's navigator may ignore it |
+| Full workspace path | A cross-remote path carries the workspace prefix (`/t/${slug}/admin/users` with the default prefix), the slug from `useSessionContext()` (`useWorkspace()` may have none: a trial signed in from an invitation), never hard-coded. Offer the link once the context has loaded: before that the slug is undefined and the path would be `/t/undefined/…`. A bare `/admin/users` leaves the router's basename: a full page load |
+| Within a remote | The remote's own router (`Link`, `useNavigate`), not `navigate()` |
+| Links | Not a root-relative `<a href="/t/…">` into another remote: it is a full page load (a silent sign-in round trip, the page's state lost) |
+| Standalone | No registered navigator: a full page load |
+| The mounted remote | A shell's navigator must make a path inside the remote already mounted reach that remote's router (remount it, or have its router follow the URL); otherwise the URL changes and the page does not |
+| Routers | `react-router-dom` is not shared: no remote imports another's routes or router |
+
 #### `/i18n`
 
 ```ts
@@ -1100,6 +1114,7 @@ export function useRefreshSessionContext(): () => Promise<boolean>; // the shell
 export function useFeatureFlag<T extends FlagValue>(key: string, fallback: T): T;
 export function useHasPermission(action: string, resource: string): boolean;
 export function Can(p: { action: string; resource: string; children: ReactNode; fallback?: ReactNode }): JSX.Element | null;
+export function Writable(p: { children: ReactNode; fallback?: ReactNode }): JSX.Element | null; // children unless useReadOnly(); no styling; inside Can (it shows children before the context loads)
 export function useApi<T>(fn: (api: ApiClient, signal: AbortSignal) => Promise<T>, deps: unknown[]):
   { data?: T; error?: ApiError; loading: boolean; reload(): void };   // aborts on unmount / deps change
 export function useApiClient(): ApiClient;                            // bound to the nearest MFE scope
@@ -1437,7 +1452,7 @@ export async function bootstrap(): Promise<void> {
 ```tsx
 import { useRef, useState, type FormEvent } from 'react';
 import { useApi, useApiClient, useHasPermission, useRefreshSessionContext, useRouteTemplate, useT,
-         MFEErrorBoundary } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
+         MFEErrorBoundary, Writable } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
 import { gatewayDenyCode, isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@bcbp-solutions-fzc-llc/frontend-sdk/problem';
 import { problemMessage } from '@bcbp-solutions-fzc-llc/frontend-sdk/i18n';
 
@@ -1500,7 +1515,8 @@ function EditTenderForm({ id }: { id: string }) {
       <input name="deadline" type="date" defaultValue={data.deadline} disabled={!canEdit} />
       {fieldErrors.deadline?.map((m) => <span key={m} role="alert">{m}</span>)}
       {formError && <p role="alert">{formError}</p>}
-      {canEdit && <button type="submit" disabled={saving}>{t('save')}</button>}
+      {/* A read-only workspace: the shell says why; the remote only stops offering Save. */}
+      {canEdit && <Writable fallback={<button type="submit" disabled>{t('save')}</button>}><button type="submit" disabled={saving}>{t('save')}</button></Writable>}
     </form>
   );
 }

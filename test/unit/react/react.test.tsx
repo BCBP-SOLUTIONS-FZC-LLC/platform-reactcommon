@@ -33,6 +33,7 @@ import {
   useSwitchWorkspace,
   useT,
   useWorkspace,
+  Writable,
   type ShellContextValue,
 } from '../../../packages/frontend-sdk/src/react/index.ts';
 import { createTestPlatform, mockApi, mockProblem } from '../../../packages/frontend-sdk/src/testing/index.ts';
@@ -250,6 +251,27 @@ describe('read-only, flags, permissions, locale', () => {
       </ro.Wrapper>,
     );
     expect(r2.container.textContent).toBe('true');
+  });
+
+  it('Writable: children while writable; fallback under P-35 read_only, or after a DENY_TENANT_READ_ONLY seen on the page without a new context; nothing without a fallback', async () => {
+    function View() {
+      return (
+        <p>
+          <Writable fallback="disabled">enabled</Writable>|<Writable>only-writable</Writable>
+          <Can action="read" resource="tender"><Writable fallback="|read-only-reader">|writable-reader</Writable></Can>
+        </p>
+      );
+    }
+    const { container } = await render(<platform.Wrapper><View /></platform.Wrapper>);
+    expect(container.textContent).toBe('enabled|only-writable|writable-reader');
+    mockApi({ 'PUT /tenders/:id': mockProblem(PlatformProblemTypes.Forbidden, { errorCode: 'DENY_TENANT_READ_ONLY' }) });
+    const { createApiClient } = await import('../../../packages/frontend-sdk/src/http/index.ts');
+    await settle(() => createApiClient().put('/tenders/:id', { params: { id: '1' } }).catch(() => {}));
+    expect(container.textContent).toBe('disabled||read-only-reader');
+
+    const ro = createTestPlatform({ context: { readOnly: true } });
+    const r2 = await render(<ro.Wrapper><View /></ro.Wrapper>);
+    expect(r2.container.textContent).toBe('disabled|');
   });
 
   it('useFeatureFlag re-renders when the provider or its values change', async () => {
