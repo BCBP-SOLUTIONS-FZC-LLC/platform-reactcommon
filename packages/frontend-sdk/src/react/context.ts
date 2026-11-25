@@ -17,6 +17,15 @@ export interface ShellContextValue {
    * shells written before it; useSignOut rejects then.
    */
   signOut?: ((o?: { global?: boolean }) => Promise<void>) | undefined;
+  /**
+   * Reloads the session context (IAM P-35) and applies it, for useRefreshSessionContext. Resolves true when
+   * a new context was applied; false when it was not: the load failed and the old context was kept, or the
+   * shell took over the page (another workspace's context, a refusal it shows its own screen for, a
+   * sign-out). The shell handles every refusal itself; the SDK does not interpret the result further.
+   * It must settle (bound the load, e.g. the ApiClient's timeout): the SDK queues later calls behind it.
+   * Optional for shells written before it: the hook then resolves false.
+   */
+  refreshContext?: (() => Promise<boolean>) | undefined;
 }
 
 export const ShellContext = createContext<ShellContextValue | undefined>(undefined);

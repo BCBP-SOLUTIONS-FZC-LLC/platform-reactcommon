@@ -1083,7 +1083,9 @@ export function isAllowedOrigin(url: string, allowlist: readonly string[]): bool
 ```ts
 export function PlatformProvider(p: { children: ReactNode; shell: ShellContextValue }): JSX.Element; // shell only
 export interface ShellContextValue { user?: SessionUser; workspace?: Workspace; context?: SessionContext;
-  locale: string; switchWorkspace(identifierOrSlug: string): Promise<void> }
+  locale: string; switchWorkspace(identifierOrSlug: string): Promise<void>;
+  signOut?(o?: { global?: boolean }): Promise<void>;
+  refreshContext?(): Promise<boolean> }                           // reload P-35 and apply it; never rejects
 export function useSession(): SessionState;
 export function useCurrentUser(): SessionUser | undefined;
 export function useWorkspace(): Workspace | undefined;
@@ -1093,6 +1095,8 @@ export function useReadOnly(): boolean;                            // SessionCon
 export function useStepUp(): { needed: boolean; reauthenticate(): Promise<void> }; // uses ctx.mfaFreshnessSeconds
 export function useLocale(): { locale: string; dir: 'ltr' | 'rtl' };
 export function useSwitchWorkspace(): (identifierOrSlug: string) => Promise<void>;
+export function useSignOut(): (o?: { global?: boolean }) => Promise<void>;
+export function useRefreshSessionContext(): () => Promise<boolean>; // the shell's refreshContext, shared page-wide
 export function useFeatureFlag<T extends FlagValue>(key: string, fallback: T): T;
 export function useHasPermission(action: string, resource: string): boolean;
 export function Can(p: { action: string; resource: string; children: ReactNode; fallback?: ReactNode }): JSX.Element | null;
@@ -1113,14 +1117,33 @@ export function installGlobalErrorHandlers(): () => void;              // window
 // violations after bootstrap reach Loki with trace/session correlation; /csp-report covers pre-bootstrap ones.
 ```
 
+**Session-context refresh** (web-shell's ask for mfe-admin, IAM-UX-2). The roles, plan and flags come
+from IAM P-35, loaded once by the shell; a remote that sees them go stale (the user changed their own
+roles with P-28, or a request was denied `DENY_ROLE_INSUFFICIENT`) calls `useRefreshSessionContext()`.
+It asks the shell's `refreshContext`, which loads P-35, applies it (authz subject, flags, the provider's
+`context`) and resolves whether it did; hooks reading the context re-render through the provider, as after
+the shell's background retry.
+
+| Rule | Behaviour |
+|---|---|
+| Shared page-wide | Calls in the same tick share one `refreshContext` call. A call made while one is in flight waits for one more that starts after it, shared by every call made meanwhile: the running one may have read P-35 before the change the caller wants to see. A call after both settle starts a new one. The state is in the `PlatformRuntime`, so every remote shares it |
+| Result | `true`: a new context was applied. `false`: nothing was applied. That covers the load failing (the old context stays, no deny-all), the shell taking over the page (another workspace's context, a refusal such as `MEMBER_SUSPENDED` or `TENANT_TRIAL_EXPIRED` that it shows its own screen for, a sign-out), and a shell without `refreshContext` (an older shell, a standalone remote: `false` at once, nothing logged). Anything but `true` from the shell counts as `false` |
+| Never rejects | A `refreshContext` that rejects or throws resolves `false` and logs one `warn`, `session context refresh failed` |
+| Stable | The function keeps its identity across renders and new shell values (it reads the shell through a ref), so it can be an effect dependency |
+| Refusals are the shell's | The SDK does not interpret a refusal: only the shell has the screens and the session state. A remote never retries the denied request in a loop: it refreshes once, re-renders, and lets the user act again |
+| Not throttled | Explicit calls are not rate-limited; a shell's own trigger (window focus) is throttled by the shell, and should share one load with `refreshContext` |
+| Hints only | A UI hint correction, not a security control: the gateway still decides every request. P-35 may lag a role change (IAM's caches) |
+
 #### `/testing`
 
 ```ts
 export function createTestPlatform(o?: Partial<{ identity: CoreIdentityInput; config: Partial<RuntimeConfig>;
   user: SessionUser; workspace: Workspace; context: Partial<SessionContext>;
   permissions: readonly `${string}:${string}`[]; flags: Record<string, FlagValue>;
-  storageNamespace: string /* default: the workspace's, as after sign-in; 'anon' = signed out */ }>):
-  { Wrapper: ComponentType<{ children: ReactNode }>; logs: LogRecord[]; spans: SpanRecord[]; reset(): void };
+  storageNamespace: string /* default: the workspace's, as after sign-in; 'anon' = signed out */;
+  refreshContext: () => Promise<boolean> /* the shell's, for useRefreshSessionContext; default none */ }>):
+  { Wrapper: ComponentType<{ children: ReactNode }>; logs: LogRecord[]; spans: SpanRecord[];
+    signOuts: { global?: boolean }[]; readonly contextRefreshes: number; reset(): void };
 export function mockProblem(t: ProblemType, extra?: Partial<ProblemDetails>): Response;
 export function mockApi(routes: Record<`${'GET'|'POST'|'PUT'|'PATCH'|'DELETE'} /${string}`, Response | ((req: Request) => Response)>): void;
 /** Prometheus text exposition of every instrument registered so far (one sample per label set seen), with the injected
@@ -1413,9 +1436,9 @@ export async function bootstrap(): Promise<void> {
 
 ```tsx
 import { useRef, useState, type FormEvent } from 'react';
-import { useApi, useApiClient, useHasPermission, useRouteTemplate, useT,
+import { useApi, useApiClient, useHasPermission, useRefreshSessionContext, useRouteTemplate, useT,
          MFEErrorBoundary } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
-import { isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@bcbp-solutions-fzc-llc/frontend-sdk/problem';
+import { gatewayDenyCode, isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@bcbp-solutions-fzc-llc/frontend-sdk/problem';
 import { problemMessage } from '@bcbp-solutions-fzc-llc/frontend-sdk/i18n';
 
 interface Tender { id: string; title: string; deadline: string; version: number }
@@ -1425,6 +1448,7 @@ function EditTenderForm({ id }: { id: string }) {
   const t = useT('tenders');
   const api = useApiClient();
   const canEdit = useHasPermission('update', 'tender');
+  const refreshSessionContext = useRefreshSessionContext();
   const { data, error, loading, reload } = useApi((c, signal) =>
     c.get<Tender>('/tenders/:id', { params: { id }, signal }).then((r) => r.data), [id]);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
@@ -1457,6 +1481,9 @@ function EditTenderForm({ id }: { id: string }) {
       reload(); // the saved tender, with its new version
     } catch (e) {
       if (!isProblemError(e)) { setFailed({ e }); return; }   // Timeout/Network → boundary
+      // The roles changed since the page loaded: reload them once, so the form follows (Save goes when the
+      // role no longer allows it). Never retried: the user acts again.
+      if (gatewayDenyCode(e) === 'DENY_ROLE_INSUFFICIENT') void refreshSessionContext();
       if (e.is(PlatformProblemTypes.ValidationFailed)) setFieldErrors(toFieldErrorMap(e));
       else if (e.is(PlatformProblemTypes.Conflict)) setFormError(problemMessage(e));
       else setFormError(problemMessage(e));     // localized by type id, falls back to title

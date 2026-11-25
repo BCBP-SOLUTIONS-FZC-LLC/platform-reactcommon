@@ -604,7 +604,7 @@ flowchart LR
 | Keycloak `…/token` | Code exchange, refresh | `fetch` | 15 s | Exchange: `anonymous`. Refresh: 429 or 503 with `Retry-After` → backoff with tokens kept; anything ambiguous → lineage dropped, silent restore |
 | Keycloak `…/logout` | `logout()` (global by default) | Hidden form POST | — | The local sign-out has already happened |
 | PUB-1 `GET /api/v1/public/tenants/resolve` | Shell `WorkspaceResolver` | Before sign-in (a trial entry, an unknown slug, a saved paid realm whose probe failed) | `api.timeoutMs` | Cached entry for the slug, else the identifier-first screen |
-| P-35 `GET /api/v1/me/session-context` | Shell `SessionContextSource` | After sign-in | `api.timeoutMs` | Deny-all permissions, platform flags only; the example shell retries a transient failure 3 times |
+| P-35 `GET /api/v1/me/session-context` | Shell `SessionContextSource` | After sign-in; again on a remote's `useRefreshSessionContext` (the shell's `refreshContext`) | `api.timeoutMs` | Deny-all permissions, platform flags only; the example shell retries a transient failure 3 times; a refresh that fails keeps the old context |
 | `/api/*` | `ApiClient` | App calls | `api.timeoutMs` (35 s) per attempt | Idempotent calls retried (default 2, at most 5); RFC 9457 `ProblemError` |
 | `GET /remotes/manifest.json` | `loadManifest` | Bootstrap step 9 | `remotes.loadTimeoutMs` | Every remote slot shows its fallback |
 | `remoteEntry.js` and chunks | `loadRemote` | A slot's first render | `remotes.loadTimeoutMs` per attempt, `remotes.retries` | That remote's boundary fallback |
@@ -1071,7 +1071,7 @@ During the alpha, versions are `1.0.0-alpha.N`. The shell shares the SDK under `
 
 | Layer | How |
 |---|---|
-| Unit | Vitest per subpath (`test/unit/<subpath>`). Node by default; `happy-dom` for React; `jsdom` for DOMPurify. Coverage gate ≥ 98 % statements of `packages/*/src` (`pnpm test`: 1647 tests in 60 files, 98.6 %) |
+| Unit | Vitest per subpath (`test/unit/<subpath>`). Node by default; `happy-dom` for React; `jsdom` for DOMPurify. Coverage gate ≥ 98 % statements of `packages/*/src` (`pnpm test`: 1658 tests in 60 files, 98.6 %) |
 | Integration / E2E | `test/integration`: subpaths wired together; `test/e2e`: the reference shell and remote booted end to end (both in-process, jsdom) |
 | Browser | `test/browser`: Playwright in Chromium, Firefox and WebKit under the production CSP: the keepalive budget on hide and tab close, page-lifecycle event order, SRI on lazy JS and CSS chunks (webpack and Rspack builds of the example remote and of `styled-remote/`), `AbortSignal.any` native and absent, Trusted Types (CI job `browser`); engine limits in `engine-notes.ts` |
 | Collector | `test/collector`: the reference two-tier Collector (`examples/collector`) in the Collector image, two gateways and two aggregators: per-stream routing, totals across device clocks, allowlists (`pnpm test-collector`, CI job `collector`); `examples/collector/test` keeps the allowlists equal to the registry |

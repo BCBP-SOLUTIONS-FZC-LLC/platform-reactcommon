@@ -53,6 +53,12 @@ interface TestPlatformOptions {
    * signed-out case, where storage writes nothing.
    */
   storageNamespace: string;
+  /**
+   * The shell's refreshContext, for a remote's useRefreshSessionContext(): what the shell resolves (true:
+   * a new context was applied). Every call is counted in `contextRefreshes`. Default: none, as under an
+   * older shell, so the hook resolves false.
+   */
+  refreshContext: () => Promise<boolean>;
 }
 
 const DEFAULT_IDENTITY: CoreIdentityInput = { serviceName: 'test-app', domain: 'tender_management', environment: 'test', buildVersion: '0.0.0-test' };
@@ -114,6 +120,8 @@ export function createTestPlatform(o?: Partial<TestPlatformOptions>): {
   spans: SpanRecord[];
   /** Each useSignOut() call, with its options. */
   signOuts: { global?: boolean }[];
+  /** The shell's refreshContext calls (useRefreshSessionContext shares concurrent ones); 0 after reset(). */
+  readonly contextRefreshes: number;
   reset(): void;
 } {
   // Start from an empty page, and stop the previous platform first: its unload listeners, batchers, metric
@@ -196,8 +204,14 @@ export function createTestPlatform(o?: Partial<TestPlatformOptions>): {
   setFlagProvider({ get: (k) => flags[k] ?? config.flags[k], subscribe: () => () => {} });
 
   const signOuts: { global?: boolean }[] = [];
+  let contextRefreshes = 0;
+  const refreshContext = o?.refreshContext;
   // As a shell's: useSignOut() works in a remote's tests, and records each call.
   const shell = {
+    refreshContext: refreshContext && (() => {
+      contextRefreshes += 1;
+      return refreshContext();
+    }),
     user,
     workspace,
     context,
@@ -213,10 +227,14 @@ export function createTestPlatform(o?: Partial<TestPlatformOptions>): {
     logs,
     spans,
     signOuts,
+    get contextRefreshes() {
+      return contextRefreshes;
+    },
     reset() {
       logs.length = 0;
       spans.length = 0;
       signOuts.length = 0;
+      contextRefreshes = 0;
       restoreFetch();
     },
   };

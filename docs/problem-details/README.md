@@ -88,7 +88,8 @@ IAM AuthZ Enrichment denies a request before it reaches the service. Its body is
 | `DENY_MALFORMED_IDENTITY` | Show an error; never redirect to sign-in in a loop (signing in again does not fix it: an expired token gets the gateway's own 401 first). Right after a trial → paid conversion a retry a few seconds later can succeed |
 | `DENY_UNRESOLVABLE_SUBJECT` | "Your workspace is being set up": retry the session-context load at 6 s, 12 s and 24 s (past AuthZ Enrichment's 5 s negative cache), then "no access to this workspace" with sign-out and switch. Never sign out or clear the cache on your own |
 | `DENY_MEMBER_SUSPENDED` | "Your access is paused". During AuthZ Enrichment's rollout a suspended member can get `DENY_UNRESOLVABLE_SUBJECT` instead; a member reactivated in the last 5 s can still get it, so check once more before a lasting screen |
-| `DENY_ROLE_INSUFFICIENT`, `DENY_TENDER_ACL_INSUFFICIENT`, … | A normal 403: show the problem message |
+| `DENY_ROLE_INSUFFICIENT` | Show the problem message, and refresh the roles once with `useRefreshSessionContext()` (they may have changed since the page loaded); never retry the request |
+| `DENY_TENDER_ACL_INSUFFICIENT`, … | A normal 403: show the problem message |
 
 The full list, with statuses, is in [`registry.md`](registry.md#gateway-deny-codes).
 

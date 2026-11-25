@@ -1,13 +1,13 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeAuth, type IdentityProvider, type SessionState } from '../../../packages/frontend-sdk/src/auth/index.ts';
-import { roleMapAuthorizer, setAuthorizer } from '../../../packages/frontend-sdk/src/authz/index.ts';
+import { roleMapAuthorizer, setAuthorizer, setAuthzSubject } from '../../../packages/frontend-sdk/src/authz/index.ts';
 import { setFlagProvider } from '../../../packages/frontend-sdk/src/flags/index.ts';
 import { initializeI18n, registerNamespace, setLocale } from '../../../packages/frontend-sdk/src/i18n/index.ts';
 import { getRuntime } from '../../../packages/frontend-sdk/src/internal/runtime.ts';
 import { resetContainersForTests } from '../../../packages/frontend-sdk/src/mfe/remote.ts';
 import { AbortedError, NetworkError, PlatformProblemTypes, type ApiError } from '../../../packages/frontend-sdk/src/problem/index.ts';
-import { StrictMode } from 'react';
+import { StrictMode, useState } from 'react';
 import { renderToString } from 'react-dom/server';
 import {
   Can,
@@ -24,6 +24,7 @@ import {
   useLocale,
   useOnlineStatus,
   useReadOnly,
+  useRefreshSessionContext,
   useRouteTemplate,
   useSession,
   useSessionContext,
@@ -1107,5 +1108,181 @@ describe('installGlobalErrorHandlers: edge cases', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('useRefreshSessionContext (web-shell\'s session-context refresh ask)', () => {
+  const ctx = (roles: string[]) => ({ tenantId: 't', slug: 'acme', roles, departments: [], featureFlags: [], readOnly: false });
+
+  /** A deferred the test settles: the shell's P-35 load in flight. */
+  function deferred() {
+    let resolve!: (v: boolean) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<boolean>((res, rej) => ((resolve = res), (reject = rej)));
+    return { promise, resolve, reject };
+  }
+
+  /** Renders the hook under a shell with `refreshContext`; returns every function the hook gave. */
+  async function hookUnder(refreshContext: ShellContextValue['refreshContext'], count = 1) {
+    const fns: (() => Promise<boolean>)[][] = Array.from({ length: count }, () => []);
+    function P({ i }: { i: number }) {
+      fns[i]!.push(useRefreshSessionContext());
+      return null;
+    }
+    const shell: ShellContextValue = { locale: 'en', switchWorkspace: async () => {}, refreshContext };
+    const ui = (s: ShellContextValue) => (
+      <PlatformProvider shell={s}>{Array.from({ length: count }, (_, i) => <P key={i} i={i} />)}</PlatformProvider>
+    );
+    const r = await render(ui(shell));
+    return { fns, rerender: (s: ShellContextValue) => r.rerender(ui(s)), shell };
+  }
+
+  it('a remote re-renders with the roles the shell applied: useHasPermission flips and <Can> shows', async () => {
+    setAuthorizer(roleMapAuthorizer({ member: ['read:tender'], tenant_admin: ['manage:members'] }));
+    setAuthzSubject({ roles: ['member'], tenantId: 't' });
+    let refresh!: () => Promise<boolean>;
+    function Remote() {
+      refresh = useRefreshSessionContext();
+      const roles = useSessionContext()?.roles.join(',') ?? '-';
+      return <p>{`${roles}|${useHasPermission('manage', 'members')}|`}<Can action="manage" resource="members">Members</Can></p>;
+    }
+    function Shell() {
+      const [context, setContext] = useState(ctx(['member']));
+      const shell: ShellContextValue = {
+        locale: 'en', switchWorkspace: async () => {}, context,
+        refreshContext: async () => {
+          const next = ctx(['tenant_admin']);
+          setAuthzSubject({ roles: next.roles, tenantId: next.tenantId });
+          setContext(next);
+          return true;
+        },
+      };
+      return <PlatformProvider shell={shell}><Remote /></PlatformProvider>;
+    }
+    const { container } = await render(<Shell />);
+    expect(container.textContent).toBe('member|false|');
+    let applied: boolean | undefined;
+    await settle(async () => void (applied = await refresh()));
+    expect(applied).toBe(true);
+    expect(container.textContent).toBe('tenant_admin|true|Members');
+  });
+
+  it('calls in the same tick, from two components, share one refreshContext call and its result', async () => {
+    const d = deferred();
+    const refreshContext = vi.fn(() => d.promise);
+    const { fns } = await hookUnder(refreshContext, 2);
+    const a = fns[0]!.at(-1)!();
+    const b = fns[1]!.at(-1)!();
+    await Promise.resolve();
+    expect(refreshContext).toHaveBeenCalledTimes(1);
+    d.resolve(true);
+    expect(await Promise.all([a, b])).toEqual([true, true]);
+    expect(refreshContext).toHaveBeenCalledTimes(1);
+  });
+
+  it('a call while one is in flight gets the next refresh, which starts after it (it may have read P-35 before a role change); calls meanwhile share it', async () => {
+    const loads = [deferred(), deferred()];
+    let n = 0;
+    const refreshContext = vi.fn(() => loads[n++]!.promise);
+    const { fns } = await hookUnder(refreshContext);
+    const refresh = fns[0]!.at(-1)!;
+    const first = refresh();
+    await Promise.resolve();
+    expect(refreshContext).toHaveBeenCalledTimes(1);
+    const second = refresh();
+    const third = refresh();
+    await settle();
+    expect(refreshContext).toHaveBeenCalledTimes(1); // the queued one waits for the first
+    loads[0]!.resolve(false);
+    expect(await first).toBe(false);
+    await settle();
+    expect(refreshContext).toHaveBeenCalledTimes(2);
+    loads[1]!.resolve(true);
+    expect(await Promise.all([second, third])).toEqual([true, true]);
+  });
+
+  it('a call after a refresh settles starts a new one', async () => {
+    const refreshContext = vi.fn(async () => true);
+    const { fns } = await hookUnder(refreshContext);
+    const refresh = fns[0]!.at(-1)!;
+    expect(await refresh()).toBe(true);
+    expect(await refresh()).toBe(true);
+    expect(refreshContext).toHaveBeenCalledTimes(2);
+  });
+
+  it('a rejecting or throwing refreshContext resolves false with one warning; the old context stays', async () => {
+    const before = ctx(['member']);
+    for (const refreshContext of [vi.fn(async () => Promise.reject(new Error('P-35 down'))), vi.fn((): Promise<boolean> => { throw new Error('boom'); })]) {
+      platform.reset();
+      let refresh!: () => Promise<boolean>;
+      function View() {
+        refresh = useRefreshSessionContext();
+        return <p>{useSessionContext()?.roles.join(',')}</p>;
+      }
+      const { container } = await render(
+        <PlatformProvider shell={{ locale: 'en', switchWorkspace: async () => {}, context: before, refreshContext }}><View /></PlatformProvider>,
+      );
+      let applied: boolean | undefined;
+      await settle(async () => void (applied = await refresh()));
+      expect(applied).toBe(false);
+      expect(refreshContext).toHaveBeenCalledTimes(1);
+      expect(platform.logs.filter((l) => l.body === 'session context refresh failed')).toHaveLength(1);
+      expect(container.textContent).toBe('member');
+      // The page can refresh again afterwards: the failed one is not left in flight.
+      await settle(async () => void (await refresh()));
+      expect(refreshContext).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it('anything but true from the shell counts as not applied', async () => {
+    const { fns } = await hookUnder(async () => 'yes' as unknown as boolean);
+    expect(await fns[0]!.at(-1)!()).toBe(false);
+  });
+
+  it('without refreshContext (an older shell) or without a shell (a standalone remote): false at once, no warning, nothing shared', async () => {
+    const { fns } = await hookUnder(undefined);
+    expect(await fns[0]!.at(-1)!()).toBe(false);
+    let alone!: () => Promise<boolean>;
+    function P() {
+      alone = useRefreshSessionContext();
+      return null;
+    }
+    await render(<P />);
+    expect(await alone()).toBe(false);
+    expect(platform.logs.filter((l) => l.body === 'session context refresh failed')).toHaveLength(0);
+    expect(getRuntime().contextRefresh).toBeUndefined();
+  });
+
+  it('keeps its identity across renders and a new shell value, and calls the latest shell\'s refreshContext', async () => {
+    const old = vi.fn(async () => true);
+    const { fns, rerender, shell } = await hookUnder(old);
+    const latest = vi.fn(async () => true);
+    await rerender({ ...shell, context: ctx(['tenant_admin']), refreshContext: latest });
+    const seen = fns[0]!;
+    expect(seen.length).toBeGreaterThan(1);
+    expect(new Set(seen).size).toBe(1);
+    expect(await seen[0]!()).toBe(true);
+    expect(latest).toHaveBeenCalledTimes(1);
+    expect(old).not.toHaveBeenCalled();
+  });
+
+  it('createTestPlatform: refreshContext reaches the shell value and each call is counted; none by default', async () => {
+    let refresh!: () => Promise<boolean>;
+    function P() {
+      refresh = useRefreshSessionContext();
+      return null;
+    }
+    await render(<platform.Wrapper><P /></platform.Wrapper>);
+    expect(await refresh()).toBe(false);
+    expect(platform.contextRefreshes).toBe(0);
+
+    const p = createTestPlatform({ refreshContext: async () => true });
+    await render(<p.Wrapper><P /></p.Wrapper>);
+    expect(await Promise.all([refresh(), refresh()])).toEqual([true, true]);
+    expect(p.contextRefreshes).toBe(1);
+    expect(await refresh()).toBe(true);
+    expect(p.contextRefreshes).toBe(2);
+    p.reset();
+    expect(p.contextRefreshes).toBe(0);
   });
 });

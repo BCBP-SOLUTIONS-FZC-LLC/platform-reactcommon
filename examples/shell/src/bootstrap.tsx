@@ -126,6 +126,34 @@ export async function bootstrap(): Promise<void> {
     rememberWorkspace({ ...w, slug: c.slug });
   };
   applyContext();
+  // A remote's useRefreshSessionContext (after the user's own role change, a 403 DENY_ROLE_INSUFFICIENT): load
+  // P-35 again and apply it. Never rejects; the SDK shares concurrent calls. Another workspace's context is
+  // that workspace's session: unmount, the wrong-workspace dialog, and nothing more is applied. Any failure
+  // keeps the old context (no deny-all, no blank page). This shell has no screens for the refusals (a
+  // suspended membership, an expired or suspended tenant): it keeps the old context for those too; a shell
+  // with those screens shows them here, as on the first load.
+  const refreshContext = async (): Promise<boolean> => {
+    if (signedOut()) return false;
+    let next: SessionContext;
+    try {
+      next = await sessionContextSource.load(contextRetry.signal);
+    } catch (e) {
+      if (!signedOut()) getLogger().warn('session context unavailable', { error: e });
+      return false;
+    }
+    if (signedOut()) return false;
+    const slug = context.get()?.slug ?? w.slug;
+    if (slug !== undefined && next.slug !== slug) {
+      contextRetry.abort();  // stops the background retry too: nothing more is applied on this page
+      app?.unmount();
+      app = undefined;
+      showWrongWorkspace(idp);
+      return false;
+    }
+    context.set(next);
+    applyContext();
+    return true;
+  };
   await initializeI18n({ defaultLocale: cfg.i18n.defaultLocale, supported: cfg.i18n.supportedLocales });
   if (signedOut()) return;
   await loadManifest().catch((e) => getLogger().error('manifest load failed', { error: e }));
@@ -142,19 +170,22 @@ export async function bootstrap(): Promise<void> {
                           if (!w) { showWorkspaceNotFound(); return; }  // generic message, never says which input failed
                           await idp.switchWorkspace(w);
                         },
-                        signOut: (o) => idp.logout(o) }}>
+                        signOut: (o) => idp.logout(o),
+                        refreshContext }}>
       <App />
     </ShellRoot>,
   );
 
   // A transient failure (network, timeout, 429, 5xx) is retried 3 times (1 s, 2 s, 4 s); on success the
-  // subject, flags and provider get the context. A sign-out stops the retries.
+  // subject, flags and provider get the context. A sign-out stops the retries. A remote's refresh that
+  // applied a context meanwhile ends them: a retry answer may predate it (a role change), so it is dropped.
   if (!context.get()) {
-    const retried = await retrySessionContext((signal) => sessionContextSource.load(signal), {
+    const applied = context.get;
+    const retried = await retrySessionContext((signal) => applied() ? Promise.resolve(applied()!) : sessionContextSource.load(signal), {
       signal: contextRetry.signal,
       onError: (e, attempt) => getLogger().warn('session context unavailable', { error: e, attempt }),
     });
-    if (retried && !contextRetry.signal.aborted) {
+    if (retried && !contextRetry.signal.aborted && !context.get()) {
       // Checked before the app sees it (a trial with a slug never gets here: its context was awaited above).
       if (wrongTrial(retried)) {
         app?.unmount();

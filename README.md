@@ -108,7 +108,7 @@ The 17 subpaths fall into seven functional areas, each with its own page in [`do
 
 | Subpath / package | Main exports |
 |---|---|
-| `/react` | `PlatformProvider`, `useSession`, `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useApi`, `useApiClient`, `useT`, `useLocale`, `useFeatureFlag`, `useHasPermission`, `Can`, `useStepUp`, `useReadOnly`, `useRouteTemplate`, `useBeforeAuthRedirect`, `useOnlineStatus`, `useAppUpdate`, `useSwitchWorkspace`, `useSignOut`, `MFEErrorBoundary`, `RemoteBoundary`, `installGlobalErrorHandlers` |
+| `/react` | `PlatformProvider`, `useSession`, `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useApi`, `useApiClient`, `useT`, `useLocale`, `useFeatureFlag`, `useHasPermission`, `Can`, `useStepUp`, `useReadOnly`, `useRouteTemplate`, `useBeforeAuthRedirect`, `useOnlineStatus`, `useAppUpdate`, `useSwitchWorkspace`, `useSignOut`, `useRefreshSessionContext`, `MFEErrorBoundary`, `RemoteBoundary`, `installGlobalErrorHandlers` |
 | `/testing` (dev only) | `createTestPlatform`, `mockApi`, `mockProblem`, `renderMetricInventory` |
 | `@bcbp-solutions-fzc-llc/eslint-plugin` | `configs.recommended`; rules `no-sdk-root-import`, `no-sdk-deep-import`, `no-identity-headers`, `no-raw-storage`, `no-unsafe-html`, `no-runtime-css-in-js`, `api-route-template` |
 
@@ -294,6 +294,7 @@ A remote's code that also runs inside a shell never initializes anything; it rea
 `/auth` never calls IAM directly. The shell implements two ports over the `ApiClient` ([`examples/shell/src/iam.ts`](examples/shell/src/iam.ts)), tested against the contract cases:
 - **`WorkspaceResolver`:** PUB-1 `GET /api/v1/public/tenants/resolve?identifier=` → `Workspace`. A `shared` strategy is the trial realm; a paid slug is the realm after `tenant-`; `tenant_id` becomes `tenantIdHint`. Only `{ found: false }` is "not found"; anything else that is not a resolve response (a 429, a WAF challenge page even with a 2xx) must throw, so the SDK keeps the saved workspace. The SDK asks it for a saved trial workspace before each sign-in, and for a saved paid one when Keycloak no longer serves its realm (a reverted conversion or an offboarding deletes it) or the server ended the session (`forceResolve`, for the URL's slug).
 - **`SessionContextSource`:** P-35 `GET /api/v1/me/session-context` → `SessionContext` (snake_case → camelCase, lists never null).
+- **`refreshContext`** (optional, on the `PlatformProvider` value): load P-35 again and apply it (authz subject, flags, `context`, `rememberWorkspace`); resolve `true` only when applied. Another workspace's slug or a refusal is the shell's to show (`false`); never reject. Without it a remote's `useRefreshSessionContext()` resolves `false` ([`examples/shell/src/bootstrap.tsx`](examples/shell/src/bootstrap.tsx)).
 
 ### 5. API calls
 
@@ -334,6 +335,7 @@ Gateway denials: `gatewayDenyCode(e)`.
 | `DENY_TENANT_READ_ONLY` | `useReadOnly()` |
 | `DENY_UNRESOLVABLE_SUBJECT` | "Workspace being set up" with bounded retries, never a sign-out |
 | `DENY_MEMBER_SUSPENDED` | "Access paused" (a suspended member) |
+| `DENY_ROLE_INSUFFICIENT` | Show the problem message; refresh the roles once with `useRefreshSessionContext()`, never retry the request |
 
 Details: [docs/problem-details](docs/problem-details/README.md).
 
@@ -350,7 +352,7 @@ mockApi({ 'GET /tenders/:id': Response.json(tender), 'PUT /tenders/:id': mockPro
 expect(p.logs.filter((l) => l.level === 'error')).toEqual([]);
 ```
 
-`createTestPlatform` runs the real SDK with fakes only at the edges: in-memory exporters, a signed-in identity provider, a role-map authorizer. `storage(appId)` is scoped to the test workspace, as after a real sign-in (`storageNamespace: 'anon'` tests the signed-out case, where nothing is written). Its shell provides `signOut`, so `useSignOut()` works and each call is recorded in `p.signOuts`. `p.reset()` clears records and undoes `mockApi`; a new `createTestPlatform` stops the previous one (unload listeners, logging, tracing, identity provider).
+`createTestPlatform` runs the real SDK with fakes only at the edges: in-memory exporters, a signed-in identity provider, a role-map authorizer. `storage(appId)` is scoped to the test workspace, as after a real sign-in (`storageNamespace: 'anon'` tests the signed-out case, where nothing is written). Its shell provides `signOut`, so `useSignOut()` works and each call is recorded in `p.signOuts`. `p.reset()` clears records and undoes `mockApi`; a new `createTestPlatform` stops the previous one (unload listeners, logging, tracing, identity provider). Pass `refreshContext` (what the shell resolves) to test `useRefreshSessionContext()`: each call is counted in `p.contextRefreshes`; without it the hook resolves `false`, as under an older shell.
 
 ### 11. Upgrading between alpha versions
 
@@ -646,7 +648,7 @@ test/
 
 ### Coverage
 
-`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.6% today (1647 tests in 60 files). Don't lower the threshold.
+`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.6% today (1658 tests in 60 files). Don't lower the threshold.
 
 ---
 

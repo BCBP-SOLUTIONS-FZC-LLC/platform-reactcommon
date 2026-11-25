@@ -23,7 +23,7 @@ Import a subpath (`@bcbp-solutions-fzc-llc/frontend-sdk/http`), never the root (
 | `/auth` | 4 | Identity & access | `cachedWorkspace`, `chooseWorkspace`, `createOidcProvider`, `getSession`, `IdentityProvider`, `initializeAuth`, `isWrongWorkspace`, `rememberWorkspace`, `SessionContext`, `SessionContextSource`, `SessionState`, `SessionUser`, `signInAgain`, `slugFromPath`, `Workspace`, `WorkspaceResolver` |
 | `/mfe` | 4 | Micro-frontend platform | `isChunkLoadError`, `loadManifest`, `loadRemote`, `reloadOnceForChunkError`, `RemoteDisabledError`, `RemoteLoadError`, `RemoteManifest`, `RemoteManifestEntry`, `startVersionPolling`, `subscribeAppUpdate` |
 | `/nav` | 4 | Micro-frontend platform | `isSafeRedirect`, `navigate`, `registerNavigator` |
-| `/react` | 5 | Developer surface | `Can`, `ErrorInfoView`, `installGlobalErrorHandlers`, `MFEErrorBoundary`, `PlatformProvider`, `RemoteBoundary`, `ShellContextValue`, `useApi`, `useApiClient`, `useAppUpdate`, `useBeforeAuthRedirect`, `useCurrentUser`, `useFeatureFlag`, `useHasPermission`, `useLocale`, `useOnlineStatus`, `useReadOnly`, `useRouteTemplate`, `useSession`, `useSessionContext`, `useSignOut`, `useStepUp`, `useSwitchWorkspace`, `useT`, `useWorkspace` |
+| `/react` | 5 | Developer surface | `Can`, `ErrorInfoView`, `installGlobalErrorHandlers`, `MFEErrorBoundary`, `PlatformProvider`, `RemoteBoundary`, `ShellContextValue`, `useApi`, `useApiClient`, `useAppUpdate`, `useBeforeAuthRedirect`, `useCurrentUser`, `useFeatureFlag`, `useHasPermission`, `useLocale`, `useOnlineStatus`, `useReadOnly`, `useRefreshSessionContext`, `useRouteTemplate`, `useSession`, `useSessionContext`, `useSignOut`, `useStepUp`, `useSwitchWorkspace`, `useT`, `useWorkspace` |
 | `/testing` | 5 | Developer surface | `createTestPlatform`, `LogRecord`, `mockApi`, `mockProblem`, `renderMetricInventory`, `SpanRecord` |
 
 ### Behaviour worth knowing before changing a call site
@@ -37,7 +37,8 @@ Import a subpath (`@bcbp-solutions-fzc-llc/frontend-sdk/http`), never the root (
 - **`initializeMetrics`**: sends the interval by `sendBeacon` when the page is hidden or closing; Tier 1 `platform_web_*` names are recorded through the instrument port and stay no-ops until ratified (`startWebVitals` records nothing yet). `getServiceMeter` (Tier 3): at most 8 labels besides `domain`, `service`, `environment`.
 - **`sanitizeHtml`**: DOMPurify after a linear pre-pass that drops handler/style attributes and `<style>` (no CSP reports); returns `TrustedHTML` where Trusted Types exist.
 - **`loadManifest`**: drops an entry without `integrity` outside local, dev and test.
-- **`createTestPlatform()`** (`/testing`): a real SDK runtime with in-memory logs and spans, a signed-in session (`storage()` scoped to its workspace; `storageNamespace: 'anon'` for signed out), permissions and flags, a shell `signOut` recorded in `signOuts`; a new one stops the previous one; `mockApi`, `mockProblem`, `renderMetricInventory`.
+- **`useRefreshSessionContext()`** (`/react`): shared page-wide (calls in the same tick → one call; a call while one runs → one more after it); never rejects; `false` under a shell without `refreshContext`; refresh once, never loop on the denied request.
+- **`createTestPlatform()`** (`/testing`): a real SDK runtime with in-memory logs and spans, a signed-in session (`storage()` scoped to its workspace; `storageNamespace: 'anon'` for signed out), permissions and flags, a shell `signOut` recorded in `signOuts`; a new one stops the previous one; `mockApi`, `mockProblem`, `renderMetricInventory`; an optional shell `refreshContext` is counted in `contextRefreshes`.
 
 ## `@bcbp-solutions-fzc-llc/webpack-preset`
 

@@ -365,6 +365,48 @@ describe('the reference shell', () => {
     expect(page.url.pathname).toBe('/t/acme/tenders/1/edit');
   });
 
+  it("a 403 DENY_ROLE_INSUFFICIENT makes the remote refresh the session context once: the form follows the user's new roles (web-shell's refresh ask)", async () => {
+    await load('/t/acme/tenders/1/edit');
+    await until(() => page.assigned.length > 0);
+    await approveLogin();
+    await until(() => $<HTMLInputElement>('input[name=title]') !== null);
+    expect($<HTMLInputElement>('input[name=title]')!.disabled).toBe(false); // preparator
+    const loads = net.sent('/api/v1/me/session-context').length;
+
+    // An admin took the preparator role away; the gateway refuses the save.
+    net.on('GET /api/v1/me/session-context', { tenant_id: TENANT, slug: 'acme', roles: ['member'], feature_flags: [], read_only: false });
+    net.on('PUT /api/tenders/:id', () => mockProblem(PlatformProblemTypes.Forbidden, { errorCode: 'DENY_ROLE_INSUFFICIENT' }));
+    await user(() => $<HTMLButtonElement>('button[type=submit]')!.click());
+    await until(() => $<HTMLInputElement>('input[name=title]')?.disabled === true);
+    expect($('button[type=submit]')).toBeNull();
+    expect(net.sent('/api/v1/me/session-context')).toHaveLength(loads + 1); // once, not a loop
+    expect(net.sent('/api/tenders/1').filter((r) => r.method === 'PUT')).toHaveLength(1);
+    expect(page.url.pathname).toBe('/t/acme/tenders/1/edit');
+  });
+
+  it('a refresh that fails keeps the old context (no deny-all); one that answers for another workspace shows the wrong-workspace dialog and unmounts the app', async () => {
+    await load('/t/acme/tenders/1/edit');
+    await until(() => page.assigned.length > 0);
+    await approveLogin();
+    await until(() => $<HTMLInputElement>('input[name=title]') !== null);
+    net.on('PUT /api/tenders/:id', () => mockProblem(PlatformProblemTypes.Forbidden, { errorCode: 'DENY_ROLE_INSUFFICIENT' }));
+
+    net.on('GET /api/v1/me/session-context', () => mockProblem(PlatformProblemTypes.ServiceUnavailable));
+    const loads = net.sent('/api/v1/me/session-context').length;
+    await user(() => $<HTMLButtonElement>('button[type=submit]')!.click());
+    await until(() => net.sent('/api/v1/me/session-context').length > loads);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(30_000))); // the ApiClient's own retries
+    await flush();
+    expect($<HTMLInputElement>('input[name=title]')!.disabled).toBe(false); // still preparator, not deny-all
+    expect($('#wrong-title')).toBeNull();
+
+    net.on('GET /api/v1/me/session-context', { tenant_id: TENANT, slug: 'globex', roles: ['tenant_admin'], feature_flags: [], read_only: false });
+    await user(() => $<HTMLButtonElement>('button[type=submit]')!.click());
+    await until(() => $('#wrong-title') !== null);
+    expect($('form')).toBeNull();
+    expect(JSON.parse(page.local.getItem(WORKSPACE_CACHE_KEY)!)).not.toContainEqual(expect.objectContaining({ slug: 'globex' }));
+  });
+
   it('the session context retries are bounded: 3 more tries, then the page stays deny-all', async () => {
     net.on('GET /api/v1/me/session-context', () => mockProblem(PlatformProblemTypes.ServiceUnavailable));
     await load('/t/acme/tenders/1/edit');

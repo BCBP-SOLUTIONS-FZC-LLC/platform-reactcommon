@@ -7,7 +7,7 @@ import { hasPermission } from '../authz/index.ts';
 import { getFlag, type FlagValue } from '../flags/index.ts';
 import { createApiClient, type ApiClient, type RouteTemplate } from '../http/index.ts';
 import { t } from '../i18n/index.ts';
-import { setRouteTemplate } from '../logging/index.ts';
+import { getLogger, setRouteTemplate } from '../logging/index.ts';
 import { subscribeAppUpdate } from '../mfe/index.ts';
 import { AbortedError, NetworkError, TimeoutError, isProblemError, type ApiError } from '../problem/index.ts';
 import { subscribeRuntime } from '../internal/events.ts';
@@ -143,6 +143,104 @@ export function useSignOut(): (o?: { global?: boolean }) => Promise<void> {
     },
     [shell],
   );
+}
+
+/** A refresh of the session context: started (or about to start, within the tick it was asked for) or queued. */
+interface RefreshRun {
+  readonly promise: Promise<boolean>;
+  readonly settle: (applied: boolean) => void;
+  /** The shell's callback, from the latest call that joined the run. */
+  call: () => Promise<boolean>;
+  started: boolean;
+}
+
+/** Page-wide, in the runtime: every remote shares the shell's refresh. */
+interface ContextRefreshState {
+  run?: RefreshRun | undefined;
+  next?: RefreshRun | undefined;
+}
+
+function refreshState(): ContextRefreshState {
+  const rt = getRuntime();
+  rt.contextRefresh ??= {};
+  return rt.contextRefresh as ContextRefreshState;
+}
+
+function newRun(call: () => Promise<boolean>): RefreshRun {
+  let settle!: (applied: boolean) => void;
+  const promise = new Promise<boolean>((resolve) => (settle = resolve));
+  return { promise, settle, call, started: false };
+}
+
+function startRun(s: ContextRefreshState, run: RefreshRun): void {
+  run.started = true;
+  let pending: Promise<boolean>;
+  try {
+    pending = Promise.resolve(run.call());
+  } catch (e) {
+    pending = Promise.reject(e);
+  }
+  void pending.then(
+    (applied) => applied === true,
+    (e: unknown) => {
+      getLogger().warn('session context refresh failed', { error: e });
+      return false;
+    },
+  ).then((applied) => {
+    // The queued run starts before this one's callers continue, so a call they make next queues after it.
+    s.run = s.next;
+    s.next = undefined;
+    if (s.run) startRun(s, s.run);
+    run.settle(applied);
+  });
+}
+
+/**
+ * Calls in the same tick share one refresh. A call made while one is in flight waits for one refresh that
+ * starts after it, shared by every call made meanwhile: the running one may have read P-35 before the change
+ * the caller wants to see (its own role change, P-28).
+ */
+function requestRefresh(call: () => Promise<boolean>): Promise<boolean> {
+  const s = refreshState();
+  if (s.run && !s.run.started) {
+    s.run.call = call;
+    return s.run.promise;
+  }
+  if (s.run) {
+    if (s.next) s.next.call = call;
+    else s.next = newRun(call);
+    return s.next.promise;
+  }
+  const run = newRun(call);
+  s.run = run;
+  queueMicrotask(() => startRun(s, run));
+  return run.promise;
+}
+
+/**
+ * Asks the shell to reload the session context (roles, departments, plan, flags: IAM P-35), e.g. after the
+ * user changed their own roles or after a 403 DENY_ROLE_INSUFFICIENT. The function keeps its identity across
+ * renders. Calls share refreshes page-wide (calls in the same tick share one; a call made while one is in
+ * flight gets the next). It never rejects:
+ *
+ * - true: the shell applied a new context; hooks reading it re-render.
+ * - false: nothing was applied. The shell has no refreshContext (an older shell, a standalone remote), the
+ *   load failed and the old context stays, or the shell took over the page (a refusal, another workspace, a
+ *   sign-out), which it handles itself.
+ *
+ * Refresh once and re-render; never retry the request that was refused in a loop. A UI hint correction
+ * only: the gateway still decides every request.
+ */
+export function useRefreshSessionContext(): () => Promise<boolean> {
+  const shell = useShell();
+  const latest = useRef(shell);
+  latest.current = shell;
+  return useCallback(() => {
+    const s = latest.current;
+    const refresh = s?.refreshContext;
+    if (!refresh) return Promise.resolve(false);
+    return requestRefresh(() => refresh.call(s));
+  }, []);
 }
 
 export function useSwitchWorkspace(): (identifierOrSlug: string) => Promise<void> {
