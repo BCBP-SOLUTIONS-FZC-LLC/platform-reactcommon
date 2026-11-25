@@ -360,7 +360,7 @@ A remote asks the shell to reload the session context (IAM P-35) through `ShellC
 | Identity | The function is stable across renders and shell values; the shell is read through a ref when called |
 | Shell contract | `refreshContext` must settle (bound its load): later calls queue behind it |
 | Re-render | Through the provider's new `context` and the authz and flag topics the shell's apply emits; the SDK adds no topic |
-| Reference shell | `examples/shell/src/bootstrap.tsx`: same workspace → set and apply, `true`; another workspace's slug → unmount, the wrong-workspace dialog, `false`; any failure (refusals included: it has no refusal screens) → the old context, `false`; after a sign-out → `false`. A refresh that applied a context ends the background P-35 retry, whose answer may predate it. The tenders remote refreshes once on `DENY_ROLE_INSUFFICIENT` |
+| Reference shell | `examples/shell/src/bootstrap.tsx`: same workspace → set and apply, `true`; another tenant (`tenantId`; a new slug for the same tenant is applied) → unmount, the wrong-workspace dialog, `false`; any failure (refusals included: it has no refusal screens) → the old context, `false`; after a sign-out → `false`. Loads are numbered when they start: an answer is dropped once a later-started load was applied (a refresh and the background retry overlap), and an applied refresh ends the retry. The tenders remote refreshes once on `DENY_ROLE_INSUFFICIENT` |
 
 ---
 

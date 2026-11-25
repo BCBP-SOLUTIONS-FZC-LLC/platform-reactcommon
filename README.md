@@ -294,7 +294,7 @@ A remote's code that also runs inside a shell never initializes anything; it rea
 `/auth` never calls IAM directly. The shell implements two ports over the `ApiClient` ([`examples/shell/src/iam.ts`](examples/shell/src/iam.ts)), tested against the contract cases:
 - **`WorkspaceResolver`:** PUB-1 `GET /api/v1/public/tenants/resolve?identifier=` → `Workspace`. A `shared` strategy is the trial realm; a paid slug is the realm after `tenant-`; `tenant_id` becomes `tenantIdHint`. Only `{ found: false }` is "not found"; anything else that is not a resolve response (a 429, a WAF challenge page even with a 2xx) must throw, so the SDK keeps the saved workspace. The SDK asks it for a saved trial workspace before each sign-in, and for a saved paid one when Keycloak no longer serves its realm (a reverted conversion or an offboarding deletes it) or the server ended the session (`forceResolve`, for the URL's slug).
 - **`SessionContextSource`:** P-35 `GET /api/v1/me/session-context` → `SessionContext` (snake_case → camelCase, lists never null).
-- **`refreshContext`** (optional, on the `PlatformProvider` value): load P-35 again and apply it (authz subject, flags, `context`, `rememberWorkspace`); resolve `true` only when applied. Another workspace's slug or a refusal is the shell's to show (`false`); never reject. Without it a remote's `useRefreshSessionContext()` resolves `false` ([`examples/shell/src/bootstrap.tsx`](examples/shell/src/bootstrap.tsx)).
+- **`refreshContext`** (optional, on the `PlatformProvider` value): load P-35 again and apply it (authz subject, flags, `context`, `rememberWorkspace`); resolve `true` only when applied. Another tenant's context or a refusal is the shell's to show (`false`); never reject. Without it a remote's `useRefreshSessionContext()` resolves `false` ([`examples/shell/src/bootstrap.tsx`](examples/shell/src/bootstrap.tsx)).
 
 ### 5. API calls
 
@@ -648,7 +648,7 @@ test/
 
 ### Coverage
 
-`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.6% today (1658 tests in 60 files). Don't lower the threshold.
+`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.6% today (1659 tests in 60 files). Don't lower the threshold.
 
 ---
 

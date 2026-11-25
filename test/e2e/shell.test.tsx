@@ -20,7 +20,7 @@ import { getSession } from '../../packages/frontend-sdk/src/auth/index.ts';
 import { SIGNED_OUT_KEY } from '../../packages/frontend-sdk/src/auth/oidc.ts';
 import { getIdentity } from '../../packages/frontend-sdk/src/core/index.ts';
 import { RuntimeConfigError, tryGetConfig } from '../../packages/frontend-sdk/src/config/index.ts';
-import { resetRuntimeForTests } from '../../packages/frontend-sdk/src/internal/runtime.ts';
+import { getRuntime, resetRuntimeForTests } from '../../packages/frontend-sdk/src/internal/runtime.ts';
 import { PlatformProblemTypes } from '../../packages/frontend-sdk/src/problem/index.ts';
 import { resetContainersForTests, setMfeInternalsForTests } from '../../packages/frontend-sdk/src/mfe/remote.ts';
 import { storage } from '../../packages/frontend-sdk/src/storage/index.ts';
@@ -394,17 +394,28 @@ describe('the reference shell', () => {
     net.on('GET /api/v1/me/session-context', () => mockProblem(PlatformProblemTypes.ServiceUnavailable));
     const loads = net.sent('/api/v1/me/session-context').length;
     await user(() => $<HTMLButtonElement>('button[type=submit]')!.click());
-    await until(() => net.sent('/api/v1/me/session-context').length > loads);
-    await act(async () => void (await vi.advanceTimersByTimeAsync(30_000))); // the ApiClient's own retries
-    await flush();
+    // Until the refresh (with the ApiClient's own retries) has settled: the SDK then holds no refresh in flight.
+    await until(() => net.sent('/api/v1/me/session-context').length > loads && !(getRuntime().contextRefresh as { run?: unknown } | undefined)?.run);
     expect($<HTMLInputElement>('input[name=title]')!.disabled).toBe(false); // still preparator, not deny-all
     expect($('#wrong-title')).toBeNull();
 
-    net.on('GET /api/v1/me/session-context', { tenant_id: TENANT, slug: 'globex', roles: ['tenant_admin'], feature_flags: [], read_only: false });
+    net.on('GET /api/v1/me/session-context', { tenant_id: '0b7c9a1e-5d3f-4e2a-9c8b-7a6f5e4d3c2b', slug: 'globex', roles: ['tenant_admin'], feature_flags: [], read_only: false });
     await user(() => $<HTMLButtonElement>('button[type=submit]')!.click());
     await until(() => $('#wrong-title') !== null);
     expect($('form')).toBeNull();
     expect(JSON.parse(page.local.getItem(WORKSPACE_CACHE_KEY)!)).not.toContainEqual(expect.objectContaining({ slug: 'globex' }));
+  });
+
+  it('a refresh that answers another slug for the same tenant (a renamed workspace) applies it: no wrong-workspace dialog (code review)', async () => {
+    await load('/t/acme/tenders/1/edit');
+    await until(() => page.assigned.length > 0);
+    await approveLogin();
+    await until(() => $<HTMLInputElement>('input[name=title]') !== null);
+    net.on('PUT /api/tenders/:id', () => mockProblem(PlatformProblemTypes.Forbidden, { errorCode: 'DENY_ROLE_INSUFFICIENT' }));
+    net.on('GET /api/v1/me/session-context', { tenant_id: TENANT, slug: 'acme-group', roles: ['member'], feature_flags: [], read_only: false });
+    await user(() => $<HTMLButtonElement>('button[type=submit]')!.click());
+    await until(() => $<HTMLInputElement>('input[name=title]')?.disabled === true); // applied: the new roles
+    expect($('#wrong-title')).toBeNull();
   });
 
   it('the session context retries are bounded: 3 more tries, then the page stays deny-all', async () => {
