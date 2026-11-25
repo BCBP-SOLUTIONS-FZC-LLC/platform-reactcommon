@@ -781,7 +781,7 @@ See ARCHITECTURE.md § Testing strategy. Key guarantees under test:
 - the tarballs install and typecheck in an empty project;
 - in real engines (`test/browser`): the keepalive budget on tab close, page-lifecycle order, SRI on lazy chunks, Trusted Types;
 - the reference Collector in its image (`test/collector`, CI job `collector`): streams routed to one aggregator, totals correct across device clocks, allowlists;
-- the integrated deployment (`test/stack`, Docker): Keycloak, Envoy with the real IAM services, the distribution on floci, the two-tier Collector, in three engines. It runs nightly in CI (`stack-nightly.yml`, pinned backend commits or default branches on dispatch; a failing scheduled run opens an issue); results in `docs/e2e/integrated-deployment-report.md`.
+- the integrated deployment (`test/stack`, Docker): Keycloak, Envoy with the real IAM services, the distribution on floci, the two-tier Collector, in three engines. It runs in CI nightly and on PRs that change the backend pins, the stack's config or `test/stack` (`stack-nightly.yml`, pinned backend commits or default branches on dispatch; not a required check; a failing scheduled run opens an issue); results in `docs/e2e/integrated-deployment-report.md`.
 
 ---
 

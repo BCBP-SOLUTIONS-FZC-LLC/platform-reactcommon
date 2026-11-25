@@ -813,7 +813,7 @@ Seven workflow files and one shared setup action. Shell logic lives in `.github/
 - **`validate-contracts.yml`** (reusable): checks out the seven backend repos at their pins, then runs `contracts:check` and `metrics:parity`.
 - **`changelog-check.yml`:** a PR that changes a published package must add a `.changeset/*.md` and update `CHANGELOG.md`. A release PR (which consumes changesets: deletes them, or in pre mode moves them into `.changeset/pre/`) passes with the `CHANGELOG.md` change alone.
 - **`release.yml`** (`v*` tags or manual): `verify`, then the `ci.yml` gates at the tag, then `npm-publish` (GitHub Packages, gated), then `publish` (GitHub Release).
-- **`stack-nightly.yml`** (01:30 UTC, or dispatch with `upstream: pinned|main`): the integrated stack (`test/stack`) against the backends checked out at their pins; a failing scheduled run opens or comments on one issue.
+- **`stack-nightly.yml`** (01:30 UTC, dispatch with `upstream: pinned|main`, and PRs that change `contracts/sources.json`, the stack's config (`docker-compose.yml`, `docker/`, the CloudFront and Collector examples) or `test/stack`; not a required check): the integrated stack (`test/stack`) against the backends checked out at their pins; a failing scheduled run opens or comments on one issue.
 
 **Secrets:** the org secrets `CI_REPO_READ_TOKEN` (private checkouts; `PLATFORM_REPOS_TOKEN` overrides it if set) and `GO_PRIVATE_TOKEN` (interop, and the nightly's IAM image builds as a BuildKit secret), as platform-gincommon and the IAM services use them.
 
