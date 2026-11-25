@@ -12,6 +12,10 @@ How this file is organised:
 
 ## [Unreleased]
 
+### Fixed (2026-11-25 — PUB-1 challenge pages)
+
+- **Reference shell: a PUB-1 answer that is not a resolve response fails the call** (`examples/shell/src/iam.ts`). A WAF challenge page sent with a 2xx (AWS WAF's Challenge answers 202 with HTML), an empty body, or JSON without a boolean `found` now throws, so the SDK keeps the saved workspace; only `{ found: false }` is "not found" (*Previously:* such an answer was read as "not found", which dropped the saved entry and showed the identifier screen). `/auth`'s `WorkspaceResolver` documentation states the rule for every shell's resolver. Tests: `examples/shell/test/iam.test.ts` ("answers that are not PUB-1 answers fail"). IAM confirmed (2026-11-25) that PUB-1 has no CAPTCHA, only 20 requests per IP per hour (429); the planned WAF CAPTCHA (PUBRES-3) is to apply to no-match answers only, pending infra and O&M LLD OQ-10.
+
 ### Fixed (2026-11-25 — nightly stack: interop pin)
 
 - **platform-interop-tests is pinned at `194da88`** (#11) in `packages/frontend-sdk/contracts/sources.json` (*Previously:* `93e3481`, #9). The nightly stack builds go-probe from the pin, and the stack test's identity-header check (`test/stack/e2e.spec.ts`, which forges `x-auth-time` since `1.0.0-alpha.7`) needs #10, whose `/echo` reports `x-auth-time`; at `93e3481` it failed in every browser. #11 also brings the Cross-language job's Postgres wait over TCP. No generated contract changes. `VERSIONING.md`'s pin table and `.claude/skills/ci-triage/known-causes.md` updated.

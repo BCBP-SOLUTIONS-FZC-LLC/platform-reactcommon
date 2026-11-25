@@ -493,7 +493,7 @@ See §5.4.1. One logical call is one span (`HTTP <METHOD>`, attributes `http.req
 ### 8.2 Workspace choice (before login)
 The rules, in order:
 1. **The URL has a slug** (`/t/<slug>/…`): use the cached workspace for that slug when it is **paid**. Otherwise (no entry, or a trial entry) call PUB-1 `resolve(slug)`, and accept the result only if the realm fits the slug, then cache it. A trial entry is never trusted: a trial → paid conversion moves the tenant and every user to `tenant-<slug>`, and the `trial` realm's sign-in page can then only refuse them (web-shell ask 1, 2026-11-24). It costs one PUB-1 call before a trial sign-in.
-2. **PUB-1 fails** (unreachable or rate-limited): use the cached entry if there is one.
+2. **PUB-1 fails** (unreachable, rate-limited with a 429, or an answer that is not a resolve response, such as a WAF challenge page, which the shell's resolver throws on even with a 2xx): use the cached entry if there is one.
 3. **PUB-1 answers "not found":** return `undefined`, which means the identifier-first screen, and drop the cached entry for that slug while it still names the realm that was checked. A different cached workspace is never used.
 4. **The URL has no slug:** use the most recently cached workspace, re-checked as in rule 1 when it is trial; if PUB-1 no longer knows it, it is dropped and the next cached one is used.
    A re-check of a cached entry waits at most 5 s (`RECHECK_TIMEOUT_MS`), then uses the cached entry; an answer arriving later does not change the cache, and a caller's abort settles it at once. Every trial sign-in costs one PUB-1 call (rate-limited per IP); the answer is not reused, so its `tenantIdHint` is always there for `isWrongWorkspace`.
