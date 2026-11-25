@@ -12,6 +12,10 @@ How this file is organised:
 
 ## [Unreleased]
 
+## [1.0.0-alpha.8] - 2026-11-25
+
+Not breaking. A shell's `WorkspaceResolver` must now throw on anything that is not a PUB-1 resolve response, a WAF challenge page included, so the saved workspace is kept (below; the reference shell does). Two contract pins move with no generated changes.
+
 ### Fixed (2026-11-25 — PUB-1 challenge pages)
 
 - **Reference shell: a PUB-1 answer that is not a resolve response fails the call** (`examples/shell/src/iam.ts`). A WAF challenge page sent with a 2xx (AWS WAF's Challenge answers 202 with HTML), an empty body, or JSON without a boolean `found` now throws, so the SDK keeps the saved workspace; only `{ found: false }` is "not found" (*Previously:* such an answer was read as "not found", which dropped the saved entry and showed the identifier screen). `/auth`'s `WorkspaceResolver` documentation states the rule for every shell's resolver. Tests: `examples/shell/test/iam.test.ts` ("answers that are not PUB-1 answers fail"). IAM confirmed (2026-11-25) that PUB-1 has no CAPTCHA, only 20 requests per IP per hour (429); the planned WAF CAPTCHA (PUBRES-3) is to apply to no-match answers only, pending infra and O&M LLD OQ-10.
@@ -402,7 +406,8 @@ Fixed before the first release, after a security and production-readiness review
 - `/i18n`: a namespace registered during a locale change loads the new locale; `/logging`: `Map` and `Set` keep their contents.
 - `@bcbp-solutions-fzc-llc/eslint-plugin`: `no-identity-headers` sees computed `['headers']`; the import rules see template-literal `require` / `import()`.
 
-[Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.7...HEAD
+[Unreleased]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.8...HEAD
+[1.0.0-alpha.8]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.7...v1.0.0-alpha.8
 [1.0.0-alpha.7]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.6...v1.0.0-alpha.7
 [1.0.0-alpha.6]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.5...v1.0.0-alpha.6
 [1.0.0-alpha.5]: https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon/compare/v1.0.0-alpha.4...v1.0.0-alpha.5
