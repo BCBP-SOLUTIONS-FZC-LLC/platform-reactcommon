@@ -8,7 +8,7 @@ The platform's shared **frontend SDK for React micro-frontends**: the browser-si
 It is also the browser's side of IAM: Keycloak sign-in with tokens kept in memory only, workspace (realm) choice, session restore, step-up MFA.
 
 **Repository:** `github.com/BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon`
-**Packages:** `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin`. pnpm monorepo, Node ≥ 22, TypeScript 6, ESM only, React 19. One version for all three (`1.0.0-alpha.N` until the first environment); the latest release is **`v1.0.0-alpha.9`** (2026-11-25; `alpha.1` was the first, 2026-11-03), on GitHub Packages; see [CHANGELOG.md](CHANGELOG.md). **Never deployed**: consumers install the packages; `examples/` holds a reference shell and remote that are built and checked in CI, never run in production.
+**Packages:** `@bcbp-solutions-fzc-llc/frontend-sdk` · `@bcbp-solutions-fzc-llc/webpack-preset` · `@bcbp-solutions-fzc-llc/eslint-plugin`. pnpm monorepo, Node ≥ 22, TypeScript 6, ESM only, React 19. One version for all three (`1.0.0-alpha.N` until the first environment); the latest release is **`v1.0.0-alpha.10`** (2026-11-25; `alpha.1` was the first, 2026-11-03), on GitHub Packages; see [CHANGELOG.md](CHANGELOG.md). **Never deployed**: consumers install the packages; `examples/` holds a reference shell and remote that are built and checked in CI, never run in production.
 **Design:**
 - **Decisions:** [`docs/design/frontend-sdk-design.md`](docs/design/frontend-sdk-design.md) is the decision record, including the public API per subpath.
 - **Implementation:** [ARCHITECTURE.md](ARCHITECTURE.md) and the [LLD](docs/lld/platform-reactcommon-lld.md) describe what's built.
@@ -384,6 +384,8 @@ During `1.0.0-alpha.N`, a breaking change bumps `N`. Each one is listed in [CHAN
 **`alpha.7` → `alpha.8`**: no breaking changes. Make the shell's `WorkspaceResolver` throw on anything that is not a PUB-1 resolve response (a WAF challenge page, even with a 2xx) and return `undefined` only for `{ found: false }` (`examples/shell/src/iam.ts`).
 
 **`alpha.8` → `alpha.9`**: no breaking changes. The SDK probes a saved paid realm on Keycloak before redirecting to it (CSP `connect-src` already allows the IdP); a shell may pass `signInAgain({ prompt })`.
+
+**`alpha.9` → `alpha.10`**: no breaking changes. A shell may provide `refreshContext` on its `PlatformProvider` value (remotes' `useRefreshSessionContext()` resolves `false` without it) and should route `navigate()` by the path, not by `appId`; remotes may use `<Writable>` inside `<Can>`. The shell upgrades first.
 
 `1.0.0` is cut with the first environment, and SemVer is strict from then on.
 
@@ -787,7 +789,7 @@ SemVer over the public API ([VERSIONING.md](VERSIONING.md): what counts as publi
 
 | Version | Status | Notes |
 |---|---|---|
-| `1.0.0-alpha.N` | Current line; **`1.0.0-alpha.9`** released 2026-11-25 (`alpha.1` and `alpha.2` 2026-11-03, `alpha.3` 2026-11-04, `alpha.4` to `alpha.6` 2026-11-05, `alpha.7` 2026-11-24, `alpha.8` 2026-11-25) | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`). `alpha.2` added the preset's Rspack and Rsbuild entry points; `alpha.3` fixed `createTestPlatform`'s storage; `alpha.4` has breaking changes (container global, `/storage` keys, the CSP `form-action` for the sign-out POST, Tier 3 label limit, stricter lint rules): the shell and every remote upgrade together; `alpha.5` added the optional `auth.signInUrl` and `alpha.6` the optional `environment` (both not breaking; shell first); `alpha.7` is breaking (`x-auth-time` forbidden, `GATEWAY_DENY_CODES` order and `DENY_MEMBER_SUSPENDED`, `login-required` without a workspace; shell first); `alpha.8` (PUB-1 non-answers fail the resolver) and `alpha.9` (a deleted paid realm re-checked, `signInAgain({ prompt })`) are not breaking |
+| `1.0.0-alpha.N` | Current line; **`1.0.0-alpha.10`** released 2026-11-25 (`alpha.1` and `alpha.2` 2026-11-03, `alpha.3` 2026-11-04, `alpha.4` to `alpha.6` 2026-11-05, `alpha.7` 2026-11-24, `alpha.8` and `alpha.9` 2026-11-25) | Pre-release while nothing is deployed; a breaking change bumps `N`; remotes require the SDK they were built against (`^<version>`). `alpha.2` added the preset's Rspack and Rsbuild entry points; `alpha.3` fixed `createTestPlatform`'s storage; `alpha.4` has breaking changes (container global, `/storage` keys, the CSP `form-action` for the sign-out POST, Tier 3 label limit, stricter lint rules): the shell and every remote upgrade together; `alpha.5` added the optional `auth.signInUrl` and `alpha.6` the optional `environment` (both not breaking; shell first); `alpha.7` is breaking (`x-auth-time` forbidden, `GATEWAY_DENY_CODES` order and `DENY_MEMBER_SUSPENDED`, `login-required` without a workspace; shell first); `alpha.8` (PUB-1 non-answers fail the resolver) and `alpha.9` (a deleted paid realm re-checked, `signInAgain({ prompt })`) are not breaking |
 | `1.0.0` | Cut with the first end-to-end environment | Strict SemVer from then on |
 
 ### Cutting a release
@@ -804,7 +806,7 @@ In changesets v3's pre mode, `version-packages` moves the consumed changesets in
 **Verifying a release** (needs [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) ≥ 2.4):
 
 ```bash
-TAG=v1.0.0-alpha.9
+TAG=v1.0.0-alpha.10
 REPO=BCBP-SOLUTIONS-FZC-LLC/platform-reactcommon
 IDENTITY="^https://github\.com/${REPO}/\.github/workflows/release\.yml@refs/(tags/${TAG}|heads/main)$"
 gh release download "$TAG" -R "$REPO" -p checksums.txt -p checksums.txt.sigstore.json -p 'bcbp-solutions-fzc-llc-*.tgz'
