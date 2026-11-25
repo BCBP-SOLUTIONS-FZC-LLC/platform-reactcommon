@@ -17,6 +17,7 @@ export function createTestPlatform(o?: Partial<TestPlatformOptions>): {
     signOuts: {
         global?: boolean;
     }[];
+    readonly contextRefreshes: number;
     reset(): void;
 };
 

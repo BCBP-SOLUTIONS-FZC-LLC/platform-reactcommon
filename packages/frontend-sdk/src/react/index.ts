@@ -17,6 +17,7 @@ export {
   useLocale,
   useOnlineStatus,
   useReadOnly,
+  useRefreshSessionContext,
   useRouteTemplate,
   useSession,
   useSessionContext,

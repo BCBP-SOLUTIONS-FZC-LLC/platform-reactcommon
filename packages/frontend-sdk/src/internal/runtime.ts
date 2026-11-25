@@ -74,6 +74,8 @@ export interface PlatformRuntime {
   readOnlyDenied: boolean;
   /** The page's pagehide senders and their shared keepalive budget (src/internal/unload.ts). */
   unload: unknown;
+  /** The session-context refresh in flight and the one queued after it (/react owns the type). */
+  contextRefresh?: unknown;
 }
 
 export const RUNTIME_KEY = Symbol.for('@bcbp-solutions-fzc-llc/frontend-sdk');

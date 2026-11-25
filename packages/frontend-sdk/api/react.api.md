@@ -57,6 +57,7 @@ export interface ShellContextValue {
     context?: SessionContext | undefined;
     // (undocumented)
     locale: string;
+    refreshContext?: (() => Promise<boolean>) | undefined;
     signOut?: ((o?: {
         global?: boolean;
     }) => Promise<void>) | undefined;
@@ -107,6 +108,9 @@ export function useOnlineStatus(): boolean;
 
 // @public
 export function useReadOnly(): boolean;
+
+// @public
+export function useRefreshSessionContext(): () => Promise<boolean>;
 
 // @public
 export function useRouteTemplate(template: RouteTemplate): void;

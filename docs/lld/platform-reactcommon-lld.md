@@ -25,6 +25,7 @@
 | 1.7 | 2026-11-06 | Aligned with `main` plus the runtime-environment branch: open items for the deploy-time `environment` check, the cold-start P-35 503 (integrated report Issue 12, reopened) and the measured bundle size (§15); API reports written with LF (§14.1) |
 | 1.8 | 2026-11-06 | `1.0.0-alpha.6` released (tag `v1.0.0-alpha.6`, PRs #54, #55): version line, §14.1, §14.2 |
 | 1.9 | 2026-11-25 | `1.0.0-alpha.7` (2026-11-24, PR #60, breaking), `1.0.0-alpha.8` (PRs #62–#64) and `1.0.0-alpha.9` (PR #67) released: version line, §14.1, §14.2 |
+| 1.10 | 2026-11-25 | `[Unreleased]`: `useRefreshSessionContext` and `ShellContextValue.refreshContext` (§5.3, §5.4.5, §6.1 `contextRefresh`), `createTestPlatform`'s `refreshContext` option (§11.3), its log event (§11.1) |
 
 ### Table of Contents
 
@@ -291,8 +292,8 @@ The TypeScript constants (`src/internal/generated/*.ts`, one module per contract
 | `/auth` | `createOidcProvider` · `initializeAuth` · `getSession` · `chooseWorkspace` · `cachedWorkspace` · `rememberWorkspace` · `slugFromPath` · `isWrongWorkspace` · `signInAgain` · types `IdentityProvider`, `SessionState`, `SessionUser`, `Workspace`, `SessionContext`, `WorkspaceResolver`, `SessionContextSource` |
 | `/mfe` | `loadManifest` · `loadRemote` · `isChunkLoadError` · `reloadOnceForChunkError` · `startVersionPolling` · `subscribeAppUpdate` · `RemoteDisabledError` · `RemoteLoadError` · types `RemoteManifest`, `RemoteManifestEntry` |
 | `/nav` | `navigate(appId, path)` · `registerNavigator` · `isSafeRedirect` |
-| `/react` | `PlatformProvider` · `useSession` · `useCurrentUser` · `useWorkspace` · `useSessionContext` · `useBeforeAuthRedirect` · `useReadOnly` · `useStepUp` · `useLocale` · `useSwitchWorkspace` · `useFeatureFlag` · `useHasPermission` · `Can` · `useApi` · `useApiClient` · `useRouteTemplate` · `useOnlineStatus` · `useAppUpdate` · `useSignOut` · `useT` · `MFEErrorBoundary` · `RemoteBoundary` · `installGlobalErrorHandlers` · types `ShellContextValue`, `ErrorInfoView` |
-| `/testing` | `createTestPlatform` (`signOuts`, `reset`) · `mockApi` · `mockProblem` · `renderMetricInventory` · types `LogRecord`, `SpanRecord` |
+| `/react` | `PlatformProvider` · `useSession` · `useCurrentUser` · `useWorkspace` · `useSessionContext` · `useBeforeAuthRedirect` · `useReadOnly` · `useStepUp` · `useLocale` · `useSwitchWorkspace` · `useRefreshSessionContext` · `useFeatureFlag` · `useHasPermission` · `Can` · `useApi` · `useApiClient` · `useRouteTemplate` · `useOnlineStatus` · `useAppUpdate` · `useSignOut` · `useT` · `MFEErrorBoundary` · `RemoteBoundary` · `installGlobalErrorHandlers` · types `ShellContextValue`, `ErrorInfoView` |
+| `/testing` | `createTestPlatform` (`signOuts`, `contextRefreshes`, `reset`) · `mockApi` · `mockProblem` · `renderMetricInventory` · types `LogRecord`, `SpanRecord` |
 
 ### 5.4 Key behaviour specifications
 
@@ -347,6 +348,20 @@ Any failure is a `RemoteLoadError` carrying the cause. One span `remote load` an
 - **`RemoteBoundary`** creates a new lazy component per retry, because React caches a rejected lazy forever.
 - An error thrown in the same update that changes `resetKeys` is caught and logged once.
 
+#### 5.4.5 Session-context refresh (`useRefreshSessionContext`)
+
+A remote asks the shell to reload the session context (IAM P-35) through `ShellContextValue.refreshContext` (design doc §C1 `/react`, "Session-context refresh").
+
+| Aspect | Behaviour |
+|---|---|
+| Sharing | Page-wide, in the `PlatformRuntime` (`contextRefresh`): calls in the same tick share one `refreshContext` call; a call made while one is in flight gets one more that starts after it settles (shared by every call made meanwhile), because the running one may predate the role change the caller wants to see. At most two calls for any burst |
+| Result | `true` when the shell applied a new context; otherwise `false`: the load failed (the old context stays), the shell took over the page (another workspace, a refusal screen, a sign-out), or the shell has no `refreshContext` (resolved at once, nothing shared, nothing logged). Anything but `true` counts as `false` |
+| Failure | A rejecting or throwing `refreshContext` resolves `false` and logs one `warn` (`session context refresh failed`, the error redacted as every log) |
+| Identity | The function is stable across renders and shell values; the shell is read through a ref when called |
+| Shell contract | `refreshContext` must settle (bound its load): later calls queue behind it |
+| Re-render | Through the provider's new `context` and the authz and flag topics the shell's apply emits; the SDK adds no topic |
+| Reference shell | `examples/shell/src/bootstrap.tsx`: same workspace → set and apply, `true`; another tenant (`tenantId`; a new slug for the same tenant is applied) → unmount, the wrong-workspace dialog, `false`; any failure (refusals included: it has no refusal screens) → the old context, `false`; after a sign-out → `false`. Loads are numbered when they start: an answer is dropped once a later-started load was applied (a refresh and the background retry overlap), and an applied refresh ends the retry. The tenders remote refreshes once on `DENY_ROLE_INSUFFICIENT` |
+
 ---
 
 ## 6. Page State and Initialisation
@@ -369,6 +384,7 @@ Any failure is a `RemoteLoadError` carrying the cause. One span `remote load` an
 | `navigator`, `trustedTypesPolicy` | `/nav`, `/security` | `/nav`, `/mfe` (script URLs), `/security` |
 | `beforeReload` (listeners) | `src/internal/reload` (`/react` `useBeforeAuthRedirect`) | `/mfe` and `/react` before an SDK-started reload |
 | `readOnlyDenied` | `/http` | `/react` `useReadOnly` |
+| `contextRefresh` (the session-context refresh in flight and the one queued) | `/react` `useRefreshSessionContext` | `/react` |
 | `events` (topic → listeners) | `src/internal/events` | `/react` |
 | `unload` (senders, keepalive ledger, reservations, metrics share) | `src/internal/unload` | `/tracing`, `/logging`, `/metrics` |
 
@@ -645,6 +661,7 @@ CSP violations after bootstrap are logged by `installGlobalErrorHandlers` (direc
 | `/mfe` | warn (essential) | `chunk load failed: reloading` | a chunk of the running build is gone; logged before the one reload per version (`version`, `exception.*`) |
 | `/react` | error | `remote failed to render` | a render error in an `MFEErrorBoundary` |
 | `/react` | warn | `remote showed an error` | an API error reached a boundary |
+| `/react` | warn | `session context refresh failed` | the shell's `refreshContext` rejected or threw, for `useRefreshSessionContext` (`exception.*`); the hook resolves `false` |
 | `/react` | error | `uncaught error` · `unhandled promise rejection` | global handlers; at most 10 per signature and 60 per page a minute (shared with the CSP line); the next line of a signature carries `suppressed` |
 | `/react` | warn (essential) | `content security policy violation` | `securitypolicyviolation` (`violated_directive`, `blocked_uri` origin, `disposition`) |
 | `/auth` | warn (essential) | `sign-in callback ignored: unknown or expired state` | callback without a valid record |
@@ -668,7 +685,7 @@ CSP violations after bootstrap are logged by `installGlobalErrorHandlers` (direc
 The `platform_web_*` metrics (vitals, the HTTP client, remote loads, errors) are recorded through the instrument port. They are no-ops until the names are ratified and the binding ships (§15). The list is in [docs/observability/README.md](../observability/README.md).
 
 ### 11.3 Counters for tests and support
-`tracingStats()`, `loggingStats()` and `metricsStats()` (internal) count exported items, items dropped because the queue was full or consent was missing, export failures and beacons. `/testing`'s `createTestPlatform` exposes the logs and spans that would have been exported, and `signOuts` (its shell's `signOut`, for `useSignOut`); a new platform stops the previous one (unload listeners, logging, tracing, identity provider).
+`tracingStats()`, `loggingStats()` and `metricsStats()` (internal) count exported items, items dropped because the queue was full or consent was missing, export failures and beacons. `/testing`'s `createTestPlatform` exposes the logs and spans that would have been exported, `signOuts` (its shell's `signOut`, for `useSignOut`) and `contextRefreshes` (calls of the `refreshContext` option, for `useRefreshSessionContext`; none by default); a new platform stops the previous one (unload listeners, logging, tracing, identity provider).
 
 ---
 

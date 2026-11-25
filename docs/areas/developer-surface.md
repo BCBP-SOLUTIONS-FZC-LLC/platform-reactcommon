@@ -6,7 +6,7 @@ How app code actually meets the SDK: React hooks and components over every other
 
 | Subpath | What it does | Main exports |
 |---|---|---|
-| `/react` | The shell's provider; hooks for session, workspace, permissions, flags, locale, API calls, step-up, read-only, online state, app updates; error boundaries for remotes; global error and CSP-violation capture | `PlatformProvider`, `useSession`, `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useApi`, `useApiClient`, `useT`, `useLocale`, `useFeatureFlag`, `useHasPermission`, `Can`, `useStepUp`, `useReadOnly`, `useRouteTemplate`, `useBeforeAuthRedirect`, `useOnlineStatus`, `useAppUpdate`, `useSwitchWorkspace`, `useSignOut`, `MFEErrorBoundary`, `RemoteBoundary`, `installGlobalErrorHandlers` |
+| `/react` | The shell's provider; hooks for session, workspace, permissions, flags, locale, API calls, step-up, read-only, online state, app updates, session-context refresh; error boundaries for remotes; global error and CSP-violation capture | `PlatformProvider`, `useSession`, `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useApi`, `useApiClient`, `useT`, `useLocale`, `useFeatureFlag`, `useHasPermission`, `Can`, `useStepUp`, `useReadOnly`, `useRouteTemplate`, `useBeforeAuthRedirect`, `useOnlineStatus`, `useAppUpdate`, `useSwitchWorkspace`, `useSignOut`, `useRefreshSessionContext`, `MFEErrorBoundary`, `RemoteBoundary`, `installGlobalErrorHandlers` |
 | `/testing` | A real SDK runtime for tests, with in-memory logs and spans, a signed-in user, permissions and flags; API mocks with gincommon-shaped problems; the metric inventory for `metricslint` (dev only) | `createTestPlatform`, `mockApi`, `mockProblem`, `renderMetricInventory` |
 
 Build time: [`@bcbp-solutions-fzc-llc/eslint-plugin`](../../packages/eslint-plugin) enforces how apps use the SDK:
@@ -49,8 +49,9 @@ expect(p.logs).toEqual([]);
 ## Guarantees
 
 - **Hooks follow the SDK's state:** session, permissions, flags and locale changes re-render.
+- **`useRefreshSessionContext`** never rejects and shares refreshes page-wide; it resolves `false` under an older shell.
 - **`useApi`** cancels its request on unmount and when its inputs change, and never returns the previous inputs' data or error for new ones.
 - **One remote's render error** stays in its boundary, logged with that remote's name, and offers "Try again"; it clears when its `resetKeys` (say the route's id) change. After a deploy, a chunk-load error reloads once, after the `useBeforeAuthRedirect` listeners keep drafts.
-- **`/testing` runs the real SDK,** with fakes only at the edges (exporters, network, identity provider); its shell's `signOut` is recorded in `signOuts`, and a new platform stops the previous one.
+- **`/testing` runs the real SDK,** with fakes only at the edges (exporters, network, identity provider); its shell's `signOut` is recorded in `signOuts` and an optional `refreshContext` is counted in `contextRefreshes`, and a new platform stops the previous one.
 
 Design doc: §C1 `/react`, `/testing`, §C4 (examples).

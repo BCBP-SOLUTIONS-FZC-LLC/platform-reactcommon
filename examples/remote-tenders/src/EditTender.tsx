@@ -1,8 +1,8 @@
 // The remote component of design doc §C4, as written there.
 import { useRef, useState, type FormEvent } from 'react';
-import { useApi, useApiClient, useHasPermission, useRouteTemplate, useT,
+import { useApi, useApiClient, useHasPermission, useRefreshSessionContext, useRouteTemplate, useT,
          MFEErrorBoundary } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
-import { isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@bcbp-solutions-fzc-llc/frontend-sdk/problem';
+import { gatewayDenyCode, isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@bcbp-solutions-fzc-llc/frontend-sdk/problem';
 import { problemMessage } from '@bcbp-solutions-fzc-llc/frontend-sdk/i18n';
 
 interface Tender { id: string; title: string; deadline: string; version: number }
@@ -12,6 +12,7 @@ function EditTenderForm({ id }: { id: string }) {
   const t = useT('tenders');
   const api = useApiClient();
   const canEdit = useHasPermission('update', 'tender');
+  const refreshSessionContext = useRefreshSessionContext();
   const { data, error, loading, reload } = useApi((c, signal) =>
     c.get<Tender>('/tenders/:id', { params: { id }, signal }).then((r) => r.data), [id]);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
@@ -44,6 +45,9 @@ function EditTenderForm({ id }: { id: string }) {
       reload(); // the saved tender, with its new version
     } catch (e) {
       if (!isProblemError(e)) { setFailed({ e }); return; }   // Timeout/Network → boundary
+      // The roles changed since the page loaded: reload them once, so the form follows (Save goes when the
+      // role no longer allows it). Never retried: the user acts again.
+      if (gatewayDenyCode(e) === 'DENY_ROLE_INSUFFICIENT') void refreshSessionContext();
       if (e.is(PlatformProblemTypes.ValidationFailed)) setFieldErrors(toFieldErrorMap(e));
       else if (e.is(PlatformProblemTypes.Conflict)) setFormError(problemMessage(e));
       else setFormError(problemMessage(e));     // localized by type id, falls back to title
