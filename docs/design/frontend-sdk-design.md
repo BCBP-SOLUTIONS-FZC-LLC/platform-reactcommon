@@ -670,7 +670,8 @@ export function cachedWorkspace(slug?: string): (Workspace & { slug: string }) |
  *  and puts it in the URL: `/t/<slug>/…` when it has no slug, in place of another slug when it names another workspace. */
 export function rememberWorkspace(w: Workspace & { slug: string }): void;
 /**
- * Realm choice before login (see "Choosing the realm"): slug from path → its cached Workspace when paid, else resolver.resolve(slug)
+ * Realm choice before login (see "Choosing the realm"): slug from path → its cached Workspace when paid and Keycloak still serves
+ * its realm (else re-checked with PUB-1), else resolver.resolve(slug)
  * (a cached trial entry is always re-checked; PUB-1 down → the cached entry); no slug in path → the most recent cached Workspace,
  * re-checked the same way when trial. undefined → identifier-first screen.
  */
@@ -681,9 +682,10 @@ export function chooseWorkspace(o: { pathname: string; resolver: WorkspaceResolv
 export function isWrongWorkspace(w: Workspace, user: SessionUser): boolean;
 /** Sign in again after `expired` (see "Session expiry during use"): chooseWorkspace with
  *  `forceResolve: state.serverEnded`, falling back to `ask()`, then idp.login() back to the current URL,
- *  with `prompt: 'login'` when `state.idle`. */
+ *  with `prompt: 'login'` when `state.idle` or when `prompt(workspace)` answers 'login' for the chosen workspace. */
 export function signInAgain(o: { idp: IdentityProvider; state: Extract<SessionState, { status: 'expired' }>;
-  resolver: WorkspaceResolver; cfg: RuntimeConfig['auth']; ask: () => Promise<Workspace> }): Promise<void>;
+  resolver: WorkspaceResolver; cfg: RuntimeConfig['auth']; ask: () => Promise<Workspace>;
+  prompt?: (workspace: Workspace) => 'login' | undefined }): Promise<void>;
 export function createOidcProvider(cfg: RuntimeConfig['auth'], resolver: WorkspaceResolver): IdentityProvider; // Auth Code + PKCE (S256)
 export function initializeAuth(p: IdentityProvider): TokenSource;                 // shell only; wires /http
 export function getSession(): SessionState;
@@ -788,7 +790,8 @@ load starts with no tokens: an F5, a new tab, `reloadOnceForChunkError`, and `us
      sign the user into `acme` under a `globex` URL. `chooseWorkspace` then resolves the slug (step 3).
    - URL has no slug: the most recent `cachedWorkspace()`.
 
-   With a workspace, `init()` does a top-level redirect to that realm's authorize endpoint with
+   With a workspace (a paid one first confirmed with its realm's discovery document, else re-checked with
+   PUB-1: "Choosing the realm" step 2), `init()` does a top-level redirect to that realm's authorize endpoint with
    `prompt=none` and the current URL as `returnUrl`. Keycloak's SSO cookie on `auth.bcbpsolutions.com` is
    same-site with the app origin, so browsers that block third-party cookies still send it; there is no
    iframe. A valid SSO session signs the user in with no prompt.
@@ -799,8 +802,9 @@ What the shell does with `anonymous` (§C2 step 7):
   on its own; otherwise the still-live Keycloak SSO session would undo a local logout at once.
 - `'login-required'`: calls `login({ workspace: session.workspace })` (interactive). That is the workspace
   the silent attempt was for; `init()` has already re-checked a trial one with PUB-1 (one call, at most 5 s). When
-  `session.workspace` is absent (PUB-1 no longer knows the slug), show the identifier-first screen; never
-  fall back to another cached workspace.
+  `session.workspace` is absent (PUB-1 no longer knows the slug, and its entry is dropped), show the
+  identifier-first screen under `/t/<slug>` (never another cached workspace there); with no slug in the URL,
+  run `chooseWorkspace` (the next cached workspace, which a reload would restore anyway), else ask.
 - `'none'`: runs "Choosing the realm" below, then `login()`.
 
 Loop guard: one `prompt=none` attempt per tab, marked in `sessionStorage` before the redirect and
@@ -819,9 +823,10 @@ When no last-user key is recorded yet (the first sign-in on this browser, or aft
 sign-in only records it, so a draft saved before the login redirect survives; a key that cannot be read
 clears the storage (fail safe).
 
-Cost: one Keycloak round trip (two redirects plus the token `fetch`) on every full page load or new tab,
-roughly the latency of a normal login with an SSO cookie. It does not count against the PUB-1 rate
-limit, because a cached workspace is used. The SPA renders no route until `init()` settles, so nothing
+Cost: one Keycloak round trip (two redirects plus the token `fetch`), plus one discovery-document request
+for a paid workspace, on every full page load or new tab, roughly the latency of a normal login with an SSO
+cookie. It does not count against the PUB-1 rate limit, because a cached workspace is used, except when a saved
+paid realm is gone (a slow or failing Keycloak does not count as gone). The SPA renders no route until `init()` settles, so nothing
 flashes before the redirect.
 
 Tenant model (§D2), as IAM implements it:
@@ -834,9 +839,14 @@ Tenant model (§D2), as IAM implements it:
 
 Choosing the realm (HLD §8.2.7), before any token exists. `chooseWorkspace()` implements steps 1–3:
 1. **Slug:** `slugFromPath(location.pathname)` → step 2. No slug in the path → the most recent
-   `cachedWorkspace()`; stop when it is paid, otherwise re-check its slug as in step 2. Every emailed link lands on `/t/<slug>/` (§D6 F), so a first login
+   `cachedWorkspace()`; when it is paid, keep it while Keycloak serves its realm (step 2's `confirmPaid`),
+   otherwise re-check its slug as in step 2. Every emailed link lands on `/t/<slug>/` (§D6 F), so a first login
    normally comes through the path.
-2. **Slug → Workspace:** `cachedWorkspace(slug)` if present and **paid**, otherwise (no entry, or a trial entry: a trial → paid
+2. **Slug → Workspace:** `cachedWorkspace(slug)` if present and **paid** and Keycloak still serves its realm
+   (`confirmPaid`: the realm's discovery document, one request to Keycloak and no PUB-1 call; a realm deleted
+   by a reverted conversion, RP-4, or an offboarding fails it while the trial realm's document loads, and the
+   entry is then re-checked with PUB-1; a slow or unreachable Keycloak keeps the entry),
+   otherwise (no entry, or a trial entry: a trial → paid
    conversion moves the tenant to `tenant-<slug>`) `resolver.resolve(slug)` (PUB-1),
    whose result is cached. A slug alone is not enough, because **trial tenants also have `/t/<slug>`
    links** (HLD §8.2.7) and belong to the shared `trial` realm. Building `tenant-<slug>` blindly would
@@ -892,6 +902,9 @@ tabs"). On `expired`:
   session outlives the SDK idle timeout, so a plain login would sign the user straight back in without
   credentials, and the timeout would protect nothing. Every tab shares the activity signal, so every tab
   idles out together.
+- The shell may pass `prompt(workspace)` to `signInAgain()`. It is called with the workspace `signInAgain`
+  chose, and `'login'` forces the credentials page, e.g. for a trial workspace with neither a slug nor a
+  `tenantIdHint`, which the shell cannot check after sign-in. Idle forces `'login'` whatever it answers.
 - Other tabs follow independently: each tab has its own lineage, so a server-ended session reaches each of
   them at its next refresh. A `logout` broadcast ends them at once.
 
@@ -1136,10 +1149,10 @@ index.html ─► bootstrap.ts (async import boundary required by MF)
     state = await idp.init()                                          ?code=/?error= callback, else one prompt=none restore per tab
     anonymous, reason:                                                init() never returns expired (a page load has no tokens)
       'signed-out'     → signed-out screen; login only on the user's click
-      'login-required' → idp.login({workspace: state.workspace ?? identifier-first screen, returnUrl})   a trial workspace was re-checked with PUB-1 in init()
+      'login-required' → idp.login({workspace: state.workspace ?? (no /t/<slug>: chooseWorkspace()) ?? identifier-first screen, returnUrl})   a trial workspace was re-checked with PUB-1 in init()
       'none'           → workspace = chooseWorkspace() ?? identifier-first screen + resolve(); idp.login({workspace, returnUrl})
     isWrongWorkspace(state.workspace, state.user) → wrong-workspace screen (sign out / switch), stop
-    idp.subscribe: expired → "session ended" dialog → signInAgain()   runtime only; forceResolve = serverEnded, prompt=login if idle
+    idp.subscribe: expired → "session ended" dialog → signInAgain()   runtime only; forceResolve = serverEnded, prompt=login if idle or if the prompt callback answers 'login'
  8. ctx = await sessionContextSource.load()                           IAM item A; on failure ctx = undefined (deny-all, no tenant flags)
                                                                       implemented: a transient failure (network, timeout, 429, 5xx) is
                                                                       retried in the background 3 times (1 s, 2 s, 4 s); on success the
@@ -1343,11 +1356,13 @@ export async function bootstrap(): Promise<void> {
   if (session.status === 'anonymous') {
     // init() has already moved the URL off the callback path to the page the user opened.
     const signIn = async () => {
-      // A failed silent attempt names its workspace; otherwise /t/<slug> → cached or resolved Workspace
-      // (paid OR trial), else the most recent cached Workspace, else ask.
-      const workspace = (session.reason === 'login-required' ? session.workspace : undefined)
-        ?? await chooseWorkspace({ pathname: location.pathname, resolver: workspaceResolver, cfg: cfg.auth })
-        ?? await askForWorkspace();
+      // A failed silent attempt names its workspace. Without one, PUB-1 no longer knows it (and dropped it):
+      // under /t/<slug> ask, never another cached workspace; with no slug, chooseWorkspace (the next cached one).
+      // Otherwise /t/<slug> → cached or resolved Workspace (paid OR trial), else the most recent cached, else ask.
+      const choose = () => chooseWorkspace({ pathname: location.pathname, resolver: workspaceResolver, cfg: cfg.auth });
+      const workspace = session.reason === 'login-required'
+        ? session.workspace ?? (slugFromPath(location.pathname, cfg.auth) === undefined ? await choose() : undefined) ?? await askForWorkspace()
+        : await choose() ?? await askForWorkspace();
       await idp.login({ workspace, returnUrl: location.pathname + location.search });
     };
     // After a logout, wait for the user: an automatic login would ride the live SSO session and undo it.
@@ -1359,8 +1374,11 @@ export async function bootstrap(): Promise<void> {
   // Expiry happens only during use. Never redirect on our own; the user clicks "Sign in" in the dialog.
   // A server-ended session (e.g. trial → paid) re-resolves the workspace; a natural expiry reuses the cache.
   idp.subscribe((s) => {
+    // A trial workspace with neither a slug nor a tenantIdHint cannot be checked after sign-in (the shared trial
+    // realm's SSO session may be another tenant's): ask for credentials.
     if (s.status === 'expired') showSessionEnded(s, () =>
-      signInAgain({ idp, state: s, resolver: workspaceResolver, cfg: cfg.auth, ask: askForWorkspace }));
+      signInAgain({ idp, state: s, resolver: workspaceResolver, cfg: cfg.auth, ask: askForWorkspace,
+                    prompt: (w) => (w.trial && w.slug === undefined && !w.tenantIdHint ? 'login' : undefined) }));
   });
 
   // Roles, plan and flags are not in the token (§0 row 10). Without them: deny-all, platform flags only.

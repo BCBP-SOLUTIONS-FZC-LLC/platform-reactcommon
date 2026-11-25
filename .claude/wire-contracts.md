@@ -23,6 +23,7 @@ Every API error is an RFC 9457 problem decoded as gincommon's client does (`cont
 ## Identity Provider (Keycloak)
 
 - Issuer per realm: `<authOrigin>/realms/<realm>`; client `tender-web` (public, PKCE S256); the SDK asks for `auth.scopes` from `runtime.json` (default `['openid']`; must include `openid`). Name and email come from the **ID token** (realm-provisioner #49: access tokens carry no name or email; they keep `sub`, `aud`, `tenant_id`, `auth_time`).
+- Realm probe: `GET <authOrigin>/realms/<realm>/.well-known/openid-configuration` (credentials omitted, `no-store`, 3 s; 1.5 s on the page-load restore) before redirecting to a saved paid realm (not on a `forceResolve` re-check for the URL's slug); a readable 404, a 2xx that is not this realm's document, or a failed fetch while the trial realm's document loads (a missing realm's 404 has no CORS headers, like an unreachable Keycloak) re-checks the entry with PUB-1; a timeout, a readable 5xx/429, or both probes failing (Keycloak unreachable) keeps it. CSP `connect-src` lists the IdP origin.
 - End-session: form POST to `/protocol/openid-connect/logout` with `id_token_hint`, `client_id`, `post_logout_redirect_uri=<origin>/` (registered as `<origin>/*`); CSP `form-action` lists the IdP origin.
 - IAM ports used by the shell: PUB-1 `GET /api/v1/public/tenants/resolve?identifier=` (no auth), P-35 `GET /api/v1/me/session-context` (cases in `contracts/tenant-resolve-cases.json`, `session-context-cases.json`).
 

@@ -136,7 +136,7 @@ interface Lineage {
 
 type Failure = 'network-after-send' | 'network-before-send' | 'server-error' | 'timeout-after-rotate' | 'unavailable-after-rotate' | 'invalid_grant' | 'bad-id-token';
 
-/** Keycloak at the HTTP level: /auth (via approve()), /token (fetch). */
+/** Keycloak at the HTTP level: /auth (via approve()), /token and the realms' discovery documents (fetch). */
 export class FakeKeycloak {
   readonly requests: { grant: string; refreshToken?: string; body: URLSearchParams }[] = [];
   private codes = new Map<string, Grant>();
@@ -149,6 +149,12 @@ export class FakeKeycloak {
   /** Claims added to the next ID tokens (e.g. tenant_id, auth_time) or overrides. */
   extraClaims: Record<string, unknown> = {};
   reuseDetected = 0;
+  /** Realms that no longer exist: their discovery document fails as a 404 without CORS headers does. */
+  readonly deletedRealms = new Set<string>();
+  /** Keycloak unreachable: every discovery document fails as a network error does. */
+  down = false;
+  /** The realms whose discovery document was requested, in order. */
+  readonly discoveries: string[] = [];
 
   constructor(readonly now: () => number = () => Date.now()) {}
 
@@ -207,6 +213,13 @@ export class FakeKeycloak {
 
   fetch = vi.fn(async (input: string | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input));
+    const discovery = /^\/realms\/([^/]+)\/\.well-known\/openid-configuration$/.exec(url.pathname)?.[1];
+    if (discovery !== undefined) {
+      const realm = decodeURIComponent(discovery);
+      this.discoveries.push(realm);
+      if (this.down || this.deletedRealms.has(realm)) throw new TypeError('Failed to fetch'); // unreachable, or 404 without CORS headers
+      return new Response(JSON.stringify({ issuer: this.issuer(realm) }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
     const body = new URLSearchParams(String(init?.body ?? ''));
     const grant = body.get('grant_type') ?? '';
     const failure = this.failures.shift();

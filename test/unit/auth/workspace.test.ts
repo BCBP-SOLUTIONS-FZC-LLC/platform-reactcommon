@@ -10,12 +10,12 @@ import {
   type Workspace,
   type WorkspaceResolver,
 } from '../../../packages/frontend-sdk/src/auth/index.ts';
-import { WORKSPACE_CACHE_KEY } from '../../../packages/frontend-sdk/src/auth/workspace.ts';
+import { WORKSPACE_CACHE_KEY, probeRealm } from '../../../packages/frontend-sdk/src/auth/workspace.ts';
 import { RuntimeConfigSchema, setRuntimeConfig, type RuntimeConfig } from '../../../packages/frontend-sdk/src/config/index.ts';
 import { initializeCore } from '../../../packages/frontend-sdk/src/core/index.ts';
 import { resetRuntimeForTests } from '../../../packages/frontend-sdk/src/internal/runtime.ts';
 import { clearAllAppStorage } from '../../../packages/frontend-sdk/src/storage/index.ts';
-import { FakePage } from '../../fixtures/keycloak.ts';
+import { FakeKeycloak, FakePage, IDP } from '../../fixtures/keycloak.ts';
 
 interface ResolveCase {
   name: string;
@@ -32,6 +32,7 @@ const SESSION = contract<{ cases: { name: string; response: Record<string, unkno
 
 let cfg: RuntimeConfig['auth'];
 let page: FakePage;
+let kc: FakeKeycloak;
 let errors: ReturnType<typeof vi.spyOn>;
 
 /** The PUB-1 mapping as tenant-resolve-cases.json documents it (the shell's port does the same). */
@@ -52,13 +53,15 @@ beforeEach(() => {
   const parsed = RuntimeConfigSchema.parse({
     api: { baseUrl: '/api' },
     telemetry: {},
-    auth: { idleTimeoutMs: 1_800_000, redirectPath: '/auth/callback' },
+    auth: { idpOrigin: IDP, idleTimeoutMs: 1_800_000, redirectPath: '/auth/callback' },
     remotes: { loadTimeoutMs: 10_000, retries: 0 },
     i18n: { defaultLocale: 'en', supportedLocales: ['en'] },
     appUpdate: { pollIntervalMs: 300_000 },
   });
   setRuntimeConfig(parsed);
   cfg = parsed.auth;
+  kc = new FakeKeycloak(); // the saved paid realms' discovery documents (confirmPaid)
+  vi.stubGlobal('fetch', kc.fetch);
   page = new FakePage('/');
   page.install();
   errors = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -118,6 +121,7 @@ describe('chooseWorkspace', () => {
     const resolver = resolverFor({});
     expect(await chooseWorkspace({ pathname: '/t/acme/x', resolver, cfg })).toEqual({ realm: 'tenant-acme', trial: false, slug: 'acme' });
     expect(resolver.resolve).not.toHaveBeenCalled();
+    expect(kc.discoveries).toEqual(['tenant-acme']); // Keycloak still serves the realm
   });
 
   // web-shell ask 1 (2026-11-24): a trial → paid conversion moves every user to tenant-<slug>; the email
@@ -325,6 +329,209 @@ describe('chooseWorkspace', () => {
       }),
     };
     await expect(chooseWorkspace({ pathname: '/t/acme/', resolver, cfg, signal: ctrl.signal })).rejects.toBeDefined();
+  });
+});
+
+// web-shell alpha.8 follow-up 1 (2026-11-25): Realm Provisioner RP-4 reverts a trial → paid conversion within
+// 7 days and deletes tenant-<slug>; offboarding deletes it too. A redirect to a deleted realm ends on Keycloak's
+// 404 page, so a saved paid entry is kept only while Keycloak serves its realm, else re-checked with PUB-1.
+describe('chooseWorkspace: a saved paid workspace whose realm is gone', () => {
+  const PAID = { realm: 'tenant-acme', trial: false, slug: 'acme' } as const;
+  const TENANT = '6f1c2a4e-1111-4222-8333-944455556666';
+
+  it('reverted: PUB-1 answers the trial realm, which replaces the saved entry (with its tenantIdHint)', async () => {
+    rememberWorkspace(PAID);
+    kc.deletedRealms.add('tenant-acme');
+    const resolver = resolverFor({ acme: { found: true, realm: 'trial', strategy: 'shared', tenant_id: TENANT } });
+    const trial = { realm: 'trial', trial: true, slug: 'acme', tenantIdHint: TENANT };
+    expect(await chooseWorkspace({ pathname: '/t/acme/', resolver, cfg })).toEqual(trial);
+    expect(resolver.resolve).toHaveBeenCalledOnce();
+    expect(cachedWorkspace('acme')).toEqual({ realm: 'trial', trial: true, slug: 'acme' });
+  });
+
+  it('PUB-1 down: the saved entry is used', async () => {
+    rememberWorkspace(PAID);
+    kc.deletedRealms.add('tenant-acme');
+    const resolver = { resolve: vi.fn(async () => { throw new TypeError('Failed to fetch'); }) };
+    expect(await chooseWorkspace({ pathname: '/t/acme/', resolver, cfg })).toEqual(PAID);
+  });
+
+  it('PUB-1 slower than 5 s: the saved entry is used', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      rememberWorkspace(PAID);
+      kc.deletedRealms.add('tenant-acme');
+      const resolver = { resolve: vi.fn(() => new Promise<Workspace | undefined>(() => {})) };
+      const chosen = chooseWorkspace({ pathname: '/t/acme/', resolver, cfg });
+      await vi.waitFor(() => expect(resolver.resolve).toHaveBeenCalled(), { timeout: 2_000 });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await chosen).toEqual(PAID);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('not found: the entry is dropped and, under /t/<slug>, nothing is chosen (the identifier screen)', async () => {
+    rememberWorkspace(PAID);
+    kc.deletedRealms.add('tenant-acme');
+    expect(await chooseWorkspace({ pathname: '/t/acme/', resolver: resolverFor({}), cfg })).toBeUndefined();
+    expect(cachedWorkspace('acme')).toBeUndefined();
+  });
+
+  it('not found with no slug in the URL: the next cached workspace', async () => {
+    rememberWorkspace({ realm: 'tenant-globex', trial: false, slug: 'globex' });
+    rememberWorkspace(PAID); // most recent
+    kc.deletedRealms.add('tenant-acme');
+    expect(await chooseWorkspace({ pathname: '/', resolver: resolverFor({}), cfg })).toEqual({ realm: 'tenant-globex', trial: false, slug: 'globex' });
+    expect(kc.discoveries).toEqual(['tenant-acme', 'trial', 'tenant-globex']); // the trial realm loads: Keycloak is up
+  });
+
+  // Code review: only evidence that the realm is gone costs a PUB-1 call; a slow or failing Keycloak must not
+  // make every page load ask PUB-1 (its per-IP limit).
+  it.each([
+    ['a readable 404', () => new Response('', { status: 404 })],
+    ["an edge's 200 HTML fallback page", () => new Response('<html></html>', { status: 200, headers: { 'content-type': 'text/html' } })],
+    ["another realm's discovery document", () => Response.json({ issuer: `${IDP}/realms/tenant-globex` })],
+  ])('gone: %s re-checks with PUB-1', async (_n, res) => {
+    rememberWorkspace(PAID);
+    vi.stubGlobal('fetch', vi.fn(async () => res()));
+    const resolver = resolverFor({ acme: { found: true, realm: 'tenant-acme', strategy: 'dedicated' } });
+    expect(await chooseWorkspace({ pathname: '/t/acme/', resolver, cfg })).toEqual(PAID);
+    expect(resolver.resolve).toHaveBeenCalledOnce();
+  });
+
+  // Code review: a deleted realm and an unreachable Keycloak both fail the fetch; the trial realm tells them apart.
+  it('Keycloak unreachable (the trial realm fails too): the entry is kept without asking PUB-1', async () => {
+    rememberWorkspace(PAID);
+    kc.down = true;
+    const resolver = resolverFor({});
+    expect(await chooseWorkspace({ pathname: '/t/acme/', resolver, cfg })).toEqual(PAID);
+    expect(resolver.resolve).not.toHaveBeenCalled();
+    expect(kc.discoveries).toEqual(['tenant-acme', 'trial']);
+  });
+
+  it('a failed fetch while the trial realm answers something that is not its document keeps the entry', async () => {
+    rememberWorkspace(PAID);
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => {
+      if (String(u).includes('/realms/tenant-acme/')) throw new TypeError('Failed to fetch');
+      return new Response('<html></html>', { status: 404, headers: { 'content-type': 'text/html' } }); // the trial realm: not served
+    }));
+    const resolver = resolverFor({});
+    expect(await chooseWorkspace({ pathname: '/t/acme/', resolver, cfg })).toEqual(PAID);
+    expect(resolver.resolve).not.toHaveBeenCalled();
+  });
+
+  it("probeRealm: the caller's abort while the body is read is 'failed', not 'gone'", async () => {
+    const ctrl = new AbortController();
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init?: RequestInit) => {
+      const body = new ReadableStream({ start: (c) => init?.signal?.addEventListener('abort', () => c.error(init.signal!.reason)) });
+      queueMicrotask(() => ctrl.abort(new Error('left the page')));
+      return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+    }));
+    expect(await probeRealm('tenant-acme', cfg, ctrl.signal)).toBe('failed');
+  });
+
+  // Code review: a degraded Keycloak (the saved realm fails fast, the trial realm hangs) proves nothing.
+  it.each([
+    ['times out', (init?: RequestInit) => new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal!.reason)))],
+    ['answers 502', async () => new Response('', { status: 502 })],
+  ])('a failed fetch while the trial realm %s keeps the entry without asking PUB-1', async (_n, trial) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      rememberWorkspace(PAID);
+      vi.stubGlobal('fetch', vi.fn(async (u: string, init?: RequestInit) => {
+        if (String(u).includes('/realms/tenant-acme/')) throw new TypeError('Failed to fetch');
+        return trial(init);
+      }));
+      const resolver = resolverFor({});
+      const chosen = chooseWorkspace({ pathname: '/t/acme/', resolver, cfg });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(await chosen).toEqual(PAID);
+      expect(resolver.resolve).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('probeRealm: a connection dropped while the body downloads is failed, not gone', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      const body = new ReadableStream({ start: (c) => queueMicrotask(() => c.error(new TypeError('network error'))) });
+      return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+    }));
+    expect(await probeRealm('tenant-acme', cfg)).toBe('failed');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html></html>', { status: 200 })));
+    expect(await probeRealm('tenant-acme', cfg)).toBe('gone');
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ issuer: `${IDP}/realms/tenant-acme` })));
+    expect(await probeRealm('tenant-acme', cfg)).toBe('document');
+  });
+
+  it('a body still arriving after 3 s counts as slow, not gone', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      rememberWorkspace(PAID);
+      let started = false;
+      vi.stubGlobal('fetch', vi.fn(async (_u: string, init?: RequestInit) => {
+        started = true;
+        const body = new ReadableStream({ start: (c) => init?.signal?.addEventListener('abort', () => c.error(init.signal!.reason)) });
+        return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+      }));
+      const resolver = resolverFor({});
+      const chosen = chooseWorkspace({ pathname: '/t/acme/', resolver, cfg });
+      await vi.waitFor(() => expect(started).toBe(true), { timeout: 2_000 });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(await chosen).toEqual(PAID);
+      expect(resolver.resolve).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a readable 5xx or 429 keeps the entry without asking PUB-1 (Keycloak answered)', async () => {
+    rememberWorkspace(PAID);
+    const resolver = resolverFor({});
+    for (const status of [503, 429]) {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status })));
+      expect(await chooseWorkspace({ pathname: '/t/acme/', resolver, cfg })).toEqual(PAID);
+    }
+    expect(resolver.resolve).not.toHaveBeenCalled();
+  });
+
+  it('a probe slower than 3 s keeps the entry without asking PUB-1 (slow, not gone)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      rememberWorkspace(PAID);
+      let probe: AbortSignal | undefined;
+      vi.stubGlobal('fetch', vi.fn((_u: string, init?: RequestInit) => {
+        probe = init?.signal ?? undefined;
+        return new Promise<Response>((_, reject) => probe?.addEventListener('abort', () => reject(probe?.reason)));
+      }));
+      const resolver = resolverFor({});
+      const chosen = chooseWorkspace({ pathname: '/t/acme/', resolver, cfg });
+      await vi.waitFor(() => expect(probe).toBeDefined(), { timeout: 2_000 });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(await chosen).toEqual(PAID);
+      expect(resolver.resolve).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the caller's abort during the probe rejects with its reason, and PUB-1 is not asked", async () => {
+    rememberWorkspace(PAID);
+    vi.stubGlobal('fetch', vi.fn((_u: string, init?: RequestInit) =>
+      new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal!.reason)))));
+    const resolver = resolverFor({});
+    const ctrl = new AbortController();
+    const chosen = chooseWorkspace({ pathname: '/t/acme/', resolver, cfg, signal: ctrl.signal });
+    ctrl.abort(new Error('left the page'));
+    await expect(chosen).rejects.toThrow('left the page');
+    expect(resolver.resolve).not.toHaveBeenCalled();
+  });
+
+  it('a saved trial entry is not probed (PUB-1 re-checks it anyway)', async () => {
+    rememberWorkspace({ realm: 'trial', trial: true, slug: 'acme' });
+    await chooseWorkspace({ pathname: '/t/acme/', resolver: resolverFor({ acme: { found: true, realm: 'trial', strategy: 'shared' } }), cfg });
+    expect(kc.discoveries).toEqual([]);
   });
 });
 

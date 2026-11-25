@@ -50,7 +50,9 @@ function compile(route: string): { method: Method; match: (path: string) => bool
 /**
  * Replaces fetch with `routes`: 'METHOD /path' keys relative to the runtime config's api.baseUrl
  * (':name' matches one segment), each a Response (cloned per call) or a function of the Request.
- * Anything else answers 404 (errorCode ROUTE_NOT_FOUND, as gincommon's NoRoute). Undone by reset() or the next createTestPlatform.
+ * Anything else answers 404 (errorCode ROUTE_NOT_FOUND, as gincommon's NoRoute), except a realm's discovery document
+ * on `auth.idpOrigin` (GET `/realms/<realm>/.well-known/openid-configuration`, which /auth loads before redirecting to a
+ * saved paid workspace): that realm's document, so the realm counts as existing. Undone by reset() or the next createTestPlatform.
  */
 export function mockApi(routes: Record<`${Method} /${string}`, Handler>): void {
   const table = Object.entries(routes).map(([route, handler]) => ({ ...compile(route), handler: handler as Handler }));
@@ -58,9 +60,13 @@ export function mockApi(routes: Record<`${Method} /${string}`, Handler>): void {
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const req = new Request(input instanceof Request ? input : new URL(String(input), globalThis.location?.href ?? 'http://localhost/'), init);
     const base = (tryGetConfig()?.api.baseUrl ?? '').replace(/\/$/, '');
-    let path = new URL(req.url).pathname;
+    const url = new URL(req.url);
+    let path = url.pathname;
     if (base && (path === base || path.startsWith(`${base}/`))) path = path.slice(base.length) || '/';
     const hit = table.find((r) => r.method === req.method && r.match(path));
+    const idp = tryGetConfig()?.auth.idpOrigin;
+    const realm = /^\/realms\/([^/]+)\/\.well-known\/openid-configuration$/.exec(url.pathname)?.[1];
+    if (!hit && req.method === 'GET' && idp && url.origin === idp && realm !== undefined) return Response.json({ issuer: `${idp}/realms/${realm}` });
     if (!hit) return mockProblem(PlatformProblemTypes.NotFound, { errorCode: 'ROUTE_NOT_FOUND', detail: `no mock for ${req.method} ${path}` });
     return typeof hit.handler === 'function' ? hit.handler(req) : hit.handler.clone();
   };

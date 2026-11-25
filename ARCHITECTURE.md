@@ -256,9 +256,9 @@ flowchart TD
     consent --> tel["5. initializeTracing · initializeLogging · initializeMetrics → /otel<br/>installGlobalErrorHandlers() · startWebVitals()  (never fatal)"]
     tel --> flags["6. setFlagProvider(runtimeConfigFlagProvider())"]
     flags --> auth["7. idp = createOidcProvider(cfg.auth, workspaceResolver)<br/>setTokenSource(initializeAuth(idp)) · state = await idp.init()"]
-    auth -->|"no tokens + cached workspace"| restore["one prompt=none redirect per tab<br/>(init never settles; the page unloads)"]
+    auth -->|"no tokens + cached workspace"| restore["one prompt=none redirect per tab<br/>(a paid realm probed on Keycloak first;<br/>init never settles; the page unloads)"]
     auth -->|"anonymous 'signed-out'"| signedout["signed-out screen; login only on click"]
-    auth -->|"anonymous 'login-required'"| login1["idp.login({ workspace: state.workspace ?? identifier screen })<br/>(a trial one re-checked with PUB-1 in init())"]
+    auth -->|"anonymous 'login-required'"| login1["idp.login({ workspace: state.workspace<br/>?? (no /t/&lt;slug&gt;: chooseWorkspace()) ?? identifier screen })<br/>(a trial one re-checked with PUB-1 in init())"]
     auth -->|"anonymous 'none'"| choose["chooseWorkspace() ?? identifier-first screen → idp.login()"]
     auth -->|"authenticated"| wrong{"isWrongWorkspace?"}
     wrong -->|yes| wrongscreen["wrong-workspace screen (sign out / switch); stop"]
@@ -341,22 +341,28 @@ Every paid tenant has its own Keycloak realm (`tenant-<slug>`), and trial tenant
 ```mermaid
 flowchart TD
     start(["Sign in needed: anonymous, no session to restore"]) --> lr{"session.reason = login-required<br/>(a silent restore named its workspace)?"}
-    lr -- yes --> use["Use that workspace<br/>(init() re-checked a trial one with PUB-1)"]
+    lr -- yes --> named{"session.workspace?<br/>(absent: PUB-1 no longer knows it)"}
+    named -- yes --> use["Use that workspace<br/>(init() re-checked a trial one with PUB-1)"]
+    named -- "no, under /t/&lt;slug&gt;" --> ask
+    named -- "no, no slug" --> recent
     lr -- no --> slug{"URL /t/&lt;slug&gt;/…<br/>(auth.workspacePathPrefix)?"}
     slug -- no --> recent{"Workspace cache<br/>(localStorage, ≤ 20 entries, newest first)"}
     recent -- "an entry" --> rtrial{"Trial entry?"}
-    rtrial -- no --> use
+    rtrial -- no --> probe
     rtrial -- "yes: re-check" --> pub1
     recent -- empty --> ask
     slug -- yes --> cached{"Cached entry for this slug?"}
     cached -- yes --> paid{"Paid entry, and not forceResolve?<br/>(a trial may have converted to tenant-&lt;slug&gt;;<br/>forceResolve: the server ended the session)"}
-    paid -- yes --> use
+    paid -- yes --> probe{"Keycloak serves the realm?<br/>GET /realms/&lt;realm&gt;/.well-known/openid-configuration<br/>(a revert, RP-4, or offboarding deletes it)"}
+    probe -- yes --> use
+    probe -- "no: re-check" --> pub1
     paid -- "no: re-check" --> pub1
     cached -- no --> pub1["PUB-1 resolve(slug)<br/>shell port WorkspaceResolver over ApiClient<br/>GET /api/v1/public/tenants/resolve, no token"]
     pub1 -- "found" --> fits{"realm fits the slug?<br/>paid: paidRealmPrefix + slug · trial: trialRealm"}
     fits -- yes --> cache["Cache { slug, realm, trial }"] --> use
-    fits -- no --> ask
-    pub1 -- "not found" --> ask["undefined → the shell's identifier-first screen<br/>(a different cached workspace is never used)"]
+    fits -- no --> fallback
+    pub1 -- "not found, under /t/&lt;slug&gt;" --> ask["undefined → the shell's identifier-first screen<br/>(a different cached workspace is never used)"]
+    pub1 -- "not found, no slug: entry dropped" --> recent
     pub1 -- "unreachable / 429" --> fallback{"Cached entry for this slug?"}
     fallback -- yes --> use
     fallback -- no --> ask
@@ -367,14 +373,14 @@ flowchart TD
 
 | Situation | Workspace used |
 |---|---|
-| A silent restore failed with `login_required` | The workspace it tried; a trial one re-checked with PUB-1 first (none if PUB-1 no longer knows it) |
+| A silent restore failed with `login_required` | The workspace it tried; a trial one re-checked with PUB-1 first (none if PUB-1 no longer knows it: then the identifier-first screen under `/t/<slug>`, else `chooseWorkspace`) |
 | The server ended the session (`forceResolve`) | PUB-1 again for the URL's slug, skipping the cache |
-| `/t/<slug>/…`, cached paid entry | The cached entry (a paid realm never changes) |
+| `/t/<slug>/…`, cached paid entry | The cached entry while Keycloak serves its realm (discovery document, 3 s); otherwise PUB-1 again (a reverted conversion or an offboarding deletes `tenant-<slug>`) |
 | `/t/<slug>/…`, cached trial entry | PUB-1 again: a trial → paid conversion moves the tenant to `tenant-<slug>`; the cache is updated |
 | `/t/<slug>/…`, not cached | PUB-1; cached when the realm fits |
 | PUB-1 unreachable or rate-limited | The cached entry for that slug, else the identifier-first screen |
 | PUB-1 says "not found" | The identifier-first screen; never another cached workspace |
-| No slug in the URL | The most recent cached workspace (re-checked with PUB-1 when trial), else the identifier-first screen |
+| No slug in the URL | The most recent cached workspace (re-checked with PUB-1 when trial; a paid one probed on Keycloak first), else the identifier-first screen |
 
 After sign-in the shell calls `rememberWorkspace`, with the trial slug taken from P-35. A trial workspace reached from an invitation email has no slug and is never cached. LLD §8.2.
 
@@ -426,7 +432,7 @@ The callback always lands on the fixed `redirectPath`. `init()` replaces the URL
 
 ## Session lifecycle
 
-Every full page load starts with no tokens: they live only in memory, and the cross-tab channel never carries one. So `init()` restores with one silent `prompt=none` round trip to the cached workspace. `tender-web` rotates refresh tokens with max reuse 0, and Keycloak tracks reuse per lineage (verified, design doc §D6 L). So every tab has its own lineage and **never sends a refresh token that has already been replaced**. Doing so would revoke the SSO session for every tab.
+Every full page load starts with no tokens: they live only in memory, and the cross-tab channel never carries one. So `init()` restores with one silent `prompt=none` round trip to the cached workspace (after one discovery-document request for a paid one). `tender-web` rotates refresh tokens with max reuse 0, and Keycloak tracks reuse per lineage (verified, design doc §D6 L). So every tab has its own lineage and **never sends a refresh token that has already been replaced**. Doing so would revoke the SSO session for every tab.
 
 > Source: [`docs/architecture/mermaid/auth-refresh-restore.mmd`](docs/architecture/mermaid/auth-refresh-restore.mmd)
 
@@ -585,6 +591,7 @@ flowchart LR
     http -->|"token, request id, traceparent"| api
     tel -->|"dropped and counted"| otel
     auth -->|"auth: top-level redirect"| kc
+    auth -->|"discovery probe: fetch, 3 s"| kc
     auth -->|"token: fetch, 15 s"| kc
     auth -->|"logout: form POST"| kc
 ```
@@ -593,9 +600,10 @@ flowchart LR
 |---|---|---|---|---|
 | `GET /config/runtime.json` | `loadRuntimeConfig` | Bootstrap step 2 | 10 s | Fatal: the static "unavailable" page |
 | Keycloak `…/auth` | `login`, silent restore (`prompt=none`), step-up, switch | Top-level redirect | — | `?error=` on the callback → `anonymous` |
+| Keycloak `…/.well-known/openid-configuration` | `chooseWorkspace`, silent restore (a saved paid workspace) | `fetch`, credentials omitted (on a failed fetch, the trial realm's too) | 3 s (`REALM_PROBE_TIMEOUT_MS`); 1.5 s on the restore (`RESTORE_PROBE_TIMEOUT_MS`) | Realm gone (404, not its document, or a failed fetch while the trial realm loads): PUB-1 re-check (5 s). Slow or unreachable Keycloak: the saved entry |
 | Keycloak `…/token` | Code exchange, refresh | `fetch` | 15 s | Exchange: `anonymous`. Refresh: 429 or 503 with `Retry-After` → backoff with tokens kept; anything ambiguous → lineage dropped, silent restore |
 | Keycloak `…/logout` | `logout()` (global by default) | Hidden form POST | — | The local sign-out has already happened |
-| PUB-1 `GET /api/v1/public/tenants/resolve` | Shell `WorkspaceResolver` | Before sign-in | `api.timeoutMs` | Cached entry for the slug, else the identifier-first screen |
+| PUB-1 `GET /api/v1/public/tenants/resolve` | Shell `WorkspaceResolver` | Before sign-in (a trial entry, an unknown slug, a saved paid realm whose probe failed) | `api.timeoutMs` | Cached entry for the slug, else the identifier-first screen |
 | P-35 `GET /api/v1/me/session-context` | Shell `SessionContextSource` | After sign-in | `api.timeoutMs` | Deny-all permissions, platform flags only; the example shell retries a transient failure 3 times |
 | `/api/*` | `ApiClient` | App calls | `api.timeoutMs` (35 s) per attempt | Idempotent calls retried (default 2, at most 5); RFC 9457 `ProblemError` |
 | `GET /remotes/manifest.json` | `loadManifest` | Bootstrap step 9 | `remotes.loadTimeoutMs` | Every remote slot shows its fallback |

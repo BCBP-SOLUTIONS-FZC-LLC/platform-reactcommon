@@ -27,5 +27,6 @@ flowchart LR
     http -->|"token, request id, traceparent"| api
     tel -->|"dropped and counted"| otel
     auth -->|"auth: top-level redirect"| kc
+    auth -->|"discovery probe: fetch, 3 s"| kc
     auth -->|"token: fetch, 15 s"| kc
     auth -->|"logout: form POST"| kc

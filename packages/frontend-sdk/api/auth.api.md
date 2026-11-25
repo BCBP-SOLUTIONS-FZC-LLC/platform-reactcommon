@@ -141,6 +141,7 @@ export function signInAgain(o: {
     resolver: WorkspaceResolver;
     cfg: RuntimeConfig['auth'];
     ask: () => Promise<Workspace>;
+    prompt?: (workspace: Workspace) => 'login' | undefined;
 }): Promise<void>;
 
 // @public
