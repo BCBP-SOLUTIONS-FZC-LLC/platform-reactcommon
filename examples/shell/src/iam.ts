@@ -56,10 +56,18 @@ export function toSessionContext(r: SessionContextResponse): SessionContext {
   };
 }
 
+function isResolveResponse(d: unknown): d is ResolveResponse {
+  return typeof d === 'object' && d !== null && !Array.isArray(d) && typeof (d as { found?: unknown }).found === 'boolean';
+}
+
 export const workspaceResolver: WorkspaceResolver = {
   async resolve(identifier, signal) {
     // Same origin, no token: a public endpoint, rate-limited per IP.
-    const res = await api.get<ResolveResponse>('/v1/public/tenants/resolve', { query: { identifier }, auth: false, ...(signal ? { signal } : {}) });
+    const res = await api.get<unknown>('/v1/public/tenants/resolve', { query: { identifier }, auth: false, ...(signal ? { signal } : {}) });
+    // Only a JSON answer with a boolean `found` is an answer. Anything else (a WAF challenge page sent with
+    // a 2xx, e.g. AWS WAF's 202 Challenge; an empty body) is a failed call, so the SDK keeps the saved
+    // workspace instead of treating it as "not found" and dropping it. 429 and other errors already throw.
+    if (!isResolveResponse(res.data)) throw new Error(`PUB-1 answered ${res.status} without a resolve response`);
     return toWorkspace(identifier, res.data);
   },
 };

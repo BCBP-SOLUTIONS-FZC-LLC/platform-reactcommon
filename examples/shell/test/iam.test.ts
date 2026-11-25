@@ -39,6 +39,29 @@ describe('workspaceResolver (PUB-1)', () => {
   });
 });
 
+describe('workspaceResolver: answers that are not PUB-1 answers fail (the SDK then keeps the saved entry)', () => {
+  it.each([
+    ['a WAF challenge page (202, HTML)', () => new Response('<html>challenge</html>', { status: 202, headers: { 'content-type': 'text/html' } })],
+    ['an HTML page with a 200', () => new Response('<html></html>', { status: 200, headers: { 'content-type': 'text/html' } })],
+    ['an empty 200', () => new Response('', { status: 200 })],
+    ['JSON without a boolean found', () => Response.json({ realm: 'trial' })],
+    ['a JSON array', () => Response.json([])],
+  ])('%s', async (_n, res) => {
+    mockApi({ 'GET /v1/public/tenants/resolve': () => res() });
+    await expect(workspaceResolver.resolve('acme')).rejects.toThrow(/without a resolve response/);
+  });
+
+  it('a 429 throws (the rate limit)', async () => {
+    mockApi({ 'GET /v1/public/tenants/resolve': () => new Response('', { status: 429 }) });
+    await expect(workspaceResolver.resolve('acme')).rejects.toMatchObject({ status: 429 });
+  });
+
+  it('only { found: false } is "not found"', async () => {
+    mockApi({ 'GET /v1/public/tenants/resolve': () => Response.json({ found: false }) });
+    expect(await workspaceResolver.resolve('acme')).toBeUndefined();
+  });
+});
+
 describe('sessionContextSource (P-35)', () => {
   it('calls the contract path', () => {
     expect(SESSION.path).toBe('/api/v1/me/session-context');
