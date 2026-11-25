@@ -279,7 +279,7 @@ The SDK targets evergreen browsers (ES2022), with Trusted Types where the browse
 |---|---|
 | platform-gincommon | `fbf57c5` (v2.3.0, adds the `portal` domain) |
 | platform-fastapicommon | `b0fcdfd` (after #50) |
-| platform-interop-tests | `93e3481` (#9, pair 4) |
+| platform-interop-tests | `194da88` (#11; #10: go-probe `/echo` reports `x-auth-time`) |
 | platform-events · platform-pgcommon | `d85f6c8` · `9daebf8` (to build go-probe) |
 | iam-authz-enrichment · iam-org-membership | `5404641` (v0.2.0, #46: `api/deny-codes.json`, `DENY_MEMBER_SUSPENDED`, `x-auth-time`) · `98cf517` |
 

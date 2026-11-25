@@ -12,6 +12,10 @@ How this file is organised:
 
 ## [Unreleased]
 
+### Fixed (2026-11-25 — nightly stack: interop pin)
+
+- **platform-interop-tests is pinned at `194da88`** (#11) in `packages/frontend-sdk/contracts/sources.json` (*Previously:* `93e3481`, #9). The nightly stack builds go-probe from the pin, and the stack test's identity-header check (`test/stack/e2e.spec.ts`, which forges `x-auth-time` since `1.0.0-alpha.7`) needs #10, whose `/echo` reports `x-auth-time`; at `93e3481` it failed in every browser. #11 also brings the Cross-language job's Postgres wait over TCP. No generated contract changes. `VERSIONING.md`'s pin table and `.claude/skills/ci-triage/known-causes.md` updated.
+
 ### Changed (2026-11-25 — AuthZ Enrichment pin on its release tag)
 
 - **iam-authz-enrichment is pinned at `v0.2.0`** (`5404641`, #46) in `packages/frontend-sdk/contracts/sources.json` (*Previously:* the untagged commit `ceff0df`, #44, because no release tag had `api/deny-codes.json`). `api/deny-codes.json` and `internal/domain/decision.go` are the same at both commits, so `pnpm contracts:sync` changes no generated file: `GATEWAY_DENY_CODES` and `FORBIDDEN_REQUEST_HEADERS` stay as in `1.0.0-alpha.7`. `VERSIONING.md`'s pin table names the tag.
