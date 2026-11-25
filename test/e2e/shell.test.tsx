@@ -24,6 +24,7 @@ import { getRuntime, resetRuntimeForTests } from '../../packages/frontend-sdk/sr
 import { PlatformProblemTypes } from '../../packages/frontend-sdk/src/problem/index.ts';
 import { resetContainersForTests, setMfeInternalsForTests } from '../../packages/frontend-sdk/src/mfe/remote.ts';
 import { storage } from '../../packages/frontend-sdk/src/storage/index.ts';
+import { navigate } from '../../packages/frontend-sdk/src/nav/index.ts';
 import { mockProblem } from '../../packages/frontend-sdk/src/testing/index.ts';
 import { endWorld, useFakeClock } from '../fixtures/boot.ts';
 import { FakeBroadcastChannel, FakeKeycloak, FakePage, IDP, ORIGIN } from '../fixtures/keycloak.ts';
@@ -416,6 +417,37 @@ describe('the reference shell', () => {
     await user(() => $<HTMLButtonElement>('button[type=submit]')!.click());
     await until(() => $<HTMLInputElement>('input[name=title]')?.disabled === true); // applied: the new roles
     expect($('#wrong-title')).toBeNull();
+  });
+
+  it("a read-only workspace keeps the form but stops offering Save: the tenders remote's Writable (web-shell's shared-components ask)", async () => {
+    net.on('GET /api/v1/me/session-context', { tenant_id: TENANT, slug: 'acme', roles: ['preparator'], feature_flags: [], read_only: true });
+    await load('/t/acme/tenders/1/edit');
+    await until(() => page.assigned.length > 0);
+    await approveLogin();
+    await until(() => $<HTMLInputElement>('input[name=title]') !== null);
+    expect($<HTMLButtonElement>('button[type=submit]')!.disabled).toBe(true);
+    expect($<HTMLInputElement>('input[name=title]')!.disabled).toBe(false); // preparator; only the write is held back
+  });
+
+  it("navigate() routes by the path: within the workspace with no page load (the mounted remote follows), another workspace a full page load (web-shell's navigation ask)", async () => {
+    await load('/t/acme/');
+    await until(() => page.assigned.length > 0);
+    await approveLogin();
+    await until(() => $('h1')?.textContent === 'acme');
+
+    await user(() => navigate('tenders', '/t/acme/tenders/1/edit'));
+    await until(() => $<HTMLInputElement>('input[name=title]') !== null);
+    expect(page.url.pathname).toBe('/t/acme/tenders/1/edit');
+    expect(page.assigned).toEqual([]); // no page load, no silent sign-in
+
+    // A path inside the remote already mounted reaches it: its new route params load the other tender.
+    await user(() => navigate('tenders', '/t/acme/tenders/2/edit'));
+    await until(() => net.sent('/api/tenders/2').length > 0);
+    expect(page.assigned).toEqual([]);
+
+    // appId is informational: the path decides. Another workspace is a full page load.
+    await user(() => navigate('tenders', '/t/globex/', { replace: true }));
+    expect(page.assigned).toEqual(['/t/globex/']);
   });
 
   it('the session context retries are bounded: 3 more tries, then the page stays deny-all', async () => {

@@ -29,4 +29,4 @@ export {
 } from './hooks.ts';
 export { MFEErrorBoundary, RemoteBoundary, type ErrorInfoView } from './boundaries.tsx';
 export { installGlobalErrorHandlers } from './global-errors.ts';
-export { Can, PlatformProvider } from './provider.tsx';
+export { Can, PlatformProvider, Writable } from './provider.tsx';

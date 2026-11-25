@@ -8,7 +8,7 @@ What makes one shell and many independently deployed remotes behave as one app: 
 |---|---|---|
 | `/mfe` | The remote manifest (validated per remote); `loadRemote` with kill switch, timeout, retries, SRI and shared-module setup; reload once after a deploy removed old chunks; `/version.json` polling | `loadManifest`, `loadRemote`, `RemoteDisabledError`, `RemoteLoadError`, `isChunkLoadError`, `reloadOnceForChunkError`, `startVersionPolling`, `subscribeAppUpdate` |
 | `/flags` | Platform flags and kill switches from the runtime config, tenant feature flags from the session context | `getFlag`, `setFlagProvider`, `runtimeConfigFlagProvider`, `sessionContextFlagProvider`, `isRemoteKilled` |
-| `/nav` | Navigation between apps through the shell's router; redirect-target validation | `navigate`, `registerNavigator`, `isSafeRedirect` |
+| `/nav` | Navigation between apps through the shell's router (the path decides; `appId` is informational; full workspace paths: LLD §5.4.6); redirect-target validation | `navigate`, `registerNavigator`, `isSafeRedirect` |
 
 Build time: [`@bcbp-solutions-fzc-llc/webpack-preset`](../../packages/webpack-preset) gives every app the same Module Federation setup, with webpack 5, Rspack (`/rspack`) or Rsbuild (`/rsbuild`); apps built with either interoperate:
 - **Shared modules:** React, the OTel API and the SDK as strict singletons.
@@ -18,7 +18,7 @@ Build time: [`@bcbp-solutions-fzc-llc/webpack-preset`](../../packages/webpack-pr
 
 ## How it's used
 
-The shell loads the manifest once (`loadManifest()`) and starts `startVersionPolling()`. Routes render remotes with `<RemoteBoundary remote="tenders" module="./EditTender" />` from the [developer surface](developer-surface.md). A remote switches features with `useFeatureFlag('ai.drafting', false)` and moves to another app with `navigate('iam', '/members')`.
+The shell loads the manifest once (`loadManifest()`) and starts `startVersionPolling()`. Routes render remotes with `<RemoteBoundary remote="tenders" module="./EditTender" />` from the [developer surface](developer-surface.md). A remote switches features with `useFeatureFlag('ai.drafting', false)` and moves to another app with ``navigate('iam', `/t/${slug}/members`)`` (the slug from `useSessionContext()`; LLD §5.4.6).
 
 ## Guarantees
 

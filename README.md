@@ -108,7 +108,7 @@ The 17 subpaths fall into seven functional areas, each with its own page in [`do
 
 | Subpath / package | Main exports |
 |---|---|
-| `/react` | `PlatformProvider`, `useSession`, `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useApi`, `useApiClient`, `useT`, `useLocale`, `useFeatureFlag`, `useHasPermission`, `Can`, `useStepUp`, `useReadOnly`, `useRouteTemplate`, `useBeforeAuthRedirect`, `useOnlineStatus`, `useAppUpdate`, `useSwitchWorkspace`, `useSignOut`, `useRefreshSessionContext`, `MFEErrorBoundary`, `RemoteBoundary`, `installGlobalErrorHandlers` |
+| `/react` | `PlatformProvider`, `useSession`, `useCurrentUser`, `useWorkspace`, `useSessionContext`, `useApi`, `useApiClient`, `useT`, `useLocale`, `useFeatureFlag`, `useHasPermission`, `Can`, `useStepUp`, `useReadOnly`, `useRouteTemplate`, `useBeforeAuthRedirect`, `useOnlineStatus`, `useAppUpdate`, `useSwitchWorkspace`, `useSignOut`, `useRefreshSessionContext`, `Writable`, `MFEErrorBoundary`, `RemoteBoundary`, `installGlobalErrorHandlers` |
 | `/testing` (dev only) | `createTestPlatform`, `mockApi`, `mockProblem`, `renderMetricInventory` |
 | `@bcbp-solutions-fzc-llc/eslint-plugin` | `configs.recommended`; rules `no-sdk-root-import`, `no-sdk-deep-import`, `no-identity-headers`, `no-raw-storage`, `no-unsafe-html`, `no-runtime-css-in-js`, `api-route-template` |
 
@@ -343,6 +343,21 @@ Details: [docs/problem-details](docs/problem-details/README.md).
 
 `useFeatureFlag(key, fallback)` reads platform flags from `runtime.json` (`flags`), then tenant flags from the session context. A remote is switched off without a deploy by `remotes.killSwitch` or the flag `remote.<name>.disabled`; its slot then shows the boundary's "unavailable" fallback.
 
+**Navigating to another remote:** `navigate(appId, path)` (`/nav`) goes through the shell's router.
+
+| Rule | Detail |
+|---|---|
+| The path decides | The shell's navigator routes by `path`: a path under its router's basename (`${auth.workspacePathPrefix}<slug>/`, default `/t/<slug>/`) is a router navigation with no page load; any other same-origin path (another workspace, a page outside the router) is a full page load |
+| `appId` | The app the path belongs to (a remote's name, or `'shell'`). Informational: a shell's navigator may ignore it |
+| Full workspace path | A cross-remote path carries the workspace prefix (`/t/${slug}/admin/users` with the default prefix), the slug from `useSessionContext()` (`useWorkspace()` may have none: a trial signed in from an invitation), never hard-coded. Offer the link once the context has loaded: before that the slug is undefined and the path would be `/t/undefined/…`. A bare `/admin/users` leaves the router's basename: a full page load |
+| Within a remote | The remote's own router (`Link`, `useNavigate`), not `navigate()` |
+| Links | Not a root-relative `<a href="/t/…">` into another remote: it is a full page load (a silent sign-in round trip, the page's state lost) |
+| Standalone | No registered navigator: a full page load |
+| The mounted remote | A shell's navigator must make a path inside the remote already mounted reach that remote's router (remount it, or have its router follow the URL); otherwise the URL changes and the page does not |
+| Routers | `react-router-dom` is not shared: no remote imports another's routes or router |
+
+Read-only workspaces: wrap a mutation control in `<Writable fallback={…}>` (`/react`), inside `<Can>` (`Writable` checks no permission and shows its children before the session context loads; `<Can>` denies until then), or read `useReadOnly()`. The shell tells the user why; the remote only stops offering the action.
+
 ### 10. Testing a remote
 
 ```ts
@@ -383,7 +398,7 @@ The shell's state changes reach every remote through the runtime, not imports. I
 | Session (signed in, expired, signed out, another tab's logout) | `useSession()`, `useCurrentUser()`, `useWorkspace()` | `getSession()` |
 | Permissions and the subject | `useHasPermission()`, `<Can>` | — |
 | Feature flags, kill switches | `useFeatureFlag()` | `getFlag()` |
-| Read-only tenant (a 403 deny) | `useReadOnly()` | — |
+| Read-only tenant (a 403 deny) | `useReadOnly()`, `<Writable>` | — |
 | Locale and catalogs | `useLocale()`, `useT()` | — |
 | A new deployment | `useAppUpdate()` | `subscribeAppUpdate(listener)` |
 | Network online / offline | `useOnlineStatus()` | `subscribeOnline(listener)` |
@@ -648,7 +663,7 @@ test/
 
 ### Coverage
 
-`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.6% today (1659 tests in 60 files). Don't lower the threshold.
+`Validate / Test` fails below **98%** statement coverage of `packages/*/src` (`.github/scripts/coverage-gate.sh`), as platform-gincommon. It's 98.6% today (1662 tests in 60 files). Don't lower the threshold.
 
 ---
 

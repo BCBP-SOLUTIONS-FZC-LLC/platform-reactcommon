@@ -12,6 +12,7 @@ import { setAuthorizer, setAuthzSubject, roleMapAuthorizer } from '@bcbp-solutio
 import { initializeI18n } from '@bcbp-solutions-fzc-llc/frontend-sdk/i18n';
 import { loadManifest, startVersionPolling } from '@bcbp-solutions-fzc-llc/frontend-sdk/mfe';
 import { installTrustedTypesPolicy } from '@bcbp-solutions-fzc-llc/frontend-sdk/security';
+import { registerNavigator } from '@bcbp-solutions-fzc-llc/frontend-sdk/nav';
 import { installGlobalErrorHandlers } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
 import { createRoot, type Root } from 'react-dom/client';
 import { cmp } from './consent';
@@ -21,6 +22,7 @@ import { askForWorkspace, showWorkspaceNotFound } from './IdentifierFirst'; // F
 import { showDeviceClock, showSessionEnded, showSignedOut, showWorkspaceUnavailable, showWrongWorkspace } from './SessionScreens'; // shell-owned screens
 import { App } from './App';
 import { ShellRoot } from './ShellRoot';
+import { createShellNavigator } from './navigator';
 import { createStore, retrySessionContext } from './session-context';
 
 export async function bootstrap(): Promise<void> {
@@ -178,6 +180,8 @@ export async function bootstrap(): Promise<void> {
   if (signedOut()) return;
   startVersionPolling();
 
+  // A remote's navigate() routes by the path: within this workspace without a page load (navigator.ts).
+  registerNavigator(createShellNavigator(cfg.auth));
   app = createRoot(document.getElementById('root')!);
   // The provider reads the locale (setLocale) and the session context (the retry below) live.
   app.render(

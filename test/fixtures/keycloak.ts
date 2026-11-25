@@ -64,14 +64,12 @@ export class FakePage {
         this.assigned.push(u);
       },
     });
-    vi.stubGlobal('history', {
-      state: null,
-      replaceState: (_s: unknown, _t: string, u: string) => {
-        const next = new URL(u, this.url);
-        if (next.origin !== this.url.origin) throw new DOMException('cross-origin', 'SecurityError');
-        this.url = next;
-      },
-    });
+    const sameOrigin = (_s: unknown, _t: string, u: string) => {
+      const next = new URL(u, this.url);
+      if (next.origin !== this.url.origin) throw new DOMException('cross-origin', 'SecurityError');
+      this.url = next;
+    };
+    vi.stubGlobal('history', { state: null, replaceState: sameOrigin, pushState: sameOrigin });
     vi.stubGlobal('localStorage', this.local);
     vi.stubGlobal('sessionStorage', this.session);
     vi.stubGlobal('navigator', {
@@ -81,6 +79,7 @@ export class FakePage {
     });
     vi.stubGlobal('addEventListener', this.events.addEventListener.bind(this.events));
     vi.stubGlobal('removeEventListener', this.events.removeEventListener.bind(this.events));
+    vi.stubGlobal('dispatchEvent', this.events.dispatchEvent.bind(this.events)); // popstate from the shell's navigator
   }
 
   goOnline(): void {

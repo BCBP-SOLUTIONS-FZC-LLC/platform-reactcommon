@@ -141,6 +141,12 @@ export function useT(ns: string): (key: string, vars?: Record<string, string | n
 // @public (undocumented)
 export function useWorkspace(): Workspace | undefined;
 
+// @public
+export function Writable(p: {
+    children: ReactNode;
+    fallback?: ReactNode;
+}): JSX.Element | null;
+
 // (No @packageDocumentation comment for this package)
 
 ```

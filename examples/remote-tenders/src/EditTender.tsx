@@ -1,7 +1,7 @@
 // The remote component of design doc §C4, as written there.
 import { useRef, useState, type FormEvent } from 'react';
 import { useApi, useApiClient, useHasPermission, useRefreshSessionContext, useRouteTemplate, useT,
-         MFEErrorBoundary } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
+         MFEErrorBoundary, Writable } from '@bcbp-solutions-fzc-llc/frontend-sdk/react';
 import { gatewayDenyCode, isProblemError, PlatformProblemTypes, toFieldErrorMap } from '@bcbp-solutions-fzc-llc/frontend-sdk/problem';
 import { problemMessage } from '@bcbp-solutions-fzc-llc/frontend-sdk/i18n';
 
@@ -64,7 +64,8 @@ function EditTenderForm({ id }: { id: string }) {
       <input name="deadline" type="date" defaultValue={data.deadline} disabled={!canEdit} />
       {fieldErrors.deadline?.map((m) => <span key={m} role="alert">{m}</span>)}
       {formError && <p role="alert">{formError}</p>}
-      {canEdit && <button type="submit" disabled={saving}>{t('save')}</button>}
+      {/* A read-only workspace: the shell says why; the remote only stops offering Save. */}
+      {canEdit && <Writable fallback={<button type="submit" disabled>{t('save')}</button>}><button type="submit" disabled={saving}>{t('save')}</button></Writable>}
     </form>
   );
 }
